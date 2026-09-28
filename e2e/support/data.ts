@@ -16,6 +16,8 @@ export interface DemoOptions {
    * earlier demo data without it (a fresh Playwright context starts empty).
    */
   force?: boolean;
+  /** Keep the device's own settings (e.g. Shot chart off) instead of the demo's. */
+  keepSettings?: boolean;
 }
 
 /** The parts of an export file that tests look at (see ExportFile in src/data/transfer.ts). */
