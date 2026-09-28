@@ -1,0 +1,27 @@
+.court {
+  display: block;
+  width: 100%;
+  /* Keeps the view box's proportions at any width. */
+  height: auto;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background-color: var(--color-court);
+}
+
+.floor {
+  fill: var(--color-court);
+}
+
+.paint {
+  fill: var(--color-court-paint);
+}
+
+.lines {
+  stroke: var(--color-court-line);
+}
+
+/* An orange rim: decoration, so it needn't stand out from the floor. */
+.rim {
+  fill: none;
+  stroke: var(--color-accent);
+}
