@@ -1,12 +1,16 @@
 import { useId, type ReactNode } from 'react';
+import { countShots, hasLocation, type Shot } from '@/data/shots';
 import { cx } from '@/lib/cx';
 import { HalfCourt } from './HalfCourt';
+import { describeShots, locationNote } from './shotLabels';
 import { ShotGlyph, ShotMarkers } from './ShotMarkers';
 import styles from './ShotMap.module.css';
-import { countShots, describeShots, type Shot } from './shots';
 
 export interface ShotMapProps {
-  /** The shots to plot (see `shotsFromEvents`): a filled circle per make, an × per miss. */
+  /**
+   * The shots (see `shotsFromEvents`): a filled circle per make and an × per miss for
+   * each one with a location; a note says how many of them have one.
+   */
   shots: readonly Shot[];
   /** Shown above the court, e.g. "Shot chart". Also names the chart for screen readers. */
   title?: string;
@@ -16,13 +20,14 @@ export interface ShotMapProps {
 }
 
 /**
- * A shot chart: every located shot on a half court, with a legend of makes and
- * misses. Display only. Screen readers get the totals and each zone's shooting.
+ * A shot chart: every shot with a location on a half court, with a legend of makes
+ * and misses. Display only. Screen readers get the totals and each zone's shooting.
  */
 export function ShotMap({ shots, title, caption, className }: ShotMapProps) {
   const captionId = useId();
-  const { made, attempted } = countShots(shots);
-  const summary = describeShots(shots);
+  const located = shots.filter(hasLocation);
+  const { made, attempted } = countShots(located);
+  const name = title || 'Shot chart';
   const hasCaption = Boolean(title || caption);
 
   return (
@@ -36,8 +41,8 @@ export function ShotMap({ shots, title, caption, className }: ShotMapProps) {
           {caption ? <span className={styles.caption}>{caption}</span> : null}
         </figcaption>
       ) : null}
-      <HalfCourt aria-label={`${title ?? 'Shot chart'}: ${summary}`}>
-        <ShotMarkers shots={shots} />
+      <HalfCourt aria-label={`${name}: ${describeShots(shots)}`}>
+        <ShotMarkers shots={located} />
       </HalfCourt>
       {/* Flex gaps space it out on screen; the spaces keep the words apart for screen readers. */}
       <p className={styles.legend}>
@@ -51,6 +56,9 @@ export function ShotMap({ shots, title, caption, className }: ShotMapProps) {
           Missed <span className={styles.count}>{attempted - made}</span>
         </span>
       </p>
+      {located.length < shots.length ? (
+        <p className={styles.note}>{locationNote(located.length, shots.length)}</p>
+      ) : null}
     </figure>
   );
 }

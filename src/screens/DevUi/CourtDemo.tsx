@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Button } from '@/components/Button/Button';
 import { CourtPicker } from '@/components/Court/CourtPicker';
-import { shotsFromEvents, shotValueLabel } from '@/components/Court/shots';
+import { shotValueLabel } from '@/components/Court/shotLabels';
 import { ShotMap } from '@/components/Court/ShotMap';
 import { ShotZoneSummary } from '@/components/Court/ShotZoneSummary';
 import { buildDemoData, DEMO_SEASON, demoGameId } from '@/data/demo';
+import { shotsFromEvents } from '@/data/shots';
 import type { CourtPoint } from '@/data/types';
 import { shotDistanceFt } from '@/lib/court';
 import styles from './DevUiScreen.module.css';

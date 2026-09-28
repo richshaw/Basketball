@@ -37,7 +37,9 @@ describe('CourtPicker', () => {
   });
 
   it('takes taps anywhere on the court, lines and markers included', () => {
-    const { onPick, court } = renderPicker({ shots: [{ location: { x: 3, y: 4 }, made: true }] });
+    const { onPick, court } = renderPicker({
+      shots: [{ location: { x: 3, y: 4 }, made: true, points: 2 }],
+    });
     const line = court.querySelector('path');
     const marker = court.querySelector('circle.made');
     expect(line).not.toBeNull();
@@ -143,9 +145,9 @@ describe('CourtPicker', () => {
   it("draws the game's earlier shots faintly", () => {
     const { court } = renderPicker({
       shots: [
-        { location: { x: 0, y: 2 }, made: true },
-        { location: { x: 10, y: 10 }, made: false },
-        { location: { x: -21, y: -2 }, made: false },
+        { location: { x: 0, y: 2 }, made: true, points: 2 },
+        { location: { x: 10, y: 10 }, made: false, points: 2 },
+        { location: { x: -21, y: -2 }, made: false, points: 2 },
       ],
     });
     const markers = court.querySelector('.markers');

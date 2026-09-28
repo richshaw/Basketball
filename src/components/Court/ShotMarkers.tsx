@@ -1,8 +1,8 @@
 import type { ReactElement } from 'react';
+import { hasLocation, type Shot } from '@/data/shots';
 import { clampToHalfCourt, isInPaint } from '@/lib/court';
 import { cx } from '@/lib/cx';
 import { courtToSvg } from './courtGeometry';
-import type { Shot } from './shots';
 import styles from './ShotMarkers.module.css';
 
 /**
@@ -55,6 +55,7 @@ function MissMarker({ x, y, onPaint = false }: MarkerProps) {
 }
 
 export interface ShotMarkersProps {
+  /** Shots without a location are left out. */
   shots: readonly Shot[];
   /** Draws them faded, as context behind something else (e.g. earlier shots). */
   faint?: boolean;
@@ -68,6 +69,7 @@ export function ShotMarkers({ shots, faint = false }: ShotMarkersProps) {
   const made: ReactElement[] = [];
   const missed: ReactElement[] = [];
   shots.forEach((shot, index) => {
+    if (!hasLocation(shot)) return;
     const location = clampToHalfCourt(shot.location);
     const { x, y } = courtToSvg(location);
     const onPaint = isInPaint(location);

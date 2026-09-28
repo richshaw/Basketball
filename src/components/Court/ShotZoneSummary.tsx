@@ -1,7 +1,8 @@
 import { StatTile, StatTileGrid } from '@/components/StatTile/StatTile';
+import { SHOT_ZONES, shotsByZone, type Shot } from '@/data/shots';
 import { percentage } from '@/data/stats';
 import { formatMadeAttempted, formatPct } from '@/lib/format';
-import { SHOT_ZONE_LABELS, SHOT_ZONE_NAMES, SHOT_ZONES, shotsByZone, type Shot } from './shots';
+import { SHOT_ZONE_LABELS, SHOT_ZONE_NAMES } from './shotLabels';
 
 export interface ShotZoneSummaryProps {
   /** The same shots as the ShotMap next to it (see `shotsFromEvents`). */
@@ -12,8 +13,10 @@ export interface ShotZoneSummaryProps {
 }
 
 /**
- * Shooting by zone, one tile each for the paint, mid-range and 3-point range: the
- * percentage, with made/attempted under it. Zones come from each shot's location.
+ * Shooting by zone, one tile each for the paint, mid-range and 3-pointers: the
+ * percentage, with made/attempted under it. 3PT counts every 3PT attempt, so it
+ * matches the box score; the paint and mid-range split the 2PT attempts that have a
+ * location (the ShotMap says how many shots have one).
  */
 export function ShotZoneSummary({
   shots,

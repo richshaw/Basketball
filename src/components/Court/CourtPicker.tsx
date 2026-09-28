@@ -1,12 +1,13 @@
 import { useRef, type PointerEvent } from 'react';
+import type { Shot } from '@/data/shots';
 import type { CourtPoint } from '@/data/types';
 import { clampToHalfCourt } from '@/lib/court';
 import { cx } from '@/lib/cx';
 import { clientToCourt, COURT_VIEW_BOX, courtToSvg } from './courtGeometry';
 import styles from './CourtPicker.module.css';
 import { HalfCourt } from './HalfCourt';
+import { describeSpot, shotValueLabel } from './shotLabels';
 import { ShotMarkers } from './ShotMarkers';
-import { describeSpot, shotValueLabel, type Shot } from './shots';
 
 // The picked-spot marker and its label, in SVG units (10 per foot).
 const MARKER_RADIUS = 15;
@@ -102,7 +103,7 @@ export interface CourtPickerProps {
    * inferred value ("2PT" or "3PT"). null or undefined shows no marker.
    */
   pending?: CourtPoint | null;
-  /** This game's earlier shots, drawn faintly for context. */
+  /** This game's earlier shots, drawn faintly for context (those with a location). */
   shots?: readonly Shot[];
   /** What the court is for; the picked spot (or a tap hint) is added to it. */
   'aria-label'?: string;

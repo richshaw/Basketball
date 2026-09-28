@@ -8,12 +8,12 @@
 }
 
 /*
- * A make: a see-through filled circle, so piles of shots read darker. A ring of floor
- * color under it (paint-order) keeps overlapping makes apart.
+ * A make: a filled circle. It's opaque, so it's painted in exactly the color whose
+ * contrast tokens.test.ts checks; a ring of floor color under it (paint-order) keeps
+ * overlapping makes apart.
  */
 .made {
   fill: var(--color-court-made);
-  fill-opacity: 0.8;
   stroke: var(--color-court);
   paint-order: stroke;
 }
@@ -46,7 +46,6 @@
 
 /* On the page, a glyph needs no floor-colored ring or halo. */
 .glyph .made {
-  fill-opacity: 1;
   stroke: none;
 }
 
