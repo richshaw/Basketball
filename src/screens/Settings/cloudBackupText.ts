@@ -137,6 +137,22 @@ export interface StatusLine {
   tone: StatusTone;
 }
 
+/** A wait counted from when a message was made: "in a minute", "in 5 minutes", "in 3 hours". */
+const RELATIVE_WAIT = /\bin (?:a|an|\d+) (?:minutes?|hours?|days?)\b/i;
+
+/**
+ * A stored message without its sentences that count a wait from when it was made (the
+ * engine's "Hoop Stats will try again in 5 minutes."), which go stale as time passes.
+ * Undefined if nothing is left.
+ */
+export function withoutWaits(message: string | undefined): string | undefined {
+  const kept = message
+    ?.split(/(?<=\.)\s+/)
+    .filter((sentence) => !RELATIVE_WAIT.test(sentence))
+    .join(' ');
+  return kept || undefined;
+}
+
 /** The status row of Settings > Cloud backup, while backup is on. */
 export function describeStatus(status: CloudBackupStatus, now: number): StatusLine {
   const last = status.lastSuccessAt;
@@ -160,7 +176,8 @@ export function describeStatus(status: CloudBackupStatus, now: number): StatusLi
       const when = retry === undefined || retry <= now ? 'soon' : formatWhen(retry, now);
       return {
         title: `Backup will try again ${when}`,
-        detail: status.lastError?.message ?? "The last backup didn't finish.",
+        // The title says when: the stored message's "in 5 minutes" goes stale.
+        detail: withoutWaits(status.lastError?.message) ?? "The last backup didn't finish.",
         tone: 'attention',
       };
     }

@@ -229,7 +229,10 @@ describe('Settings: cloud backup on', () => {
     await waitFor(() => {
       expect(cloudList()).toHaveTextContent(`Backup will try again ${when}`);
     });
-    expect(cloudList()).toHaveTextContent(message);
+    // The reason, without the wait counted from when it failed (that goes stale).
+    expect(message).toMatch(/ in 5 minutes\.$/);
+    expect(cloudList()).toHaveTextContent('The backup server is busy.');
+    expect(cloudList()).not.toHaveTextContent('in 5 minutes');
   });
 
   it('waits for signal, and says the stats are safe meanwhile', async () => {

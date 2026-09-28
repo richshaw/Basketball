@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CloudBackupStatus } from '@/data/backup/cloudBackup';
+import { errorMessage, newBackupLimitMessage } from '@/data/backup/errors';
 import { buildRealData } from '@/test/backupHarness';
 import {
   backUpAnywayMessage,
@@ -15,6 +16,7 @@ import {
   shareableCode,
   shrinkMessage,
   timeAgo,
+  withoutWaits,
 } from './cloudBackupText';
 
 /** Sep 28, 2026, 7:42 PM local time. */
@@ -131,6 +133,33 @@ describe('describeStatus', () => {
     expect(
       describeStatus(on({ state: 'error', lastError, nextAttemptAt: NOW - MINUTE }), NOW).title,
     ).toBe('Backup will try again soon');
+  });
+
+  it("leaves out the stored message's waits, which go stale: the title says when", () => {
+    const failedAt = NOW - 4 * MINUTE;
+    const busy = {
+      kind: 'server-busy',
+      message: errorMessage('server-busy', 'backup', 5 * MINUTE),
+      at: failedAt,
+    };
+    expect(busy.message).toBe('The backup server is busy. Hoop Stats will try again in 5 minutes.');
+    // Four minutes later, and after the time has passed.
+    for (const now of [NOW, NOW + 2 * MINUTE]) {
+      const line = describeStatus(
+        on({ state: 'error', lastError: busy, nextAttemptAt: failedAt + 5 * MINUTE }),
+        now,
+      );
+      expect(line.detail).toBe('The backup server is busy.');
+    }
+    const limit = newBackupLimitMessage(3 * HOUR);
+    expect(withoutWaits(limit)).toBe("The backup server can't take a new backup right now.");
+    expect(withoutWaits(errorMessage('rate-limited', 'backup', 30_000))).toBe(
+      'The backup server is busy.',
+    );
+    // A message without a counted wait stays whole.
+    const full = errorMessage('server-full', 'backup');
+    expect(withoutWaits(full)).toBe(full);
+    expect(withoutWaits(undefined)).toBeUndefined();
   });
 
   it('explains a stop or a pause', () => {
