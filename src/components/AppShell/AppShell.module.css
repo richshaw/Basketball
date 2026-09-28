@@ -8,4 +8,6 @@
 
 .content {
   flex: 1;
+  /* ScreenBody needn't clear the home indicator: the tab bar below already does. */
+  --screen-body-inset-bottom: 0px;
 }
