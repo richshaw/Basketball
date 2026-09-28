@@ -5,12 +5,12 @@ import { ExportFileError, NOT_A_BACKUP } from '@/data/transfer';
 import type { Game } from '@/data/types';
 import { ActionRow } from './ActionRow';
 import {
+  backupFileStatus,
   createBackupFile,
   createSpreadsheetFile,
-  formatDayWithYear,
   readBackupFile,
-  readLastBackupSavedAt,
-  rememberBackupSaved,
+  readLastBackupFile,
+  rememberBackupFile,
 } from './backupFiles';
 import { buildGamesCsv } from './gamesCsv';
 import { RestoreSheet, type RestoreRequest } from './RestoreSheet';
@@ -36,7 +36,7 @@ export interface BackupSectionProps {
  */
 export function BackupSection({ games, snapshot, fresh, currentSnapshot }: BackupSectionProps) {
   const toast = useToast();
-  const [lastSavedAt, setLastSavedAt] = useState(readLastBackupSavedAt);
+  const [lastSaved, setLastSaved] = useState(readLastBackupFile);
   const [sharing, setSharing] = useState(false);
   const sharingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -68,8 +68,9 @@ export function BackupSection({ games, snapshot, fresh, currentSnapshot }: Backu
     // Stamped with when the data was read (its exportedAt), named for the day it's saved.
     const result = await share(createBackupFile(current.file, now));
     if (result === 'shared' || result === 'downloaded') {
-      rememberBackupSaved(now.getTime());
-      setLastSavedAt(now.getTime());
+      const saved = { savedAt: now.getTime(), lastChangeAt: current.lastChangeAt };
+      rememberBackupFile(saved);
+      setLastSaved(saved);
       toast.show({ message: result === 'shared' ? 'Backup file saved' : 'Backup file downloaded' });
     } else if (result === 'failed') {
       toast.show({ message: SAVE_FAILED });
@@ -109,9 +110,10 @@ export function BackupSection({ games, snapshot, fresh, currentSnapshot }: Backu
     }
   };
 
-  let saveSubtitle = 'Not saved on this phone yet';
-  if (lastSavedAt !== undefined) saveSubtitle = `Last saved: ${formatDayWithYear(lastSavedAt)}`;
-  if (!hasData) saveSubtitle = 'Nothing to back up yet';
+  const saveSubtitle = backupFileStatus(lastSaved, {
+    hasData,
+    lastChangeAt: snapshot.lastChangeAt,
+  });
 
   return (
     <div>

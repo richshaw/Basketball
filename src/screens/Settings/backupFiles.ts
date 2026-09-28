@@ -122,25 +122,55 @@ export function nothingNewMessage(backupGameCount: number): string {
   return `Nothing new was added: this phone already has ${games} in this backup (the same, or changed here since). To go back to the backup's versions, use Replace everything on this phone.`;
 }
 
-// When this phone last saved a backup file. A per-device reminder, so it lives in
+// The last backup file saved on this phone. A per-device reminder, so it lives in
 // localStorage (not in the backup); it may be missing, e.g. in a private window.
-const LAST_BACKUP_KEY = 'hoop-stats.lastBackupFileSavedAt';
+const LAST_BACKUP_KEY = 'hoop-stats.lastBackupFile';
 
-/** Epoch ms of the last backup file saved on this device, if known. */
-export function readLastBackupSavedAt(): number | undefined {
+export interface LastBackupFile {
+  /** When it was saved (epoch ms). */
+  savedAt: number;
+  /** The data's `lastChangeAt` when it was read: tells whether anything changed since. */
+  lastChangeAt?: number;
+}
+
+const isTime = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+/** The last backup file saved on this device, if known. */
+export function readLastBackupFile(): LastBackupFile | undefined {
   try {
     const stored = localStorage.getItem(LAST_BACKUP_KEY);
-    const time = stored === null ? Number.NaN : Number(stored);
-    return Number.isFinite(time) && time > 0 ? time : undefined;
+    const value: unknown = stored === null ? null : JSON.parse(stored);
+    if (typeof value !== 'object' || value === null) return undefined;
+    const { savedAt, lastChangeAt } = value as Record<string, unknown>;
+    if (!isTime(savedAt)) return undefined;
+    return isTime(lastChangeAt) ? { savedAt, lastChangeAt } : { savedAt };
   } catch {
     return undefined;
   }
 }
 
-export function rememberBackupSaved(time: number): void {
+export function rememberBackupFile(file: LastBackupFile): void {
   try {
-    localStorage.setItem(LAST_BACKUP_KEY, String(time));
+    localStorage.setItem(LAST_BACKUP_KEY, JSON.stringify(file));
   } catch {
     // Storage full or blocked: it's only a reminder.
   }
+}
+
+/**
+ * The "Save a backup file" row's subtitle. "Last saved" only while the data is still
+ * what that file holds: after any change (a new game, a restore, erasing everything)
+ * it says there are changes since, so it never vouches for data no file has.
+ */
+export function backupFileStatus(
+  lastSaved: LastBackupFile | undefined,
+  data: { hasData: boolean; lastChangeAt: number | undefined },
+): string {
+  if (!data.hasData) return 'Nothing to back up yet';
+  if (!lastSaved) return 'Not saved on this phone yet';
+  const day = formatDayWithYear(lastSaved.savedAt);
+  return lastSaved.lastChangeAt === data.lastChangeAt
+    ? `Last saved: ${day}`
+    : `Changes since your last backup file on ${day}`;
 }

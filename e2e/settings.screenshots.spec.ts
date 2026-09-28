@@ -22,12 +22,16 @@ interface Screen {
   viewportOnly?: boolean;
 }
 
-/** The demo season, plus a backup file saved yesterday on this phone. */
+/** The demo season, saved to a backup file on this phone (so it says "Last saved"). */
 async function seedWithBackup(page: Page) {
   await seedDemoData(page);
-  await page.evaluate(() => {
-    localStorage.setItem('hoop-stats.lastBackupFileSavedAt', String(Date.now() - 86_400_000));
-  });
+  await page.goto(appUrl(paths.settings));
+  const save = page.getByRole('button', { name: /Save a backup file/ });
+  // Chromium here has no file share sheet, so the backup downloads.
+  const downloading = page.waitForEvent('download');
+  await save.tap();
+  await downloading;
+  await expect(save).toContainText('Last saved:');
 }
 
 function openDialog(buttonName: RegExp, role: 'dialog' | 'alertdialog', dialogName: string) {

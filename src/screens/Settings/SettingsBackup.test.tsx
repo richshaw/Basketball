@@ -13,7 +13,13 @@ import {
   updateGame,
   updateSettings,
 } from '@/data/repo';
-import { exportAll, importAll, parseExportFile, type ExportFile } from '@/data/transfer';
+import {
+  clearAllData,
+  exportAll,
+  importAll,
+  parseExportFile,
+  type ExportFile,
+} from '@/data/transfer';
 import { todayLocalISO } from '@/lib/format';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
@@ -167,6 +173,28 @@ describe('Settings: save a backup file', () => {
     expect(downloads).toEqual([]);
     expect(save).toHaveTextContent('Not saved on this phone yet');
     expect(notifications()).toBeEmptyDOMElement();
+  });
+
+  it('says "Last saved" only while nothing has changed since, even after erasing', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    captureDownloads();
+    const { user } = await renderSettings();
+    const save = await enabledButton(/Save a backup file/);
+    const today = formatDayWithYear(Date.now());
+
+    await user.click(save);
+    await waitFor(() => {
+      expect(save).toHaveTextContent(`Last saved: ${today}`);
+    });
+
+    await clearAllData();
+    await waitFor(() => {
+      expect(save).toHaveTextContent('Nothing to back up yet');
+    });
+    await createGame({ opponent: 'Hillcrest', date: '2026-09-28', periodFormat: 'quarters' });
+    await waitFor(() => {
+      expect(save).toHaveTextContent(`Changes since your last backup file on ${today}`);
+    });
   });
 
   it('has nothing to save on an empty phone', async () => {

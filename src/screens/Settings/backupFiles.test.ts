@@ -3,6 +3,7 @@ import { buildDemoData } from '@/data/demo';
 import { ExportFileError, parseExportFile, type ExportFile } from '@/data/transfer';
 import {
   backupFileName,
+  backupFileStatus,
   countGames,
   createBackupFile,
   createSpreadsheetFile,
@@ -10,8 +11,8 @@ import {
   describePlayer,
   nothingNewMessage,
   readBackupFile,
-  readLastBackupSavedAt,
-  rememberBackupSaved,
+  readLastBackupFile,
+  rememberBackupFile,
   restoredMessage,
   spreadsheetFileName,
 } from './backupFiles';
@@ -143,16 +144,22 @@ describe('describing a backup', () => {
   });
 });
 
-describe('last saved', () => {
+describe('the last backup file', () => {
+  const saved = { savedAt: EVENING.getTime(), lastChangeAt: EVENING.getTime() - 60_000 };
+
   it('is remembered on this device', () => {
-    expect(readLastBackupSavedAt()).toBeUndefined();
-    rememberBackupSaved(EVENING.getTime());
-    expect(readLastBackupSavedAt()).toBe(EVENING.getTime());
+    expect(readLastBackupFile()).toBeUndefined();
+    rememberBackupFile(saved);
+    expect(readLastBackupFile()).toEqual(saved);
   });
 
   it('ignores a damaged value', () => {
-    localStorage.setItem('hoop-stats.lastBackupFileSavedAt', 'yesterday');
-    expect(readLastBackupSavedAt()).toBeUndefined();
+    for (const damaged of ['yesterday', '{"savedAt":"soon"}', '12', 'null', '{']) {
+      localStorage.setItem('hoop-stats.lastBackupFile', damaged);
+      expect(readLastBackupFile()).toBeUndefined();
+    }
+    localStorage.setItem('hoop-stats.lastBackupFile', `{"savedAt":${saved.savedAt}}`);
+    expect(readLastBackupFile()).toEqual({ savedAt: saved.savedAt });
   });
 
   it('never throws when storage is unavailable', () => {
@@ -162,7 +169,17 @@ describe('last saved', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new DOMException('Full', 'QuotaExceededError');
     });
-    expect(() => rememberBackupSaved(EVENING.getTime())).not.toThrow();
-    expect(readLastBackupSavedAt()).toBeUndefined();
+    expect(() => rememberBackupFile(saved)).not.toThrow();
+    expect(readLastBackupFile()).toBeUndefined();
+  });
+
+  it('is "last saved" only while the data is what that file holds', () => {
+    const data = { hasData: true, lastChangeAt: saved.lastChangeAt };
+    expect(backupFileStatus(saved, data)).toBe('Last saved: Sep 28, 2026');
+    expect(backupFileStatus(saved, { ...data, lastChangeAt: saved.lastChangeAt + 1 })).toBe(
+      'Changes since your last backup file on Sep 28, 2026',
+    );
+    expect(backupFileStatus(undefined, data)).toBe('Not saved on this phone yet');
+    expect(backupFileStatus(saved, { ...data, hasData: false })).toBe('Nothing to back up yet');
   });
 });
