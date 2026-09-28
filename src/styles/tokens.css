@@ -132,6 +132,17 @@
   --color-tab-bar-bg: rgba(250, 250, 252, 0.9);
   --shadow-overlay: 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.14);
   --shadow-thumb: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.06);
+
+  /*
+   * The shot chart court (components/Court): a flat maple floor, the lane (paint),
+   * the lines, and made/missed shot markers, which keep 3:1 against the floor and the
+   * lane. The picked-spot label is --color-on-inverse on --color-inverse.
+   */
+  --color-court: #f4e6cf;
+  --color-court-paint: #ebd3aa;
+  --color-court-line: #8f6c45;
+  --color-court-made: #15803d;
+  --color-court-miss: #dc2626;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -157,5 +168,14 @@
     --color-tab-bar-bg: rgba(22, 25, 30, 0.9);
     --shadow-overlay: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.55);
     --shadow-thumb: 0 1px 3px rgba(0, 0, 0, 0.5);
+    /*
+     * A dark-stained floor. A lighter green than --color-made keeps makes 3:1 on it, and
+     * far enough from the red in lightness to tell apart with red-green color blindness.
+     */
+    --color-court: #1f1b16;
+    --color-court-paint: #2b241c;
+    --color-court-line: #8a7459;
+    --color-court-made: #20b155;
+    --color-court-miss: #d92b2b;
   }
 }
