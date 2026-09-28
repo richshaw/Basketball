@@ -114,7 +114,7 @@ function abortError(): Error {
 
 export class FakeBackupServer {
   readonly accounts = new Map<string, Account>();
-  /** Every request handled, in order. */
+  /** Every request received, in order (answered or not). */
   readonly requests: { method: string; path: string }[] = [];
   /** Every stored upload, in order. */
   readonly uploads: FakeUpload[] = [];
@@ -162,9 +162,20 @@ export class FakeBackupServer {
 
   /** The backup server's answer to one request (synchronous). */
   handle(request: FakeRequest): FakeResponse {
+    this.record(request);
+    return this.respond(request);
+  }
+
+  private record(request: FakeRequest): void {
+    this.requests.push({
+      method: request.method.toUpperCase(),
+      path: new URL(request.url).pathname,
+    });
+  }
+
+  private respond(request: FakeRequest): FakeResponse {
     const { pathname } = new URL(request.url);
     const method = request.method.toUpperCase();
-    this.requests.push({ method, path: pathname });
 
     const origin = request.headers.origin;
     const originAllowed =
@@ -203,6 +214,14 @@ export class FakeBackupServer {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const signal = init.signal ?? undefined;
     if (signal?.aborted) throw abortError();
+    const request: FakeRequest = {
+      method: init.method ?? 'GET',
+      url,
+      headers: headerRecord(init.headers),
+      body: toBytes(init.body),
+    };
+    // Counted on arrival, so held and abandoned requests count too.
+    this.record(request);
     this.inFlight += 1;
     this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
     try {
@@ -214,12 +233,7 @@ export class FakeBackupServer {
         });
       }
       if (this.networkDown) throw new TypeError('Failed to fetch');
-      const response = this.handle({
-        method: init.method ?? 'GET',
-        url,
-        headers: headerRecord(init.headers),
-        body: toBytes(init.body),
-      });
+      const response = this.respond(request);
       return new Response(response.body, { status: response.status, headers: response.headers });
     } finally {
       this.inFlight -= 1;
