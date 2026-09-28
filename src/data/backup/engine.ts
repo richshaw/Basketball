@@ -889,7 +889,7 @@ export class BackupEngine {
    */
   async enableWithCode(
     input: string,
-    options: { backup?: CloudBackup } = {},
+    options: { backup?: CloudBackup; newestVersion?: string } = {},
   ): Promise<CloudResult<void>> {
     if (!this.isAvailable()) return cloudFailure('unavailable', 'restore');
     let code: string;
@@ -909,8 +909,8 @@ export class BackupEngine {
       if (baseline) {
         // The restored backup may be an earlier version than the server's newest. The
         // parent chose it, so this phone carries on from the newest without calling
-        // that "another phone".
-        newest = (await this.newestVersion(keys)) ?? baseline.version;
+        // that "another phone" (as the caller saw it, when it says: no request then).
+        newest = options.newestVersion ?? (await this.newestVersion(keys)) ?? baseline.version;
       } else {
         const fetched = await this.fetchBackup(code);
         // 'not-found': the account exists but holds no backup, so there's nothing to protect.

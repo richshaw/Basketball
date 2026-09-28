@@ -1055,6 +1055,67 @@ describe('restoring a backup under the same code', () => {
     expect(await phone.engine.getStatus()).toMatchObject({ state: 'idle', pendingChanges: false });
     expect(h.server.putCount).toBe(4);
   });
+
+  it('carries on from the newest version the caller saw, without asking the server', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    await change(h);
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(2);
+
+    // A new phone restores the older backup, with the list it picked it from.
+    h.engine.stop();
+    await resetDatabase();
+    const phone = createEngineHarness({ fetch: h.server.fetch });
+    const versions = await phone.engine.listVersions(code);
+    if (!versions.ok) throw new Error(versions.error.message);
+    const [newest, older] = versions.value;
+    const fetched = await phone.engine.fetchBackup(code, { version: older?.version });
+    if (!fetched.ok) throw new Error(fetched.error.message);
+    await importAll(fetched.value.file, 'replace');
+    // No signal now: turning backup on needs none. (Asking the server would have failed
+    // and fallen back to the restored backup's own, older version.)
+    h.server.networkDown = true;
+    expect(
+      await phone.engine.enableWithCode(code, {
+        backup: fetched.value,
+        newestVersion: newest?.version,
+      }),
+    ).toEqual({ ok: true, value: undefined });
+    expect(await loadBackupState()).toMatchObject({ code, lastVersion: newest?.version });
+    await phone.engine.whenIdle();
+
+    // With signal back, it backs up on top of the newest, not taking it for another phone's.
+    h.server.networkDown = false;
+    expect((await phone.engine.backUpNow()).ok).toBe(true);
+    expect(await phone.engine.getStatus()).toMatchObject({ state: 'idle' });
+    expect(h.server.uploads).toHaveLength(3);
+  });
+
+  it('takes a newer version than the caller saw for another phone’s, and pauses', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    const fetched = await h.engine.fetchBackup(code);
+    if (!fetched.ok) throw new Error(fetched.error.message);
+    // Another phone backs up between the preview and the restore.
+    await uploadFromAnotherPhone(h, code);
+
+    await importAll(fetched.value.file, 'merge');
+    expect(
+      (
+        await h.engine.enableWithCode(code, {
+          backup: fetched.value,
+          newestVersion: fetched.value.version,
+        })
+      ).ok,
+    ).toBe(true);
+    await h.settle();
+    // Its backup wasn't replaced: this phone asks first.
+    expect((await h.engine.getStatus()).state).toBe('paused-other-device');
+    expect(h.server.putCount).toBe(2);
+  });
 });
 
 describe('an upload stored on the server but answered badly', () => {
