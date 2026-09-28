@@ -3,6 +3,7 @@ import {
   countShots,
   hasLocation,
   SHOT_ZONES,
+  shotChartSection,
   shotsByZone,
   shotsFromEvents,
   shotZoneOf,
@@ -148,5 +149,32 @@ describe('countShots', () => {
       attempted: 3,
     });
     expect(countShots([])).toEqual({ made: 0, attempted: 0 });
+  });
+});
+
+describe('shotChartSection', () => {
+  it('shows the map once any shot has a spot, whatever the setting', () => {
+    const someSpots = [shot(2, false), shot(3, true, corner), shot(2, true)];
+    for (const askForSpots of [true, false]) {
+      expect(shotChartSection([shot(2, true, layup)], askForSpots)).toBe('map');
+      expect(shotChartSection(someSpots, askForSpots)).toBe('map');
+    }
+  });
+
+  it('notes that no spots were recorded while the setting asks for them', () => {
+    expect(shotChartSection([shot(2, true), shot(3, false)], true)).toBe('noSpots');
+  });
+
+  it('leaves the section out with no spots and the setting off', () => {
+    expect(shotChartSection([shot(2, true), shot(3, false)], false)).toBeNull();
+  });
+
+  it('leaves the section out when there are no shots', () => {
+    expect(shotChartSection([], true)).toBeNull();
+    expect(shotChartSection([], false)).toBeNull();
+    // Free throws aren't shots on the map.
+    expect(
+      shotChartSection(shotsFromEvents([event('ft_made'), event('ft_miss')]), true),
+    ).toBeNull();
   });
 });

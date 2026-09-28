@@ -42,7 +42,7 @@ export function formatRecord({ wins, losses, ties }: GamesSummary['record']): st
   return ties > 0 ? `${wins}–${losses}–${ties}` : `${wins}–${losses}`;
 }
 
-/** '1 game', '10 games'. */
+/** '1 game', '10 games', with a no-break space so "games" never wraps onto a line alone. */
 export function formatGameCount(count: number): string {
-  return `${count} ${count === 1 ? 'game' : 'games'}`;
+  return `${count}\u00a0${count === 1 ? 'game' : 'games'}`;
 }
