@@ -17,7 +17,8 @@
  */
 import { newId } from '@/lib/id';
 import { nextTimestamp } from './db';
-import { getGame, recordStat } from './repo';
+import { getGame, recordStat, setStatLocation } from './repo';
+import { sameSpot } from './shots';
 import { isFieldGoalType } from './stats';
 import type { CourtPoint, StatEvent, StatType } from './types';
 import { statEventSchema } from './validation';
@@ -142,13 +143,19 @@ export function listPendingStats(gameId?: string): PendingStat[] {
   return stats.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
-/** Saves a tap as its stat. Idempotent: a tap saved already resolves to its stat. */
-export function savePendingStat(stat: PendingStat): Promise<StatEvent> {
-  return recordStat(stat.gameId, stat.type, stat.location, {
+/**
+ * Saves a tap as its stat, with its spot. Idempotent: a tap saved already resolves to
+ * its stat, which gets the tap's spot if it doesn't have it (a spot marked after a
+ * save that seemed to fail had landed).
+ */
+export async function savePendingStat(stat: PendingStat): Promise<StatEvent> {
+  const event = await recordStat(stat.gameId, stat.type, stat.location, {
     id: stat.id,
     at: stat.at,
     period: stat.period,
   });
+  if (!stat.location || sameSpot(event.location, stat.location)) return event;
+  return (await setStatLocation(event.id, stat.location)) ?? event;
 }
 
 export interface ReplayResult {
