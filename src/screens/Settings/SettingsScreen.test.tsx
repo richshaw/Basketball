@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { restoreStubs, simulateBrowser, stubProperties } from '@/components/InstallBanner/testing';
+import { restoreStubs, simulateBrowser, stubProperties } from '@/test/browser';
 import { seedDemoData } from '@/data/demo';
 import {
   createGame,

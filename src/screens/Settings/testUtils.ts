@@ -1,6 +1,6 @@
 /** Test helpers for the Settings screen's file sharing and downloads. Only tests import this. */
 import { vi } from 'vitest';
-import { stubProperties } from '@/components/InstallBanner/testing';
+import { stubProperties } from '@/test/browser';
 
 type Share = (data: ShareData) => Promise<void>;
 

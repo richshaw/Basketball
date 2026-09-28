@@ -1,17 +1,13 @@
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
-import { appUrl, emulateIPhoneSafeArea, expectRoute } from './support/app';
+import { appUrl, emulateIPhoneSafeArea, expectRoute, IPHONE_SAFARI_UA } from './support/app';
 import { seedDemoData } from './support/data';
 
 // Screenshots of the Settings screen, its sheets and the install banner, in the same
 // way as e2e/screenshots.spec.ts (run with `npm run screenshots`).
 
 const BACKUP_FIXTURE = fileURLToPath(new URL('./fixtures/settings-backup.json', import.meta.url));
-
-/** Safari on an iPhone: the only browser that gets the "Add to Home Screen" banner. */
-const IPHONE_SAFARI_UA =
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1';
 
 interface Screen {
   /** File name stem: saved as `<name>-light.png` and `<name>-dark.png`. */

@@ -8,7 +8,7 @@ import {
   rememberInstallBannerDismissed,
   shouldShowInstallBanner,
 } from './install';
-import { DESKTOP_CHROME_UA, IPHONE_SAFARI_UA } from './testing';
+import { DESKTOP_CHROME_UA, IPHONE_SAFARI_UA } from '@/test/browser';
 
 const IPAD_SAFARI_UA =
   'Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';

@@ -4,7 +4,7 @@ import { createGame } from '@/data/repo';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
 import { INSTALL_BANNER_SNOOZE_MS } from './install';
-import { DESKTOP_CHROME_UA, restoreStubs, simulateBrowser } from './testing';
+import { DESKTOP_CHROME_UA, restoreStubs, simulateBrowser } from '@/test/browser';
 
 const banner = () => screen.queryByRole('complementary', { name: 'Add to Home Screen' });
 

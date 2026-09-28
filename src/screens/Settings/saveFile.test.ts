@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { restoreStubs, stubProperties } from '@/components/InstallBanner/testing';
+import { restoreStubs, stubProperties } from '@/test/browser';
 import { downloadFile, saveFile } from './saveFile';
 import { captureDownloads, stubFileSharing } from './testUtils';
 

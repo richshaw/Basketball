@@ -2,14 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
-import { appUrl, screenHeading, tabBar } from './support/app';
+import { appUrl, IPHONE_SAFARI_UA, screenHeading, tabBar } from './support/app';
 import { clearAllData, demoGameId, exportAll, seedDemoData } from './support/data';
 
 const BACKUP_FIXTURE = fileURLToPath(new URL('./fixtures/settings-backup.json', import.meta.url));
-
-/** Safari on an iPhone: the only browser that gets the "Add to Home Screen" banner. */
-const IPHONE_SAFARI_UA =
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1';
 
 const notifications = (page: Page) => page.getByRole('status', { name: 'Notifications' });
 

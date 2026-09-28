@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { restoreStubs } from '@/components/InstallBanner/testing';
+import { restoreStubs } from '@/test/browser';
 import { seedDemoData } from '@/data/demo';
 import {
   createGame,
