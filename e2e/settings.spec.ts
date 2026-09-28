@@ -140,7 +140,10 @@ test('keeps settings across a relaunch', async ({ page }) => {
 
   await page.getByRole('switch', { name: 'Shot chart' }).tap();
   await page.getByRole('radio', { name: 'Halves' }).tap();
+  // Both controls follow the stored settings, so these confirm the writes landed
+  // before the relaunch.
   await expect(page.getByRole('switch', { name: 'Shot chart' })).not.toBeChecked();
+  await expect(page.getByRole('radio', { name: 'Halves' })).toBeChecked();
 
   await page.reload();
   await expect(screenHeading(page, 'Settings')).toBeVisible();
