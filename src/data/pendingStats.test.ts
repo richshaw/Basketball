@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   addPendingStat,
+  hasPendingStats,
+  holdUnsavedTaps,
   isPendingStat,
   listPendingStats,
   newPendingStat,
+  notifyPendingStats,
   removePendingStat,
+  watchPendingStats,
   type PendingStat,
 } from './pendingStats';
 
@@ -120,5 +124,38 @@ describe('the pending-stats journal', () => {
     expect(isPendingStat('kept')).toBe(false);
     expect(listPendingStats()).toEqual([]);
     expect(() => removePendingStat('kept')).not.toThrow();
+  });
+});
+
+describe('what is pending', () => {
+  it('counts the kept taps and the taps held in memory, kept or not', () => {
+    expect(hasPendingStats()).toBe(false);
+    addPendingStat(stat());
+    expect(hasPendingStats()).toBe(true);
+    removePendingStat('tap-1');
+    expect(hasPendingStats()).toBe(false);
+
+    let unsaved = true;
+    const release = holdUnsavedTaps({
+      gameId: 'game-1',
+      hasUnsaved: () => unsaved,
+      retryQuietly: () => Promise.resolve(),
+    });
+    expect(hasPendingStats()).toBe(true);
+    unsaved = false;
+    expect(hasPendingStats()).toBe(false);
+    unsaved = true;
+    release();
+    expect(hasPendingStats()).toBe(false);
+  });
+
+  it('tells its watchers when a tap may have become pending, until they stop', () => {
+    const listener = vi.fn();
+    const stop = watchPendingStats(listener);
+    notifyPendingStats();
+    expect(listener).toHaveBeenCalledTimes(1);
+    stop();
+    notifyPendingStats();
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 });

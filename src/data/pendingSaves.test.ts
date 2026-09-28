@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { replayPendingStats, savePendingStat } from './pendingSaves';
-import { addPendingStat, removePendingStat, type PendingStat } from './pendingStats';
+import {
+  replayPendingStats,
+  retryPendingStats,
+  savePendingStat,
+  startPendingStatsRetry,
+} from './pendingSaves';
+import {
+  addPendingStat,
+  holdUnsavedTaps,
+  notifyPendingStats,
+  removePendingStat,
+  type PendingStat,
+  type UnsavedTapHolder,
+} from './pendingStats';
 import * as repo from './repo';
 import { createGame, deleteGame, endGame, getAllEvents, getGameEvents, type NewGame } from './repo';
 import type { Game } from './types';
@@ -8,9 +20,38 @@ import type { Game } from './types';
 const T0 = new Date(2026, 8, 27, 18, 0).getTime();
 const KEY_PREFIX = 'hoop-stats.pendingStat.';
 
+/** Undone after each test: retries started, holders registered. */
+const cleanups: (() => void)[] = [];
+
 afterEach(() => {
   vi.useRealTimers();
+  for (let cleanup = cleanups.pop(); cleanup; cleanup = cleanups.pop()) cleanup();
 });
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function eventTypes(gameId: string) {
+  return (await getGameEvents(gameId)).map((event) => event.type);
+}
+
+/** Starts the app-wide retry for this test only. */
+function startRetry(delaysMs: readonly number[]) {
+  cleanups.push(startPendingStatsRetry({ delaysMs }));
+}
+
+/** Taps held in memory by a (fake) tracking session, for this test only. */
+function holdTaps(holder: UnsavedTapHolder) {
+  cleanups.push(holdUnsavedTaps(holder));
+}
+
+/** Makes every save fail, as when WebKit has lost its IndexedDB connection. */
+function failSaves() {
+  return vi
+    .spyOn(repo, 'recordStat')
+    .mockRejectedValue(
+      new DOMException('Connection to Indexed Database server lost.', 'UnknownError'),
+    );
+}
 
 function newGame(overrides: Partial<NewGame> = {}): Promise<Game> {
   return createGame({
@@ -138,5 +179,136 @@ describe('replayPendingStats', () => {
       throw new DOMException('The operation is insecure.', 'SecurityError');
     });
     await expect(replayPendingStats()).resolves.toEqual({ saved: 0, dropped: 0, failed: 0 });
+  });
+});
+
+describe('retryPendingStats', () => {
+  it('saves the kept taps, then tries the taps held in memory again, quietly', async () => {
+    const game = await newGame();
+    addPendingStat(stat({ gameId: game.id }));
+    const order: string[] = [];
+    const { recordStat: save } = repo;
+    vi.spyOn(repo, 'recordStat').mockImplementation((...args) => {
+      order.push('kept tap');
+      return save(...args);
+    });
+    holdTaps({
+      gameId: 'held',
+      hasUnsaved: () => true,
+      retryQuietly: () => {
+        order.push('held taps');
+        return Promise.resolve();
+      },
+    });
+
+    await retryPendingStats();
+    expect(order).toEqual(['kept tap', 'held taps']);
+    expect(await eventTypes(game.id)).toEqual(['stl']);
+  });
+
+  it('joins a try already under way, and never rejects', async () => {
+    holdTaps({
+      gameId: 'held',
+      hasUnsaved: () => true,
+      retryQuietly: () => Promise.reject(new Error('Disk error')),
+    });
+    const first = retryPendingStats();
+    expect(retryPendingStats()).toBe(first);
+    await expect(first).resolves.toBeUndefined();
+    expect(retryPendingStats()).not.toBe(first);
+  });
+});
+
+describe('startPendingStatsRetry (the app-wide retry)', () => {
+  it('saves the taps an earlier page kept, at once', async () => {
+    const game = await newGame();
+    addPendingStat(stat({ gameId: game.id }));
+    startRetry([60_000]);
+    await vi.waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
+    expect(journalKeys()).toEqual([]);
+  });
+
+  it('keeps trying on a timer that backs off while a tap is not saved, and stops once it is', async () => {
+    const game = await newGame();
+    addPendingStat(stat({ gameId: game.id }));
+    const failing = failSaves();
+    const tries: number[] = [];
+    failing.mockImplementation(() => {
+      tries.push(performance.now());
+      return Promise.reject(new DOMException('Connection lost.', 'UnknownError'));
+    });
+    startRetry([40, 300]);
+
+    // At once, then 40 ms later, then every 300 ms.
+    await vi.waitFor(() => expect(tries).toHaveLength(4), { timeout: 3000 });
+    const gaps = tries.slice(1).map((time, index) => time - (tries[index] ?? 0));
+    expect(gaps[0]).toBeGreaterThanOrEqual(35);
+    expect(gaps[0]).toBeLessThan(250);
+    expect(gaps[1]).toBeGreaterThanOrEqual(290);
+    expect(gaps[2]).toBeGreaterThanOrEqual(290);
+
+    // The database works again: saved by the next try, and then nothing more is tried.
+    failing.mockRestore();
+    await vi.waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']), {
+      timeout: 2000,
+    });
+    const saves = vi.spyOn(repo, 'recordStat');
+    await sleep(300);
+    expect(saves).not.toHaveBeenCalled();
+    expect(journalKeys()).toEqual([]);
+  });
+
+  it('tries again when the app is shown again, and when the connection comes back', async () => {
+    const game = await newGame();
+    // A long timer: only the app's own events can bring the tries below.
+    startRetry([60_000]);
+    addPendingStat(stat({ id: 'shown', gameId: game.id, at: T0 }));
+    notifyPendingStats();
+
+    expect(document.visibilityState).toBe('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
+
+    addPendingStat(stat({ id: 'online', gameId: game.id, type: 'blk', at: T0 + 1 }));
+    window.dispatchEvent(new Event('online'));
+    await vi.waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl', 'blk']));
+    expect(journalKeys()).toEqual([]);
+  });
+
+  it('tries the taps held in memory again, kept or not, once told a save failed', async () => {
+    let unsaved = true;
+    const retryQuietly = vi.fn(() => {
+      unsaved = false;
+      return Promise.resolve();
+    });
+    startRetry([30]);
+    await sleep(10);
+    holdTaps({ gameId: 'g', hasUnsaved: () => unsaved, retryQuietly });
+    expect(retryQuietly).not.toHaveBeenCalled();
+
+    // A tracking session's save failed (e.g. after the live game screen closed).
+    notifyPendingStats();
+    await vi.waitFor(() => expect(retryQuietly).toHaveBeenCalledTimes(1));
+    // Nothing is pending any more: no more tries.
+    await sleep(150);
+    expect(retryQuietly).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing while nothing is pending, and nothing once stopped', async () => {
+    const replay = vi.spyOn(repo, 'getGame');
+    const stop = startPendingStatsRetry({ delaysMs: [20] });
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('online'));
+    notifyPendingStats();
+    await sleep(100);
+    expect(replay).not.toHaveBeenCalled();
+
+    stop();
+    const game = await newGame();
+    addPendingStat(stat({ gameId: game.id }));
+    notifyPendingStats();
+    document.dispatchEvent(new Event('visibilitychange'));
+    await sleep(100);
+    expect(await eventTypes(game.id)).toEqual([]);
   });
 });

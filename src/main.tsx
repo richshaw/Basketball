@@ -5,7 +5,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { cloudBackupConsole, startBackupScheduler } from '@/data/backup/cloudBackup';
 import { seedDemoData } from '@/data/demo';
-import { replayPendingStats } from '@/data/pendingSaves';
+import { startPendingStatsRetry } from '@/data/pendingSaves';
 import { requestPersistentStorage } from '@/data/persistence';
 import { clearAllData, exportAll } from '@/data/transfer';
 import { App } from './App';
@@ -28,7 +28,8 @@ createRoot(container).render(
   </StrictMode>,
 );
 
-// Stats that an earlier page kept but couldn't save before it closed (see
-// src/data/pendingStats.ts): saved now, in the background. Nothing waits on it, and
-// it never shows anything: the saved stats simply appear.
-void replayPendingStats();
+// Stats not saved yet (see src/data/pendingSaves.ts): those an earlier page kept but
+// couldn't save before it closed are saved now, and any tap whose save fails is tried
+// again while the app is open, whatever screen is showing. Nothing waits on it, and it
+// never shows anything: the saved stats simply appear.
+startPendingStatsRetry();

@@ -1,12 +1,17 @@
 /**
- * Saving the taps kept in the pending-stats journal (pendingStats.ts) into the
- * database: one tap (savePendingStat), or every kept tap (replayPendingStats). Saving
- * is idempotent (recordStat with the tap's id), so a tap saved twice is still one stat.
+ * Saving the taps that aren't saved yet into the database: one kept tap
+ * (savePendingStat), every kept tap (replayPendingStats), and the app-wide retry
+ * (startPendingStatsRetry), which keeps trying while any tap isn't saved, whether or
+ * not the live game screen is open. Saving is idempotent (recordStat with the tap's
+ * id), so a tap saved twice is still one stat.
  */
 import {
+  hasPendingStats,
   isPendingStat,
   listPendingStats,
   removePendingStat,
+  retryHeldTaps,
+  watchPendingStats,
   type PendingStat,
 } from './pendingStats';
 import { getGame, recordStat } from './repo';
@@ -63,4 +68,115 @@ export async function replayPendingStats(): Promise<ReplayResult> {
     }
   }
   return result;
+}
+
+let round: Promise<void> | undefined;
+
+/**
+ * Tries once to save every tap that isn't saved yet: the kept ones (replayPendingStats),
+ * then the ones the tracking sessions hold, kept or not, quietly. A call while one is
+ * under way joins it. Never rejects.
+ */
+export function retryPendingStats(): Promise<void> {
+  round ??= (async () => {
+    try {
+      // Kept taps first: a session then drops a kept tap saved meanwhile, rather than
+      // saving it again.
+      await replayPendingStats();
+      await retryHeldTaps();
+    } finally {
+      round = undefined;
+    }
+  })();
+  return round;
+}
+
+/**
+ * How long the app-wide retry waits to try again while a tap isn't saved: the first
+ * wait, then longer ones, and the last one from then on.
+ */
+export const PENDING_RETRY_DELAYS_MS: readonly number[] = [15_000, 30_000, 60_000];
+
+export interface PendingStatsRetryOptions {
+  /** The waits between tries (PENDING_RETRY_DELAYS_MS by default). */
+  delaysMs?: readonly number[];
+}
+
+/**
+ * Starts the app-wide retry of taps that aren't saved yet (main.tsx starts it once,
+ * after the first render). It tries at once (taps an earlier page kept), then, while
+ * any tap isn't saved (kept in the journal, or held by a tracking session even if it
+ * couldn't be kept), again when the app is shown again, when the connection comes back
+ * and on a timer that backs off. It stops as soon as nothing is pending, runs whether
+ * or not the live game screen is open, and never shows anything: saved stats simply
+ * appear. Returns a function that stops it.
+ */
+export function startPendingStatsRetry({
+  delaysMs = PENDING_RETRY_DELAYS_MS,
+}: PendingStatsRetryOptions = {}): () => void {
+  let stopped = false;
+  let busy = false;
+  // Asked to try while a try was under way: another one follows it.
+  let again = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Tries in a row that left something unsaved: how far the timer has backed off.
+  let misses = 0;
+
+  const schedule = () => {
+    if (stopped || busy || timer !== undefined) return;
+    if (!hasPendingStats()) {
+      misses = 0;
+      return;
+    }
+    const delay = delaysMs[Math.min(Math.max(misses - 1, 0), delaysMs.length - 1)] ?? 0;
+    timer = setTimeout(() => {
+      timer = undefined;
+      void run();
+    }, delay);
+  };
+
+  const run = async (): Promise<void> => {
+    if (stopped) return;
+    if (busy) {
+      again = true;
+      return;
+    }
+    clearTimeout(timer);
+    timer = undefined;
+    busy = true;
+    try {
+      await retryPendingStats();
+    } finally {
+      busy = false;
+    }
+    if (stopped) return;
+    const pending = hasPendingStats();
+    if (again) {
+      again = false;
+      if (pending) return run();
+    }
+    misses = pending ? misses + 1 : 0;
+    schedule();
+  };
+
+  const runIfPending = () => {
+    if (hasPendingStats()) void run();
+  };
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') runIfPending();
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('online', runIfPending);
+  // A tap's save failed (or a tap was left unsaved): make sure a try is coming.
+  const unwatch = watchPendingStats(schedule);
+  void run();
+
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    timer = undefined;
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.removeEventListener('online', runIfPending);
+    unwatch();
+  };
 }

@@ -507,6 +507,78 @@ describe('TrackingSession', () => {
     });
   });
 
+  describe('retryQuietly (the app-wide retry)', () => {
+    it('tries a tap again without saying so on screen, and settles once it has', async () => {
+      const { session, saves, save, fail, unsavedTypes } = setUp();
+      session.record('stl');
+      fail(0);
+      await flush();
+      expect(session.hasUnsaved()).toBe(true);
+      const snapshot = session.getSnapshot();
+
+      let settled = false;
+      void session.retryQuietly().then(() => {
+        settled = true;
+      });
+      expect(saves).toHaveLength(2);
+      // Nothing on screen changes while it's tried: no "Saving again…" every few seconds.
+      expect(session.getSnapshot()).toBe(snapshot);
+      await flush();
+      expect(settled).toBe(false);
+      save(1);
+      await flush();
+      expect(settled).toBe(true);
+      expect(unsavedTypes()).toEqual([]);
+      expect(session.hasUnsaved()).toBe(false);
+      expect(keptIds()).toEqual([]);
+    });
+
+    it('says it is saving again if Retry is tapped meanwhile, without saving twice', async () => {
+      const { session, saves, save, fail } = setUp();
+      session.record('stl');
+      fail(0);
+      await flush();
+      void session.retryQuietly();
+      expect(session.getSnapshot().retrying).toBe(false);
+      session.retry();
+      expect(saves).toHaveLength(2);
+      expect(session.getSnapshot().retrying).toBe(true);
+      save(1);
+      await flush();
+      expect(session.getSnapshot()).toMatchObject({ unsaved: [], retrying: false });
+    });
+
+    it('tries a tap the journal could not keep too', async () => {
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      });
+      const { session, save, fail, storedTypes } = setUp();
+      session.record('ast');
+      fail(0);
+      await flush();
+      expect(session.getSnapshot().unsavedKept).toBe(false);
+      const tried = session.retryQuietly();
+      save(1);
+      await tried;
+      expect(storedTypes()).toEqual(['ast']);
+      expect(session.hasUnsaved()).toBe(false);
+    });
+
+    it('has nothing to try once every tap is saved or taken back', async () => {
+      const { session, saves, save, fail } = setUp();
+      const steal = session.record('stl');
+      session.record('ast');
+      fail(0);
+      save(1);
+      await flush();
+      expect(session.hasUnsaved()).toBe(true);
+      await session.undo(steal).removal;
+      expect(session.hasUnsaved()).toBe(false);
+      await session.retryQuietly();
+      expect(saves).toHaveLength(2);
+    });
+  });
+
   describe('saveAll (before the game ends)', () => {
     it('tries the unsaved taps again, waits for every save, and says what still is not saved', async () => {
       const { session, saves, save, fail } = setUp();

@@ -55,7 +55,12 @@ describe('not saved yet', () => {
     expect(notSavedTitle(1)).toBe("1 stat isn't saved yet");
     expect(notSavedTitle(3)).toBe("3 stats aren't saved yet");
     expect(unsavedNote(1, true)).toBe("It's kept on this phone and will be saved automatically.");
-    expect(unsavedNote(2, false)).toBe("They're not kept on this phone, so keep the app open.");
+    expect(unsavedNote(1, false)).toBe(
+      "It's not kept on this phone. Keep the app open until it's saved.",
+    );
+    expect(unsavedNote(2, false)).toBe(
+      "They're not kept on this phone. Keep the app open until they're saved.",
+    );
     expect(notSavedMessage(1, true)).toBe(
       "1 stat isn't saved yet. It's kept on this phone and will be saved automatically.",
     );

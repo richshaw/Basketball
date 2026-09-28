@@ -11,6 +11,10 @@
  *   AUTO_RETRY_MS, then before each new tap, when the page is shown again, and on
  *   Retry. The screen lists these taps until they're saved. A new session (e.g. after
  *   a reload) starts with the taps an earlier page kept for its game.
+ * - The app-wide retry (src/data/pendingSaves.ts) also tries them again, quietly, for
+ *   as long as the page is open, whether or not the screen is: sessions made by
+ *   trackingSession() hold their taps for it (holdUnsavedTaps), including any the
+ *   journal couldn't keep.
  * - The session holds a tap only until it's among the saved stats the screen shows
  *   (syncSavedEvents): saved stats are the database's business. Undo takes back the
  *   most recent stat by tap time, a tap or a saved stat; one that turns out to be gone
@@ -21,10 +25,13 @@
 import { savePendingStat } from '@/data/pendingSaves';
 import {
   addPendingStat,
+  holdUnsavedTaps,
   listPendingStats,
   newPendingStat,
+  notifyPendingStats,
   removePendingStat,
   type PendingStat,
+  type UnsavedTapHolder,
 } from '@/data/pendingStats';
 import { deleteStat, setCurrentPeriod } from '@/data/repo';
 import type { StatEvent, StatType } from '@/data/types';
@@ -71,6 +78,11 @@ interface TapRecord {
   kept: boolean;
   /** Tried again on its own already (that happens once). */
   autoRetried: boolean;
+  /**
+   * The save under way is the app-wide retry's, in the background: the screen doesn't
+   * say it's saving again (unless Retry is tapped meanwhile).
+   */
+  quiet: boolean;
   /** Settles (never rejects) once the save under way is done. */
   settled: Promise<void>;
   /** Taken back: never saved again, and its stat removed if a save landed anyway. */
@@ -125,7 +137,7 @@ export interface SessionSnapshot {
   readonly unsaved: readonly Tap[];
   /** Every one of those is kept in the journal (on this phone, even across a relaunch). */
   readonly unsavedKept: boolean;
-  /** Some of them are being saved again right now. */
+  /** Some of them are being saved again right now (not counting quiet background tries). */
   readonly retrying: boolean;
 }
 
@@ -152,7 +164,7 @@ function isTapRecord(item: TapRecord | StatEvent): item is TapRecord {
   return 'stat' in item;
 }
 
-export class TrackingSession {
+export class TrackingSession implements UnsavedTapHolder {
   /** Taps not among the saved stats yet, and taken-back taps still being dealt with. */
   private taps: TapRecord[] = [];
   /** The game's saved stats, oldest first, as the screen last showed them. */
@@ -185,6 +197,7 @@ export class TrackingSession {
         hasFailed: true,
         kept: true,
         autoRetried: false,
+        quiet: false,
         settled: Promise.resolve(),
         undone: false,
         orphan: false,
@@ -207,7 +220,7 @@ export class TrackingSession {
     const pending = this.taps.filter((record) => !record.undone);
     const unsaved = pending.filter((record) => record.hasFailed && record.status !== 'saved');
     const unsavedKept = unsaved.every((record) => record.kept);
-    const retrying = unsaved.some((record) => record.status === 'saving');
+    const retrying = unsaved.some((record) => record.status === 'saving' && !record.quiet);
     const previous = this.snapshot as SessionSnapshot | undefined;
     if (
       previous?.period === this.period &&
@@ -279,6 +292,7 @@ export class TrackingSession {
       hasFailed: false,
       kept,
       autoRetried: false,
+      quiet: false,
       settled: Promise.resolve(),
       undone: false,
       orphan: false,
@@ -288,8 +302,9 @@ export class TrackingSession {
     return tapOf(record);
   }
 
-  private save(record: TapRecord): void {
+  private save(record: TapRecord, quiet = false): void {
     record.status = 'saving';
+    record.quiet = quiet;
     record.settled = attempt(() => this.deps.recordStat(record.stat)).then(
       () => {
         record.status = 'saved';
@@ -309,6 +324,8 @@ export class TrackingSession {
             record.autoRetried = true;
             this.scheduleRetry();
           }
+          // The app-wide retry keeps at it, even once the screen has closed.
+          notifyPendingStats();
         }
         this.emit();
       },
@@ -326,16 +343,43 @@ export class TrackingSession {
 
   /**
    * Tries again to save the taps that couldn't be saved (not ones being saved or taken
-   * back), and to remove taken-back taps whose removal failed.
+   * back), and to remove taken-back taps whose removal failed. Returns those tries
+   * (each settles, never rejects).
    */
-  retry(): void {
+  private retryTaps(quiet: boolean): Promise<unknown>[] {
+    const tries: Promise<unknown>[] = [];
     for (const record of this.taps) {
       if (record.undone) {
-        if (record.orphan) void this.removeOrphan(record);
+        if (record.orphan) tries.push(this.removeOrphan(record));
       } else if (record.status === 'failed') {
-        this.save(record);
+        this.save(record, quiet);
+        tries.push(record.settled);
+      } else if (record.status === 'saving' && record.quiet && !quiet) {
+        // Retry tapped while the app-wide retry was saving it: say it's being saved.
+        record.quiet = false;
+        this.emit();
       }
     }
+    return tries;
+  }
+
+  /** Retry (and each new tap): tries again to save the taps that couldn't be saved. */
+  retry(): void {
+    // Each try settles on its own and never rejects: nothing to wait for here.
+    void Promise.all(this.retryTaps(false));
+  }
+
+  /**
+   * The app-wide retry's go: the same, without saying so on screen (only a save that
+   * lands changes anything there). Settles once the tries it started are done.
+   */
+  async retryQuietly(): Promise<void> {
+    await Promise.all(this.retryTaps(true));
+  }
+
+  /** Whether it holds a tap not saved yet, or a taken-back one whose removal failed. */
+  hasUnsaved(): boolean {
+    return this.taps.some((record) => (record.undone ? record.orphan : record.status !== 'saved'));
   }
 
   /**
@@ -359,6 +403,8 @@ export class TrackingSession {
       clearTimeout(timer);
     }
     const notSaved = this.taps.filter((record) => !record.undone && record.status !== 'saved');
+    // Left for later (e.g. "End anyway"): the app-wide retry keeps trying them.
+    if (notSaved.length > 0) notifyPendingStats();
     return { count: notSaved.length, kept: notSaved.every((record) => record.kept) };
   }
 
@@ -555,12 +601,16 @@ export class TrackingSession {
 
 const sessions = new Map<string, TrackingSession>();
 
-/** The session of a game, made on first use; it lasts as long as the page. */
+/**
+ * The session of a game, made on first use; it lasts as long as the page, holding its
+ * taps not saved yet for the app-wide retry even after the screen closes.
+ */
 export function trackingSession(gameId: string, period: number): TrackingSession {
   let session = sessions.get(gameId);
   if (!session) {
     session = new TrackingSession(gameId, period);
     sessions.set(gameId, session);
+    holdUnsavedTaps(session);
   }
   return session;
 }

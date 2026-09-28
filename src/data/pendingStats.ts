@@ -136,3 +136,65 @@ export function listPendingStats(gameId?: string): PendingStat[] {
   }
   return stats.sort((a, b) => a.at - b.at || compareIds(a.id, b.id));
 }
+
+// ---------------------------------------------------------------------------
+// Taps held in memory, and whether anything is pending
+
+/**
+ * Taps held in memory that aren't saved yet: a tracking session's (see
+ * src/screens/TrackGame/session.ts), including any it couldn't keep in the journal.
+ */
+export interface UnsavedTapHolder {
+  /** The game whose taps it holds. */
+  readonly gameId: string;
+  /** Whether it holds a tap that isn't saved yet (or a taken-back one to remove again). */
+  hasUnsaved(): boolean;
+  /**
+   * Tries again to save them without showing it on screen (only a save that lands
+   * changes anything there). Settles once those tries are done; never rejects.
+   */
+  retryQuietly(): Promise<void>;
+}
+
+const holders = new Set<UnsavedTapHolder>();
+
+/** Registers taps held in memory for the app-wide retry. Returns a function that unregisters them. */
+export function holdUnsavedTaps(holder: UnsavedTapHolder): () => void {
+  holders.add(holder);
+  return () => {
+    holders.delete(holder);
+  };
+}
+
+/** Tries again to save the taps held in memory (quietly). Never rejects. */
+export async function retryHeldTaps(): Promise<void> {
+  await Promise.all(
+    [...holders].map(async (holder) => {
+      try {
+        await holder.retryQuietly();
+      } catch {
+        // Tried again next time.
+      }
+    }),
+  );
+}
+
+/** Whether any tap isn't saved yet: kept in the journal (by this page or an earlier one), or held in memory. */
+export function hasPendingStats(): boolean {
+  return listPendingStats().length > 0 || [...holders].some((holder) => holder.hasUnsaved());
+}
+
+const listeners = new Set<() => void>();
+
+/** Calls `listener` whenever a tap may have become pending. Returns a function that stops it. */
+export function watchPendingStats(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Says a tap may be pending now (e.g. its save just failed), to wake the app-wide retry. */
+export function notifyPendingStats(): void {
+  for (const listener of [...listeners]) listener();
+}

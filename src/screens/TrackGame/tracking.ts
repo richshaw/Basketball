@@ -46,13 +46,14 @@ export function withTaps(saved: readonly Counted[], taps: readonly Counted[]): r
 
 /**
  * What happens to stats not saved yet: kept on this phone (the pending-stats journal)
- * and saved later, or (with no room to keep them) only while the app stays open.
+ * and saved automatically, even after a relaunch; or (with no room to keep them) saved
+ * automatically only while the app stays open (the app-wide retry, pendingSaves.ts).
  */
 export function unsavedNote(count: number, kept: boolean): string {
-  const they = count === 1 ? "It's" : "They're";
+  const [they, theyAre] = count === 1 ? ["It's", "it's"] : ["They're", "they're"];
   return kept
     ? `${they} kept on this phone and will be saved automatically.`
-    : `${they} not kept on this phone, so keep the app open.`;
+    : `${they} not kept on this phone. Keep the app open until ${theyAre} saved.`;
 }
 
 /** E.g. "1 stat isn't saved yet" or "2 stats aren't saved yet". */

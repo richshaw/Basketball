@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
-import { replayPendingStats } from '@/data/pendingSaves';
+import { replayPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
 import { listPendingStats } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
 import {
@@ -822,8 +822,100 @@ describe('TrackGameScreen', () => {
       });
       fireEvent.click(statButton('Steal'));
       expect(await screen.findByRole('alert')).toHaveTextContent(
-        "It's not kept on this phone, so keep the app open.",
+        "It's not kept on this phone. Keep the app open until it's saved.",
       );
+    });
+
+    describe('once the screen has closed', () => {
+      // The app-wide retry, as main.tsx starts it, with short waits.
+      let stopRetry = () => {};
+      beforeEach(() => {
+        stopRetry = startPendingStatsRetry({ delaysMs: [100] });
+      });
+      afterEach(() => {
+        stopRetry();
+      });
+
+      /** Ends the game with its sheet, saying "End anyway" to the stat not saved. */
+      async function endAnyway(user: ReturnType<typeof renderRoute>['user'], notice: string) {
+        await user.click(screen.getByRole('button', { name: 'End game' }));
+        const sheet = screen.getByRole('dialog', { name: 'Final score' });
+        await user.click(within(sheet).getByRole('button', { name: 'End game' }));
+        expect(await within(sheet).findByRole('alert')).toHaveTextContent(notice);
+        await user.click(within(sheet).getByRole('button', { name: 'End anyway' }));
+      }
+
+      /** Waits until the report (on screen) lists the Q1 play `name`. */
+      async function expectOnReport(name: RegExp) {
+        const plays = await screen.findByRole(
+          'list',
+          { name: '1st quarter plays' },
+          { timeout: 3000 },
+        );
+        expect(within(plays).getByRole('button', { name })).toBeInTheDocument();
+      }
+
+      it('End anyway: it is saved once the database works again, with no tracker or restart', async () => {
+        const game = await newGame();
+        const { user, router } = await renderTracking(game);
+        const failing = vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Lost'));
+        fireEvent.click(statButton('Steal'));
+        await screen.findByRole('alert');
+        // The retries fail too, for a while.
+        await waitFor(() => expect(failing.mock.calls.length).toBeGreaterThanOrEqual(3));
+        await endAnyway(
+          user,
+          "1 stat isn't saved yet. It's kept on this phone and will be saved automatically.",
+        );
+        await waitFor(() => expect(router.state.location.pathname).toBe(paths.gameReport(game.id)));
+        expect(await eventTypes(game.id)).toEqual([]);
+
+        // IndexedDB works again: the report gets the stat on its own.
+        failing.mockRestore();
+        await expectOnReport(/Steal/);
+        expect(await eventTypes(game.id)).toEqual(['stl']);
+        expect(listPendingStats()).toEqual([]);
+      });
+
+      it('not kept on the phone: keeping the app open saves it, as the screen says', async () => {
+        const game = await newGame();
+        const { user, router } = await renderTracking(game);
+        const failing = vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Lost'));
+        const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+          throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+        });
+        fireEvent.click(statButton('Block'));
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          "It's not kept on this phone. Keep the app open until it's saved.",
+        );
+        await endAnyway(
+          user,
+          "1 stat isn't saved yet. It's not kept on this phone. Keep the app open until it's saved.",
+        );
+        await waitFor(() => expect(router.state.location.pathname).toBe(paths.gameReport(game.id)));
+        expect(listPendingStats()).toEqual([]);
+
+        failing.mockRestore();
+        full.mockRestore();
+        await expectOnReport(/Block/);
+        expect(await eventTypes(game.id)).toEqual(['blk']);
+      });
+
+      it('Games: it is saved on its own later, whatever screen is showing', async () => {
+        const game = await newGame();
+        const { user, router } = await renderTracking(game);
+        const failing = vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Lost'));
+        fireEvent.click(statButton('Assist'));
+        await screen.findByRole('alert');
+        await user.click(screen.getByRole('link', { name: 'Games' }));
+        expect(router.state.location.pathname).toBe(paths.home);
+
+        failing.mockRestore();
+        await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['ast']), {
+          timeout: 3000,
+        });
+        expect(router.state.location.pathname).toBe(paths.home);
+      });
     });
   });
 
