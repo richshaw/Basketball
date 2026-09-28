@@ -1,0 +1,13 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  /* Room for the fixed tab bar so it never covers the end of the page. */
+  padding-bottom: calc(var(--tab-bar-height) + var(--safe-bottom));
+}
+
+.content {
+  flex: 1;
+  /* ScreenBody needn't clear the home indicator: the tab bar below already does. */
+  --screen-body-inset-bottom: 0px;
+}

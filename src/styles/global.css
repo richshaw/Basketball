@@ -1,0 +1,130 @@
+/*
+ * Global element defaults and a few utilities. Component styles live in a
+ * *.module.css file next to each component and only use tokens from tokens.css.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  /* No rubber-band bounce or pull-to-refresh: the app should feel fixed in place. */
+  overscroll-behavior: none;
+}
+
+body {
+  min-height: 100dvh;
+  /* Landscape on notched iPhones: keep content clear of the sensor housing. */
+  padding-right: var(--safe-right);
+  padding-left: var(--safe-left);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* iOS zooms the page when a focused field's text is smaller than 16px. */
+input,
+select,
+textarea {
+  font-size: max(16px, var(--font-size-md));
+}
+
+button {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+a {
+  color: var(--color-accent-text);
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: var(--line-height-tight);
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+/* Taps fire immediately: no double-tap-to-zoom delay. */
+a,
+button,
+input,
+select,
+textarea,
+label,
+summary,
+[role='button'] {
+  touch-action: manipulation;
+}
+
+/* Buttons behave like native controls: long-press never selects text or opens a callout. */
+button,
+[role='button'] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Utilities */
+
+/* Fixed-width digits so changing numbers don't shift the layout. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hidden visually but still read by screen readers. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

@@ -1,0 +1,6 @@
+/* Equal-width buttons, as wide as the longest label. */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
