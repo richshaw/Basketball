@@ -1,0 +1,191 @@
+import { Fragment, useState } from 'react';
+import { Button } from '@/components/Button/Button';
+import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
+import { GroupedList } from '@/components/GroupedList/GroupedList';
+import { ListRow } from '@/components/GroupedList/ListRow';
+import { Sheet } from '@/components/Sheet/Sheet';
+import { useToast } from '@/components/Toast/toastContext';
+import { importAll, type ExportFile, type ImportMode } from '@/data/transfer';
+import { cx } from '@/lib/cx';
+import { ActionRow } from './ActionRow';
+import { backupSummary, nothingNewMessage, restoredMessage } from './backupFiles';
+import styles from './RestoreSheet.module.css';
+
+/**
+ * What the sheet shows: a backup ready to restore (with how many games the phone had
+ * when it was picked, so the choices don't change as it restores), or why a file
+ * can't be restored (`notABackup`: the wrong file was picked, so say which to pick).
+ */
+export type RestoreRequest =
+  | { kind: 'preview'; backup: ExportFile; phoneGameCount: number }
+  | { kind: 'error'; message: string; notABackup: boolean };
+
+export interface RestoreSheetProps {
+  open: boolean;
+  /** Kept after closing, so the sheet keeps its content while it slides away. */
+  request: RestoreRequest | null;
+  onClose: () => void;
+}
+
+const RESTORE_FAILED = "Couldn't restore the backup. Nothing on this phone was changed.";
+
+/** 'The game on this phone and its stats' or 'All 3 games on this phone and their stats'. */
+function phoneGamesAndStats(count: number): string {
+  return count === 1
+    ? 'The game on this phone and its stats'
+    : `All ${count} games on this phone and their stats`;
+}
+
+/** 'a and b', or 'a, b, and c'. */
+function listInWords(items: readonly string[]): string {
+  if (items.length <= 2) return items.join(' and ');
+  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
+}
+
+/**
+ * The Replace confirmation: everything it erases. That's the player and the settings
+ * too, not just the games (a backup without settings leaves this phone's alone).
+ */
+function replaceWarning(phoneGameCount: number, backup: ExportFile): string {
+  const erased = [phoneGamesAndStats(phoneGameCount), "the player's name and number"];
+  if (backup.settings) erased.push('your settings');
+  return `${listInWords(erased)} will be erased and replaced with what's in the backup. This can't be undone.`;
+}
+
+/** The Replace row's subtitle, e.g. 'Erases everything on this phone first: all 3 games, the player and your settings.' */
+function replaceSubtitle(phoneGameCount: number, backup: ExportFile): string {
+  const games = phoneGameCount === 1 ? 'its game' : `all ${phoneGameCount} games`;
+  const rest = backup.settings ? ', the player and your settings' : ' and the player';
+  return `Erases everything on this phone first: ${games}${rest}.`;
+}
+
+/**
+ * Shows what a backup holds and restores it: added to this phone's data (merge,
+ * recommended) or replacing it (after a confirmation). With no games on the phone
+ * it just adds the backup: a merge, so the player's name and the settings set up
+ * here are kept (Replace would erase them too).
+ */
+export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
+  const confirm = useConfirm();
+  const toast = useToast();
+  const [restoring, setRestoring] = useState(false);
+  // The request whose "Add" found nothing new: a new file starts without the note.
+  const [nothingNewFor, setNothingNewFor] = useState<RestoreRequest | null>(null);
+
+  if (!request) return null;
+
+  if (request.kind === 'error') {
+    return (
+      <Sheet
+        open={open}
+        onClose={onClose}
+        title="Can't restore this file"
+        description={request.message}
+        hideCloseButton
+        footer={
+          <Button variant="secondary" size="lg" onClick={onClose}>
+            OK
+          </Button>
+        }
+      >
+        {request.notABackup ? (
+          <p className={styles.note}>
+            Choose a backup saved from Hoop Stats. Its name starts with <em>hoop-stats-backup</em>.
+          </p>
+        ) : null}
+      </Sheet>
+    );
+  }
+
+  const { backup, phoneGameCount } = request;
+  const phoneIsEmpty = phoneGameCount === 0;
+
+  const restore = async (mode: ImportMode) => {
+    if (restoring) return;
+    if (mode === 'replace') {
+      const confirmed = await confirm({
+        title: 'Replace everything on this phone?',
+        message: replaceWarning(phoneGameCount, backup),
+        confirmLabel: 'Replace everything',
+        destructive: true,
+      });
+      if (!confirmed) return;
+    }
+    setRestoring(true);
+    try {
+      const taken = await importAll(backup, mode);
+      if (mode === 'merge' && taken.games === 0 && backup.games.length > 0 && !phoneIsEmpty) {
+        // Nothing to add: say so next to Replace, the way to get the backup's versions.
+        setNothingNewFor(request);
+        return;
+      }
+      onClose();
+      toast.show({ message: restoredMessage(taken, backup.games.length) });
+    } catch (error) {
+      console.error('Restoring a backup failed', error);
+      toast.show({ message: RESTORE_FAILED });
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Restore this backup?"
+      description={backupSummary(backup).map((part, index) => (
+        // Line breaks only between the parts, never inside "Sep 28, 2026".
+        <Fragment key={index}>
+          {index > 0 ? ' · ' : null}
+          <span className={styles.noWrap}>{part}</span>
+        </Fragment>
+      ))}
+      footer={
+        phoneIsEmpty ? (
+          <Button size="lg" onClick={() => void restore('merge')} disabled={restoring}>
+            Restore backup
+          </Button>
+        ) : null
+      }
+    >
+      {phoneIsEmpty ? (
+        <p className={styles.note}>
+          There are no games on this phone yet, so nothing will be lost.
+        </p>
+      ) : (
+        <>
+          <GroupedList aria-label="How to restore">
+            <ActionRow
+              title="Add to what's on this phone"
+              subtitle={
+                <>
+                  <strong className={styles.recommended}>Recommended.</strong> Keeps everything here
+                  and adds what&apos;s missing, even games deleted here. For a game on both, the
+                  newer version wins, stats and all.
+                </>
+              }
+              onClick={() => void restore('merge')}
+              disabled={restoring}
+            />
+            <ListRow
+              title="Replace everything on this phone"
+              subtitle={replaceSubtitle(phoneGameCount, backup)}
+              destructive
+              onClick={() => void restore('replace')}
+              disabled={restoring}
+            />
+          </GroupedList>
+          {/* Always there (empty until needed), so screen readers announce what appears. */}
+          <div role="status" aria-label="Restore result">
+            {nothingNewFor === request ? (
+              <p className={cx(styles.note, styles.result)}>
+                {nothingNewMessage(backup.games.length)}
+              </p>
+            ) : null}
+          </div>
+        </>
+      )}
+    </Sheet>
+  );
+}

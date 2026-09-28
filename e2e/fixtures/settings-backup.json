@@ -1,0 +1,212 @@
+{
+  "app": "hoop-stats",
+  "schemaVersion": 1,
+  "exportedAt": "2026-09-20T12:00:00.000Z",
+  "players": [
+    {
+      "id": "fixture-player",
+      "name": "Maya",
+      "jerseyNumber": "7",
+      "createdAt": 1788289200000,
+      "updatedAt": 1788289200000
+    }
+  ],
+  "games": [
+    {
+      "id": "fixture-game-1",
+      "playerId": "fixture-player",
+      "opponent": "Hillcrest",
+      "date": "2026-09-12",
+      "season": "Fall 2026",
+      "homeAway": "home",
+      "periodFormat": "quarters",
+      "currentPeriod": 4,
+      "status": "final",
+      "teamScore": 44,
+      "opponentScore": 39,
+      "createdAt": 1789252800000,
+      "updatedAt": 1789258800000,
+      "endedAt": 1789258800000
+    },
+    {
+      "id": "fixture-game-2",
+      "playerId": "fixture-player",
+      "opponent": "Brookside",
+      "date": "2026-09-19",
+      "season": "Fall 2026",
+      "homeAway": "away",
+      "periodFormat": "quarters",
+      "currentPeriod": 4,
+      "status": "final",
+      "teamScore": 35,
+      "opponentScore": 41,
+      "createdAt": 1789857600000,
+      "updatedAt": 1789863600000,
+      "endedAt": 1789863600000
+    }
+  ],
+  "events": [
+    {
+      "id": "fixture-game-1-001",
+      "gameId": "fixture-game-1",
+      "type": "fg2_made",
+      "period": 1,
+      "createdAt": 1789254000000,
+      "location": {
+        "x": 2.1,
+        "y": 3.4
+      }
+    },
+    {
+      "id": "fixture-game-1-002",
+      "gameId": "fixture-game-1",
+      "type": "fg3_miss",
+      "period": 1,
+      "createdAt": 1789254060000,
+      "location": {
+        "x": -20.5,
+        "y": 8
+      }
+    },
+    {
+      "id": "fixture-game-1-003",
+      "gameId": "fixture-game-1",
+      "type": "dreb",
+      "period": 1,
+      "createdAt": 1789254120000
+    },
+    {
+      "id": "fixture-game-1-004",
+      "gameId": "fixture-game-1",
+      "type": "ast",
+      "period": 2,
+      "createdAt": 1789255200000
+    },
+    {
+      "id": "fixture-game-1-005",
+      "gameId": "fixture-game-1",
+      "type": "fg2_made",
+      "period": 2,
+      "createdAt": 1789255260000,
+      "location": {
+        "x": -1.5,
+        "y": 1.2
+      }
+    },
+    {
+      "id": "fixture-game-1-006",
+      "gameId": "fixture-game-1",
+      "type": "ft_made",
+      "period": 3,
+      "createdAt": 1789256340000
+    },
+    {
+      "id": "fixture-game-1-007",
+      "gameId": "fixture-game-1",
+      "type": "ft_made",
+      "period": 3,
+      "createdAt": 1789256400000
+    },
+    {
+      "id": "fixture-game-1-008",
+      "gameId": "fixture-game-1",
+      "type": "stl",
+      "period": 4,
+      "createdAt": 1789257480000
+    },
+    {
+      "id": "fixture-game-1-009",
+      "gameId": "fixture-game-1",
+      "type": "fg3_made",
+      "period": 4,
+      "createdAt": 1789257540000,
+      "location": {
+        "x": 21.9,
+        "y": -2
+      }
+    },
+    {
+      "id": "fixture-game-2-001",
+      "gameId": "fixture-game-2",
+      "type": "fg2_miss",
+      "period": 1,
+      "createdAt": 1789858800000,
+      "location": {
+        "x": 6,
+        "y": 10
+      }
+    },
+    {
+      "id": "fixture-game-2-002",
+      "gameId": "fixture-game-2",
+      "type": "oreb",
+      "period": 1,
+      "createdAt": 1789858860000
+    },
+    {
+      "id": "fixture-game-2-003",
+      "gameId": "fixture-game-2",
+      "type": "fg2_made",
+      "period": 1,
+      "createdAt": 1789858920000,
+      "location": {
+        "x": 0.8,
+        "y": 2.5
+      }
+    },
+    {
+      "id": "fixture-game-2-004",
+      "gameId": "fixture-game-2",
+      "type": "tov",
+      "period": 2,
+      "createdAt": 1789860000000
+    },
+    {
+      "id": "fixture-game-2-005",
+      "gameId": "fixture-game-2",
+      "type": "foul",
+      "period": 3,
+      "createdAt": 1789861080000
+    },
+    {
+      "id": "fixture-game-2-006",
+      "gameId": "fixture-game-2",
+      "type": "ft_made",
+      "period": 3,
+      "createdAt": 1789861140000
+    },
+    {
+      "id": "fixture-game-2-007",
+      "gameId": "fixture-game-2",
+      "type": "ft_miss",
+      "period": 3,
+      "createdAt": 1789861200000
+    },
+    {
+      "id": "fixture-game-2-008",
+      "gameId": "fixture-game-2",
+      "type": "blk",
+      "period": 4,
+      "createdAt": 1789862280000
+    },
+    {
+      "id": "fixture-game-2-009",
+      "gameId": "fixture-game-2",
+      "type": "deflection",
+      "period": 4,
+      "createdAt": 1789862340000
+    },
+    {
+      "id": "fixture-game-2-010",
+      "gameId": "fixture-game-2",
+      "type": "charge",
+      "period": 4,
+      "createdAt": 1789862400000
+    }
+  ],
+  "settings": {
+    "shotChart": true,
+    "defaultPeriodFormat": "quarters",
+    "lastSeason": "Fall 2026"
+  }
+}

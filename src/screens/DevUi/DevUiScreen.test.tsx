@@ -28,6 +28,7 @@ describe('DevUiScreen', () => {
       'Badge',
       'Sheet and ConfirmDialog',
       'Toast and shareText',
+      'InstallBanner and InstallSheet',
       'Button',
       'Court',
     ]) {
@@ -84,6 +85,18 @@ describe('DevUiScreen', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
     expect(notifications()).toHaveTextContent('Game deleted');
+  });
+
+  it('shows the install banner, whose How opens the steps', async () => {
+    const { user } = await openGallery();
+    const banner = screen.getByRole('complementary', { name: 'Add to Home Screen' });
+
+    await user.click(within(banner).getByRole('button', { name: 'How' }));
+    expect(
+      within(screen.getByRole('dialog', { name: 'Add to Home Screen' })).getByRole('list', {
+        name: 'In Safari',
+      }),
+    ).toHaveTextContent('Tap the Share button');
   });
 
   it('shows an undo toast whose action runs once', async () => {

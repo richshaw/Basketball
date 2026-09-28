@@ -6,6 +6,8 @@ import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
+import { InstallBannerView } from '@/components/InstallBanner/InstallBanner';
+import { InstallSheet } from '@/components/InstallBanner/InstallSheet';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { SegmentedControl } from '@/components/SegmentedControl/SegmentedControl';
@@ -36,7 +38,7 @@ const shareMessages: Record<Exclude<ShareResult, 'cancelled'>, string> = {
   failed: "Couldn't share or copy",
 };
 
-type OpenSheet = 'editGame' | 'endGame' | 'opponents' | null;
+type OpenSheet = 'editGame' | 'endGame' | 'opponents' | 'install' | null;
 
 /**
  * Hidden gallery of the shared components in their main states, for reviews and
@@ -302,6 +304,16 @@ export function DevUiScreen() {
           <p className={styles.note}>Undos: {undos}</p>
         </Section>
 
+        <Section
+          title="InstallBanner and InstallSheet"
+          note="Only in iPhone Safari, at the top of the tab screens; dismissed for 14 days."
+        >
+          <InstallBannerView
+            onHow={() => setOpenSheet('install')}
+            onDismiss={() => toast.show({ message: 'Banner dismissed' })}
+          />
+        </Section>
+
         <Section title="Button">
           <div className={styles.buttons}>
             <Button>Primary</Button>
@@ -417,6 +429,8 @@ export function DevUiScreen() {
           ))}
         </GroupedList>
       </Sheet>
+
+      <InstallSheet open={openSheet === 'install'} onClose={closeSheet} />
     </main>
   );
 }

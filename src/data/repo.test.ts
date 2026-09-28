@@ -21,6 +21,7 @@ import {
   savePlayer,
   setCurrentPeriod,
   setStatLocation,
+  subscribeToChanges,
   undoLastStat,
   updateGame,
   updateSettings,
@@ -776,5 +777,31 @@ describe('lastChangeAt', () => {
     await expect(recordStat(game.id, 'ast', { x: 0, y: 0 })).rejects.toThrow();
     await expect(updateGame(game.id, { teamScore: -1 })).rejects.toThrow();
     expect(await getLastChangeAt()).toBe(before);
+  });
+});
+
+describe('subscribeToChanges', () => {
+  it('hears every write as soon as it commits, until stopped', async () => {
+    const listener = vi.fn();
+    const stop = subscribeToChanges(listener);
+
+    await savePlayer({ name: 'Ava' });
+    // Already heard when the write resolves: nothing has had a chance to re-read yet.
+    expect(listener).toHaveBeenCalledTimes(1);
+    const game = await newGame();
+    await deleteGame(game.id);
+    expect(listener).toHaveBeenCalledTimes(3);
+
+    stop();
+    await savePlayer({ name: 'Ava Grace' });
+    expect(listener).toHaveBeenCalledTimes(3);
+  });
+
+  it('stays quiet for reads', async () => {
+    const listener = vi.fn();
+    const stop = subscribeToChanges(listener);
+    await Promise.all([getPlayer(), listGames(), getSettings(), getLastChangeAt()]);
+    stop();
+    expect(listener).not.toHaveBeenCalled();
   });
 });

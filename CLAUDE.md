@@ -76,7 +76,8 @@ Each lives in `src/components/<Name>/`. See them all, in their main states, at `
 - `StatTable`: table of numbers: `caption`, `columns` (`{ key, header, fullLabel?, align?, width? }`), `rows`, `totalRow`, `highlightedRow` (read to screen readers as "current", or your `highlightLabel`), `rowKey`. Wide tables scroll sideways under a sticky first column. `linkedRows` makes each body row one tap target that follows the first link in the row: put a `Link` in every row (e.g. the first column), since that's what keyboard and screen reader users reach. Modified clicks (⌘/Ctrl/Shift/Alt) are left to the browser.
 - `StatTileGrid` + `StatTile`: big-number tiles (`value`, `label`, `fullLabel`, `detail`, `highlight`), four across on most iPhones (`columns` fixes the count).
 - `Badge`: small pill label; `tone` is `neutral`, `accent`, `made`, `miss` or `stat`.
-- `shareText({ title, text })` in `src/lib/share.ts`: the share sheet, else the clipboard. Resolves to `'shared' | 'cancelled' | 'copied' | 'failed'` and never throws; call it straight from a tap.
+- `InstallBanner` / `InstallSheet`: the "Add to Home Screen" nudge. `AppShell` renders the banner, which shows only in iPhone Safari (not in the installed app) and stays away 14 days once dismissed; the sheet has the steps (Settings opens it too). `InstallBannerView` is the banner alone, always shown.
+- `shareText({ title, text })` in `src/lib/share.ts`: the share sheet, else the clipboard. Resolves to `'shared' | 'cancelled' | 'copied' | 'failed'` and never throws; call it straight from a tap. `shareFile(file)` shares just a file, resolving to `'shared' | 'cancelled' | 'unavailable'` (then offer it another way, e.g. a download).
 
 `App` mounts `UiProviders` (toasts and confirmations) once at the root, and the test render helpers include it. A toast shown while a sheet is open appears inside the sheet, under its header. `TabBar` and the update banner raise `--overlay-inset-bottom` so toasts clear them; a screen with its own bottom controls can set it on `:root` too.
 
@@ -126,6 +127,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - `getGame(id)`, `listGames()`, `getLiveGame()`, `getGameEvents(gameId)`, `getAllEvents()`, `listSeasons()`: promise versions of the hooks.
 - `getSettings()` / `updateSettings(patch)`: `shotChart` (default true), `defaultPeriodFormat` (default 'quarters') and `lastSeason`.
 - `getLastChangeAt()`: when the data last changed (for the backup; read it before exporting).
+- `subscribeToChanges(listener)`: calls `listener` the moment any write commits (this tab or another), before the hooks re-read; returns a function that stops it. For code that keeps its own copy of the data, like the backup file Settings prepares so the share sheet can open straight from a tap.
 
 ### Stats math (`data/stats.ts`, pure)
 
@@ -156,7 +158,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
   - `meta.lastChangeAt` only moves when an import actually changed something.
   - `clearAllData()`.
   - A round trip through JSON is exact. Settings are part of the export; `meta.lastChangeAt` isn't.
-- `data/demo.ts`: `seedDemoData({ today?, liveGame?, force? })` replaces all data with "Ava" #12 and ten final "Fall 2026" games. Their ids run from `demo-game-01` (oldest) to `demo-game-10`, and `demo-live` is the optional live game in Q3. It refuses to replace a device's own data (anything but earlier demo data) unless `force: true`; a fresh Playwright context starts empty, so tests don't need it.
+- `data/demo.ts`: `seedDemoData({ today?, liveGame?, force?, keepSettings? })` replaces all data with "Ava" #12 and ten final "Fall 2026" games (`keepSettings` keeps the device's own settings). Their ids run from `demo-game-01` (oldest) to `demo-game-10`, and `demo-live` is the optional live game in Q3; `isDemoGameId(id)` tells them apart. It refuses to replace a device's own data (anything but earlier demo data) unless `force: true`; a fresh Playwright context starts empty, so tests don't need it.
 - `data/persistence.ts`: `requestPersistentStorage()` (called once at startup) and `getStorageStatus()` (`{ persisted, usage?, quota? }`).
 - `window.hoopStats` (`{ seedDemoData, clearAllData, exportAll }`) is installed in every build, for the console, e2e tests and screenshots.
 - Other modules (e.g. the cloud backup) may keep their own state in the `meta` table under their own keys. `clearAllData` leaves those alone.
