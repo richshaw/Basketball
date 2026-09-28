@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type Key,
+  type MouseEvent,
   type ReactNode,
 } from 'react';
 import { cx } from '@/lib/cx';
@@ -38,6 +39,12 @@ export interface StatTableProps<K extends string> {
   highlightedRow?: number;
   /** Stable row keys when rows can be added, removed or reordered. Defaults to the index. */
   rowKey?: (row: StatTableRow<K>, index: number) => Key;
+  /**
+   * Makes each body row one big tap target that follows the first link in the row.
+   * Put a Link in every row (e.g. in the first column): that's what keyboard and
+   * screen reader users reach.
+   */
+  linkedRows?: boolean;
   className?: string;
 }
 
@@ -78,6 +85,13 @@ function useScrollEdges() {
 
 const alignClass = { start: styles.start, center: styles.center, end: styles.end } as const;
 
+/** A tap on a linked row follows the row's link, unless it landed on a control already. */
+function followRowLink(event: MouseEvent<HTMLTableRowElement>) {
+  if (event.defaultPrevented) return;
+  if (event.target instanceof Element && event.target.closest('a, button, input, label')) return;
+  event.currentTarget.querySelector<HTMLAnchorElement>('a[href]')?.click();
+}
+
 /**
  * Compact table of numbers (box scores, game logs). Numbers use tabular figures.
  * When the columns don't fit, the table scrolls sideways under a sticky first column.
@@ -89,6 +103,7 @@ export function StatTable<K extends string>({
   totalRow,
   highlightedRow,
   rowKey,
+  linkedRows = false,
   className,
 }: StatTableProps<K>) {
   const captionId = useId();
@@ -159,7 +174,12 @@ export function StatTable<K extends string>({
           {rows.map((row, index) => (
             <tr
               key={rowKey ? rowKey(row, index) : index}
-              className={cx(styles.bodyRow, index === highlightedRow && styles.highlighted)}
+              className={cx(
+                styles.bodyRow,
+                linkedRows && styles.linkedRow,
+                index === highlightedRow && styles.highlighted,
+              )}
+              onClick={linkedRows ? followRowLink : undefined}
             >
               {renderRow(row)}
             </tr>

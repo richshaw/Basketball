@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { Link } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderWithRouter } from '@/test/render';
 import { StatTable, type StatTableColumn, type StatTableRow } from './StatTable';
 
 type Key = 'period' | 'pts' | 'fg' | 'reb';
@@ -119,5 +121,33 @@ describe('StatTable', () => {
     fireEvent.scroll(region);
     expect(region).toHaveClass('scrolledStart');
     expect(region).not.toHaveClass('moreAtEnd');
+  });
+
+  it('leaves rows untappable by default', () => {
+    renderTable();
+    expect(screen.getByRole('row', { name: /Q1/ })).not.toHaveClass('linkedRow');
+  });
+
+  it('with linkedRows, follows the row link from a tap anywhere on the row', async () => {
+    const linkRows: StatTableRow<Key>[] = [
+      { period: <Link to="/periods/Q1">Q1</Link>, pts: 4, fg: '2-3', reb: 1 },
+      { period: <Link to="/periods/Q2">Q2</Link>, pts: 6, fg: '2-4', reb: 3 },
+    ];
+    const { user, router } = renderWithRouter(
+      <StatTable caption="Points by quarter" columns={columns} rows={linkRows} linkedRows />,
+    );
+
+    const q2 = screen.getByRole('row', { name: /Q2/ });
+    expect(q2).toHaveClass('linkedRow');
+    await user.click(within(q2).getByRole('cell', { name: '6' }));
+    expect(router.state.location.pathname).toBe('/periods/Q2');
+
+    // The link itself still works on its own, and navigates just once.
+    const visited = new Set<string>();
+    const unsubscribe = router.subscribe((state) => visited.add(state.location.key));
+    await user.click(screen.getByRole('link', { name: 'Q1' }));
+    unsubscribe();
+    expect(router.state.location.pathname).toBe('/periods/Q1');
+    expect(visited.size).toBe(1);
   });
 });
