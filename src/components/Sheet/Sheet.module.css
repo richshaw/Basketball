@@ -27,19 +27,28 @@
   outline: none;
 }
 
+/*
+ * Sheet.tsx sets --keyboard-inset and --viewport-inset-top from the visual viewport:
+ * iOS doesn't shrink the page for its keyboard, so the panel rides above it itself.
+ */
 .panel {
   position: absolute;
   right: 0;
-  bottom: 0;
+  bottom: var(--keyboard-inset, 0px);
   left: 0;
   display: flex;
   flex-direction: column;
   width: 100%;
   max-width: var(--content-max-width);
-  /* Leave a strip of the dimmed page visible under the status bar. */
-  max-height: calc(100% - var(--safe-top) - var(--space-4));
+  /* Leave a strip of the dimmed page visible at the top, and fit above the keyboard. */
+  max-height: calc(
+    100% - var(--keyboard-inset, 0px) - var(--viewport-inset-top, 0px) - var(--safe-top) -
+      var(--space-4)
+  );
   margin-inline: auto;
-  padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
+  /* The keyboard covers the home indicator, so pad for it only while there's no keyboard. */
+  padding: 0 var(--safe-right) max(0px, var(--safe-bottom) - var(--keyboard-inset, 0px))
+    var(--safe-left);
   border-top: 1px solid var(--color-border);
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   background-color: var(--color-bg);
@@ -95,16 +104,22 @@
 .closeCircle {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: var(--icon-circle-size);
+  height: var(--icon-circle-size);
   border-radius: var(--radius-full);
   background-color: var(--color-surface-2);
 }
 
 .closeIcon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   stroke-width: 2.75;
+}
+
+/* Toasts shown over this sheet hang from here, just under the header (Toast.module.css). */
+.toastOutlet {
+  position: relative;
+  z-index: 1;
 }
 
 .body {
@@ -123,8 +138,14 @@
   padding: var(--space-2) var(--space-4) var(--space-4);
 }
 
-/* Closing: slide out and fade the dimmed page, then Sheet.tsx closes the dialog. */
+/*
+ * Closing: the dialog has already closed, so focus is back and the page works again.
+ * It stays on screen (above the page, below toasts) only to slide away, and swallows
+ * taps meanwhile so a double tap can't reach the page underneath.
+ */
 .dialog[data-closing] {
+  z-index: var(--z-sheet-exit);
+  display: block;
   animation: fadeOut var(--duration-normal) var(--ease-in) forwards;
 }
 
