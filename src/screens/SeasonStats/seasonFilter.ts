@@ -19,6 +19,16 @@ export function seasonOf(key: SeasonKey): string | null {
   return key === ALL_SEASONS ? null : key.slice('season:'.length);
 }
 
+/**
+ * The distinct season labels of `games`, most recent first when the games come newest
+ * first (as useGames gives them): the same list useSeasons() reads.
+ */
+export function seasonLabels(games: readonly Pick<Game, 'season'>[]): string[] {
+  const seasons = new Set<string>();
+  for (const game of games) if (game.season) seasons.add(game.season);
+  return [...seasons];
+}
+
 /** Whether a game belongs to the chosen season ('all' matches every game). */
 export function inSeason(game: Pick<Game, 'season'>, key: SeasonKey): boolean {
   return key === ALL_SEASONS || game.season === seasonOf(key);
@@ -62,13 +72,14 @@ const STORAGE_PREFIX = 'hoop-stats:stats:';
 const memory = new Map<string, string>();
 
 export function readSessionValue(name: string): string | undefined {
+  // This page's own latest choice first: if saving it failed, sessionStorage still
+  // holds an older one. sessionStorage is for after a reload, when memory is empty.
+  if (memory.has(name)) return memory.get(name);
   try {
-    const stored = window.sessionStorage.getItem(STORAGE_PREFIX + name);
-    if (stored !== null) return stored;
+    return window.sessionStorage.getItem(STORAGE_PREFIX + name) ?? undefined;
   } catch {
-    // Fall through to the in-memory copy.
+    return undefined;
   }
-  return memory.get(name);
 }
 
 export function writeSessionValue(name: string, value: string): void {

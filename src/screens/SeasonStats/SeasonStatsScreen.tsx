@@ -6,7 +6,7 @@ import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { StatTile, StatTileGrid } from '@/components/StatTile/StatTile';
 import { useToast } from '@/components/Toast/toastContext';
-import { useAllEvents, useGames, usePlayer, useSeasons } from '@/data/hooks';
+import { useAllEvents, useGames, useLiveGame, usePlayer } from '@/data/hooks';
 import { statLinesForGames, summarizeGames, type GamesSummary } from '@/data/stats';
 import type { Game, Player } from '@/data/types';
 import { formatAvg, formatMadeAttempted, formatPct, formatPlayerName } from '@/lib/format';
@@ -22,6 +22,7 @@ import {
   readRememberedSeason,
   rememberSeason,
   resolveSeasonKey,
+  seasonLabels,
   seasonOf,
   type SeasonKey,
 } from './seasonFilter';
@@ -117,7 +118,7 @@ function liveGamesNote(liveGames: readonly Game[]): string | null {
   return `${liveGames.length} games still in progress aren’t counted until they’re final.`;
 }
 
-function NoGamesYet({ liveGame }: { liveGame: Game | undefined }) {
+function NoGamesYet({ liveGame }: { liveGame: Game | null }) {
   return liveGame ? (
     <EmptyState
       icon="📊"
@@ -150,11 +151,14 @@ function NoGamesYet({ liveGame }: { liveGame: Game | undefined }) {
 export function SeasonStatsScreen() {
   const games = useGames();
   const events = useAllEvents();
-  const seasons = useSeasons();
   const player = usePlayer();
+  // The game "Back to the game" opens: the same one the Games screen offers to resume.
+  const liveGame = useLiveGame();
   const toast = useToast();
   const [remembered, setRemembered] = useState(readRememberedSeason);
 
+  // Season labels, most recent first (what useSeasons() reads, without a second query).
+  const seasons = useMemo(() => games && seasonLabels(games), [games]);
   const finalGames = useMemo(() => games?.filter((game) => game.status === 'final'), [games]);
   // Stat lines for every final game, newest first (the order of useGames).
   const allEntries = useMemo(
@@ -183,7 +187,14 @@ export function SeasonStatsScreen() {
   };
 
   const ready =
-    games && seasons && player !== undefined && key && entries && summary && oldestFirst;
+    games &&
+    seasons &&
+    player !== undefined &&
+    liveGame !== undefined &&
+    key &&
+    entries &&
+    summary &&
+    oldestFirst;
   const season = key ? seasonOf(key) : null;
   // What the numbers cover: the season, or every game ("All seasons" once there are some).
   const scopeLabel = season ?? (seasons?.length ? 'All seasons' : ALL_GAMES_LABEL);
@@ -211,7 +222,7 @@ export function SeasonStatsScreen() {
 
     content =
       finalGames?.length === 0 ? (
-        <NoGamesYet liveGame={games.find((game) => game.status === 'live')} />
+        <NoGamesYet liveGame={liveGame} />
       ) : (
         <>
           <div className={styles.top}>
@@ -286,7 +297,10 @@ export function SeasonStatsScreen() {
           ) : undefined
         }
       />
-      <ScreenBody className={styles.body}>{content}</ScreenBody>
+      {/* Busy until the data is read (the content shows all at once, then). */}
+      <ScreenBody className={styles.body} aria-busy={ready ? undefined : true}>
+        {content}
+      </ScreenBody>
     </main>
   );
 }

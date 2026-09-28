@@ -1,6 +1,7 @@
 import { StatTable, type StatTableColumn } from '@/components/StatTable/StatTable';
 import type { GamesSummary } from '@/data/stats';
 import { formatMadeAttempted } from '@/lib/format';
+import styles from './SeasonStatsScreen.module.css';
 
 type TotalKey =
   | 'season'
@@ -53,7 +54,8 @@ export function TotalsTable({ label, summary: { gamesPlayed, totals } }: TotalsT
       columns={COLUMNS}
       rows={[
         {
-          season: label,
+          // A long season name ends in "…" (it's in full above), so the totals stay in view.
+          season: <span className={styles.totalsLabel}>{label}</span>,
           gp: gamesPlayed,
           pts: totals.pts,
           reb: totals.reb,

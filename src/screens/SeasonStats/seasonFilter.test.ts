@@ -9,6 +9,7 @@ import {
   rememberSeason,
   resolveSeasonKey,
   seasonKey,
+  seasonLabels,
   seasonOf,
   writeSessionValue,
 } from './seasonFilter';
@@ -35,6 +36,21 @@ describe('season keys', () => {
     expect(inSeason({}, seasonKey('Fall 2026'))).toBe(false);
     expect(inSeason({}, ALL_SEASONS)).toBe(true);
     expect(inSeason({ season: 'Winter' }, ALL_SEASONS)).toBe(true);
+  });
+});
+
+describe('seasonLabels', () => {
+  it('lists each season once, in the order of the games, skipping games without one', () => {
+    const games = [
+      { season: 'Winter 2027' },
+      {},
+      { season: 'Fall 2026' },
+      { season: 'Winter 2027' },
+      { season: '' },
+      { season: 'Summer 2026' },
+    ];
+    expect(seasonLabels(games)).toEqual(['Winter 2027', 'Fall 2026', 'Summer 2026']);
+    expect(seasonLabels([])).toEqual([]);
   });
 });
 
@@ -94,6 +110,16 @@ describe('session memory', () => {
     });
     writeSessionValue('metric', 'reb');
     expect(readSessionValue('metric')).toBe('reb');
+  });
+
+  it('never brings back an older choice when saving the new one fails', () => {
+    writeSessionValue('metric', 'reb');
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Full', 'QuotaExceededError');
+    });
+    writeSessionValue('metric', 'ast');
+    expect(window.sessionStorage.getItem('hoop-stats:stats:metric')).toBe('reb');
+    expect(readSessionValue('metric')).toBe('ast');
   });
 
   it('can forget everything it remembered', () => {

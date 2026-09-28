@@ -118,14 +118,20 @@
   font-weight: var(--font-weight-bold);
 }
 
-/* Game log */
+/* Totals and game log: a long first-column label ends in "…" so the stats stay in view. */
+
+.totalsLabel {
+  display: block;
+  max-width: var(--stat-row-label-max-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .gameLink {
   display: flex;
   flex-direction: column;
   gap: calc(var(--space-1) / 2);
-  /* Long opponent names end in "…" so the stats stay in view. */
-  max-width: calc(var(--space-12) * 3);
+  max-width: var(--stat-row-label-max-width);
   color: var(--color-text);
 }
 

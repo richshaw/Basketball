@@ -559,6 +559,26 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       expect(screen.getByRole('button', { name: /^Season/ })).toHaveTextContent('JV Fall');
     });
 
+    it('keeps a long season name from pushing the totals out of view', async () => {
+      const season = 'Westside Warriors 12U Spring 2026';
+      await addFinalGame(
+        { opponent: 'Harbor', date: '2026-04-10', season },
+        ['fg2_made'],
+        [30, 20],
+      );
+      renderRoute(paths.stats);
+      await waitForStats();
+
+      // The name is in full above the numbers; in the table it's capped with an ellipsis
+      // (the CSS), and screen readers still hear all of it.
+      expect(screen.getByText(`${season} · 1 game`)).toBeInTheDocument();
+      const label = within(screen.getByRole('table', { name: 'Totals' })).getByRole('rowheader', {
+        name: season,
+      });
+      expect(label.firstElementChild).toHaveClass('totalsLabel');
+      expect(totalsCell('PTS')).toBe('2');
+    });
+
     it('shows all games, with no season picker, when no game has a season', async () => {
       await addFinalGame({ opponent: 'Harbor', date: '2026-06-10' }, ['fg3_made'], [30, 20]);
       renderRoute(paths.stats);
@@ -642,6 +662,28 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
   });
 
   describe('before any game is finished', () => {
+    it('points back to the game in progress updated most recently, like Games does', async () => {
+      const today = await createGame({
+        opponent: 'Westfield',
+        date: TODAY,
+        periodFormat: 'quarters',
+      });
+      const earlier = await createGame({
+        opponent: 'Harbor',
+        date: '2026-09-20',
+        periodFormat: 'quarters',
+      });
+      await recordStat(today.id, 'fg2_made');
+      await recordStat(earlier.id, 'ast');
+      renderRoute(paths.stats);
+
+      expect(await screen.findByRole('link', { name: 'Back to the game' })).toHaveAttribute(
+        'href',
+        paths.trackGame(earlier.id),
+      );
+      expect(screen.getByText(/The game against Harbor is still going/)).toBeInTheDocument();
+    });
+
     it('invites the parent to start a game when there are no stats yet', async () => {
       renderRoute(paths.stats);
       expect(await screen.findByRole('heading', { name: 'No stats yet' })).toBeInTheDocument();
