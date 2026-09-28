@@ -1,0 +1,12 @@
+# Agent worktrees and settings (other checkouts of this repo)
+.claude
+
+# Generated / vendored output
+dist
+dev-dist
+coverage
+test-results
+playwright-report
+blob-report
+screenshots
+package-lock.json
