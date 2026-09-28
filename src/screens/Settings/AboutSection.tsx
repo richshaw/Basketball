@@ -29,7 +29,7 @@ export interface AboutSectionProps {
 function cloudBackupStays(backupCode: 'on' | 'kept'): string {
   const deleteRow =
     backupCode === 'on' ? 'Turn off and delete online backup' : 'Delete online backup';
-  return `Your online backup isn't deleted: this phone keeps its backup code and won't replace the online backup with an empty phone. To delete the online backup too, first use ${deleteRow} in Cloud backup.`;
+  return `Your online backup stays: this phone keeps its backup code and won't replace the backup with an empty phone. To delete it too, first use ${deleteRow} in Cloud backup.`;
 }
 
 /** What "Erase all data" will delete (and, with a cloud backup, what it won't), spelled out. */

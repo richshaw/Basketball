@@ -4,8 +4,9 @@
   line-height: var(--line-height-normal);
 }
 
-.noWrap {
-  white-space: nowrap;
+.part {
+  display: inline-block;
+  max-width: 100%;
 }
 
 .recommended {

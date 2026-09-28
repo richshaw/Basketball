@@ -4,25 +4,36 @@
  * Pure: the current time is passed in, so every sentence can be tested exactly.
  */
 import type { CloudBackup, CloudBackupStatus } from '@/data/backup/cloudBackup';
-import { countGames, describePlayer } from './backupFiles';
+import { countGames, describePlayer, formatDayWithYear } from './backupFiles';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-/** 'Sep 25', or 'Sep 25, 2025' when it isn't the year of `now`. */
-function formatDay(time: number, now: number): string {
-  const sameYear = new Date(time).getFullYear() === new Date(now).getFullYear();
-  return new Date(time).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    ...(sameYear ? {} : { year: 'numeric' }),
-  });
+/** A space a line never breaks at: keeps "Sep 28, 2026" and "7:45 PM" whole. */
+const NO_BREAK = '\u00a0';
+
+function unbreakable(text: string): string {
+  return text.replace(/\s/g, NO_BREAK);
 }
 
-/** '7:45 PM' in local time. */
+/** 'Sep 25', or 'Sep 25, 2025' when it isn't the year of `now` (never split across lines). */
+function formatDay(time: number, now: number): string {
+  const sameYear = new Date(time).getFullYear() === new Date(now).getFullYear();
+  return unbreakable(
+    new Date(time).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' }),
+    }),
+  );
+}
+
+/** '7:45 PM' in local time (never split across lines). */
 export function formatTimeOfDay(time: number): string {
-  return new Date(time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return unbreakable(
+    new Date(time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+  );
 }
 
 /**
@@ -50,21 +61,26 @@ export function formatWhen(time: number, now: number): string {
   return sameDay ? clock : `on ${formatDay(time, now)} ${clock}`;
 }
 
-/** A backup's date and time, e.g. 'Sep 28, 2026, 7:42 PM' (local time). */
+/**
+ * A backup's date and time, e.g. 'Sep 28, 2026, 7:42 PM' (local time). A line may
+ * break after the date, never inside it or the time.
+ */
 export function formatBackupTime(time: number): string {
-  return new Date(time).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const day = unbreakable(
+    new Date(time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+  );
+  return `${day}, ${formatTimeOfDay(time)}`;
 }
 
-/** What the restore preview says a backup holds: ['Backup from Sep 28, 2026, 7:42 PM', '10 games', 'Ava #12']. */
+/**
+ * What the restore preview says a backup holds, from when the phone made it (not the
+ * server's word): ['Backup from Sep 28, 2026', '7:42 PM', '10 games', 'Ava #12'], shown
+ * as "Backup from Sep 28, 2026 · 7:42 PM · 10 games · Ava #12".
+ */
 export function cloudBackupSummary(backup: Pick<CloudBackup, 'exportedAt' | 'file'>): string[] {
   const parts = [
-    `Backup from ${formatBackupTime(backup.exportedAt)}`,
+    `Backup from ${formatDayWithYear(backup.exportedAt)}`,
+    formatTimeOfDay(backup.exportedAt),
     countGames(backup.file.games.length),
   ];
   const player = describePlayer(backup.file);

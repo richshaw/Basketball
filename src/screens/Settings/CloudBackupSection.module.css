@@ -1,5 +1,8 @@
-/* Settings opened from the backup banner focuses the section (for screen readers) without a ring. */
-.section:focus:not(:focus-visible) {
+/*
+ * Settings opened from the backup banner focuses the section, so screen readers start
+ * there. It isn't a control (not in the tab order), so no focus ring.
+ */
+.section:focus {
   outline: none;
 }
 

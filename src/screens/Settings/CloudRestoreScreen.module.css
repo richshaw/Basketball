@@ -14,10 +14,13 @@
   gap: var(--space-4);
 }
 
-/* Monospaced capitals, like the code as it was shown, so it's easy to check character by character. */
+/*
+ * Monospaced capitals, like the code as it was shown, so it's easy to check character
+ * by character, and small enough that all of it shows on an iPhone.
+ */
 .codeField input {
   font-family: var(--font-family-mono);
-  letter-spacing: 0.04em;
+  font-size: var(--font-size-code-field);
   text-transform: uppercase;
 }
 

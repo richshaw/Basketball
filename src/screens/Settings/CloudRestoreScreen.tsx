@@ -192,8 +192,7 @@ export function CloudRestoreScreen() {
         {available ? (
           <>
             <p className={styles.intro}>
-              Enter the backup code you saved when you turned on cloud backup, to bring your stats
-              back from the online backup.
+              Enter the backup code you saved when you turned on cloud backup.
             </p>
             <div>
               <form className={styles.form} noValidate onSubmit={find}>

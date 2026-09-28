@@ -16,6 +16,9 @@ import {
 
 /** Sep 28, 2026, 7:42 PM local time. */
 const NOW = new Date(2026, 8, 28, 19, 42).getTime();
+
+/** Dates and times never break across lines: they're joined by no-break spaces. */
+const nb = (text: string) => text.replace(/ /g, '\u00a0');
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
@@ -36,7 +39,7 @@ describe('timeAgo', () => {
     [59 * MINUTE, '59 minutes ago'],
     [HOUR, 'an hour ago'],
     [23 * HOUR + 59 * MINUTE, '23 hours ago'],
-    [24 * HOUR, 'on Sep 27'],
+    [24 * HOUR, `on ${nb('Sep 27')}`],
     // A clock that moved back never makes it "in the future".
     [-5 * MINUTE, 'just now'],
   ])('%i ms ago is "%s"', (elapsed, text) => {
@@ -44,14 +47,16 @@ describe('timeAgo', () => {
   });
 
   it('names the year of a day in another year', () => {
-    expect(timeAgo(new Date(2025, 11, 30, 9).getTime(), NOW)).toBe('on Dec 30, 2025');
+    expect(timeAgo(new Date(2025, 11, 30, 9).getTime(), NOW)).toBe(`on ${nb('Dec 30, 2025')}`);
   });
 });
 
 describe('formatWhen', () => {
   it('gives the time today, and the day too otherwise', () => {
-    expect(formatWhen(new Date(2026, 8, 28, 19, 45).getTime(), NOW)).toBe('at 7:45 PM');
-    expect(formatWhen(new Date(2026, 8, 29, 7, 5).getTime(), NOW)).toBe('on Sep 29 at 7:05 AM');
+    expect(formatWhen(new Date(2026, 8, 28, 19, 45).getTime(), NOW)).toBe(`at ${nb('7:45 PM')}`);
+    expect(formatWhen(new Date(2026, 8, 29, 7, 5).getTime(), NOW)).toBe(
+      `on ${nb('Sep 29')} at ${nb('7:05 AM')}`,
+    );
   });
 });
 
@@ -59,14 +64,15 @@ describe('cloudBackupSummary', () => {
   it('says when the phone made the backup, its games and the player', () => {
     const file = buildRealData();
     expect(cloudBackupSummary({ exportedAt: NOW, file })).toEqual([
-      'Backup from Sep 28, 2026, 7:42 PM',
+      'Backup from Sep 28, 2026',
+      nb('7:42 PM'),
       '10 games',
       'Ava #12',
     ]);
-    expect(formatBackupTime(NOW)).toBe('Sep 28, 2026, 7:42 PM');
+    expect(formatBackupTime(NOW)).toBe(`${nb('Sep 28, 2026')}, ${nb('7:42 PM')}`);
     expect(
       cloudBackupSummary({ exportedAt: NOW, file: { ...file, players: [], games: [] } }),
-    ).toEqual(['Backup from Sep 28, 2026, 7:42 PM', 'No games']);
+    ).toEqual(['Backup from Sep 28, 2026', nb('7:42 PM'), 'No games']);
   });
 });
 
@@ -114,7 +120,7 @@ describe('describeStatus', () => {
     expect(
       describeStatus(on({ state: 'error', lastError, nextAttemptAt: NOW + 5 * MINUTE }), NOW),
     ).toEqual({
-      title: 'Backup will try again at 7:47 PM',
+      title: `Backup will try again at ${nb('7:47 PM')}`,
       detail: 'The backup server is busy.',
       tone: 'attention',
     });

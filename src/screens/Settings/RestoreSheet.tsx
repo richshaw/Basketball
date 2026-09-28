@@ -162,11 +162,15 @@ export function RestoreSheet({
       open={open}
       onClose={onClose}
       title="Restore this backup?"
-      description={(request.summary ?? backupSummary(backup)).map((part, index) => (
-        // Line breaks only between the parts, never inside "Sep 28, 2026".
+      description={(request.summary ?? backupSummary(backup)).map((part, index, parts) => (
+        // A part moves to the next line whole (never "Sep 28," then "2026"), with the dot
+        // after it; only a part longer than a whole line wraps inside.
         <Fragment key={index}>
-          {index > 0 ? ' · ' : null}
-          <span className={styles.noWrap}>{part}</span>
+          {index > 0 ? ' ' : null}
+          <span className={styles.part}>
+            {part}
+            {index < parts.length - 1 ? ' ·' : null}
+          </span>
         </Fragment>
       ))}
       footer={

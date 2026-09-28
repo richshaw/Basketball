@@ -40,8 +40,10 @@
   line-height: var(--line-height-tight);
 }
 
+/* On a narrow phone, "Tap to fix" moves to the next line whole. */
 .fix {
   color: var(--color-accent-text);
+  white-space: nowrap;
 }
 
 .chevron {

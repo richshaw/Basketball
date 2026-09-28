@@ -220,10 +220,10 @@ describe('Settings: cloud backup on', () => {
     const message = status.lastError?.message ?? '';
     expect(message).not.toBe('');
     await expectToast(message);
+    // (toHaveTextContent reads the no-break spaces in "8:25 PM" as plain ones.)
+    const when = formatWhen(status.nextAttemptAt ?? 0, Date.now()).replace(/\u00a0/g, ' ');
     await waitFor(() => {
-      expect(cloudList()).toHaveTextContent(
-        `Backup will try again ${formatWhen(status.nextAttemptAt ?? 0, Date.now())}`,
-      );
+      expect(cloudList()).toHaveTextContent(`Backup will try again ${when}`);
     });
     expect(cloudList()).toHaveTextContent(message);
   });
@@ -491,7 +491,7 @@ describe('Settings: erasing all data with cloud backup', () => {
     await user.click(screen.getByRole('button', { name: 'Erase all data' }));
     const dialog = screen.getByRole('alertdialog', { name: 'Erase all data?' });
     expect(dialog).toHaveAccessibleDescription(
-      "All 10 games and their stats, the player's name and number, and your settings will be deleted from this phone. This can't be undone. Your online backup isn't deleted: this phone keeps its backup code and won't replace the online backup with an empty phone. To delete the online backup too, first use Turn off and delete online backup in Cloud backup.",
+      "All 10 games and their stats, the player's name and number, and your settings will be deleted from this phone. This can't be undone. Your online backup stays: this phone keeps its backup code and won't replace the backup with an empty phone. To delete it too, first use Turn off and delete online backup in Cloud backup.",
     );
     await user.click(within(dialog).getByRole('button', { name: 'Erase all data' }));
 
@@ -512,7 +512,7 @@ describe('Settings: erasing all data with cloud backup', () => {
     expect(
       screen.getByRole('alertdialog', { name: 'Erase all data?' }),
     ).toHaveAccessibleDescription(
-      /To delete the online backup too, first use Delete online backup in Cloud backup\.$/,
+      /To delete it too, first use Delete online backup in Cloud backup\.$/,
     );
   });
 
