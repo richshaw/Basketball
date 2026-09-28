@@ -1,0 +1,53 @@
+/* A full-width bar at the top of the tab screens, like the install banner. It scrolls away with the page. */
+.banner {
+  border-bottom: 0.5px solid var(--color-border);
+  background-color: var(--color-surface);
+}
+
+/* The whole bar is one tap target. */
+.link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap-target);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  color: var(--color-text);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.link:active {
+  background-color: var(--color-surface-2);
+}
+
+.link:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.icon {
+  flex-shrink: 0;
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+  color: var(--color-accent-text);
+}
+
+.message {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+}
+
+.fix {
+  color: var(--color-accent-text);
+}
+
+.chevron {
+  flex-shrink: 0;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  color: var(--color-text-muted);
+  stroke-width: 2.5;
+}
