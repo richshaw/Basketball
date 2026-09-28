@@ -70,9 +70,10 @@ describe('formatRecord', () => {
 });
 
 describe('formatGameCount', () => {
-  it('counts games', () => {
-    expect(formatGameCount(0)).toBe('0 games');
-    expect(formatGameCount(1)).toBe('1 game');
-    expect(formatGameCount(10)).toBe('10 games');
+  it('counts games, keeping the number and the word on one line', () => {
+    // Joined by a no-break space (U+00A0).
+    expect(formatGameCount(0)).toBe('0\u00a0games');
+    expect(formatGameCount(1)).toBe('1\u00a0game');
+    expect(formatGameCount(10)).toBe('10\u00a0games');
   });
 });

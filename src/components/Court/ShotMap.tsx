@@ -16,6 +16,11 @@ export interface ShotMapProps {
   title?: string;
   /** A line under the title, e.g. "Fall 2026 · 10 games". */
   caption?: ReactNode;
+  /**
+   * Ids of elements that name the chart ahead of its title and caption, e.g. the heading
+   * of the section it's in, when it has no title of its own.
+   */
+  'aria-labelledby'?: string;
   className?: string;
 }
 
@@ -23,18 +28,22 @@ export interface ShotMapProps {
  * A shot chart: every shot with a location on a half court, with a legend of makes
  * and misses. Display only. Screen readers get the totals and each zone's shooting.
  */
-export function ShotMap({ shots, title, caption, className }: ShotMapProps) {
+export function ShotMap({
+  shots,
+  title,
+  caption,
+  'aria-labelledby': labelledBy,
+  className,
+}: ShotMapProps) {
   const captionId = useId();
   const located = shots.filter(hasLocation);
   const { made, attempted } = countShots(located);
   const name = title || 'Shot chart';
   const hasCaption = Boolean(title || caption);
+  const nameIds = [labelledBy, hasCaption ? captionId : undefined].filter(Boolean).join(' ');
 
   return (
-    <figure
-      className={cx(styles.shotMap, className)}
-      aria-labelledby={hasCaption ? captionId : undefined}
-    >
+    <figure className={cx(styles.shotMap, className)} aria-labelledby={nameIds || undefined}>
       {hasCaption ? (
         <figcaption id={captionId} className={styles.header}>
           {title ? <span className={styles.title}>{title}</span> : null}{' '}

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import {
   appUrl,
@@ -33,7 +33,8 @@ test('shows the season, switches the chart and opens a game from the log', async
   await expect(screenHeading(page, 'Stats')).toBeVisible();
 
   // The season's numbers: only the ten final games count, not the one in progress.
-  await expect(page.getByText('Fall 2026 · 10 games')).toBeVisible();
+  // (The summary's line, a <p>: the shot chart's caption repeats it.)
+  await expect(page.getByText('Fall 2026 · 10 games').and(page.locator('p'))).toBeVisible();
   await expect(page.getByText('7–3', { exact: true })).toBeVisible();
   const pointsTile = page
     .getByLabel('Averages per game')
@@ -43,6 +44,9 @@ test('shows the season, switches the chart and opens a game from the log', async
     (points / finalGames.size).toFixed(1),
   );
   await expect(page.getByText(/The game against Westfield is still in progress/)).toBeVisible();
+  // The season's shot chart, named by the section's heading and its caption.
+  await expect(page.getByRole('figure', { name: 'Shot chart Fall 2026 · 10 games' })).toBeVisible();
+  await expect(page.getByLabel('Shooting by zone')).toBeVisible();
   // Nothing on the screen makes the page scroll sideways.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     IPHONE_VIEWPORT.width,
@@ -66,9 +70,8 @@ test('shows the season, switches the chart and opens a game from the log', async
   await expectRoute(page, paths.gameReport(demoGameId(10)));
 });
 
-test('a long season name leaves the totals in view', async ({ page }) => {
-  const season = 'Westside Warriors 12U Spring 2026';
-  await seedDemoData(page);
+/** Moves all ten demo games into `season`, then opens the Stats screen afresh. */
+async function showSeason(page: Page, season: string) {
   await patchGames(
     page,
     Object.fromEntries(
@@ -77,7 +80,15 @@ test('a long season name leaves the totals in view', async ({ page }) => {
   );
   await page.goto('about:blank');
   await page.goto(appUrl(paths.stats));
-  await expect(page.getByText(`${season} · 10 games`)).toBeVisible();
+  await expect(page.getByText(`${season} · 10 games`).first()).toBeVisible();
+}
+
+test('a long season name leaves the totals in view, and never widens the page', async ({
+  page,
+}) => {
+  const season = 'Westside Warriors 12U Spring 2026';
+  await seedDemoData(page);
+  await showSeason(page, season);
 
   const totals = page.getByRole('table', { name: 'Totals' });
   await totals.scrollIntoViewIfNeeded();
@@ -86,6 +97,12 @@ test('a long season name leaves the totals in view', async ({ page }) => {
   const points = await totals.getByRole('columnheader', { name: 'Points' }).boundingBox();
   expect(label?.width).toBeLessThan(IPHONE_VIEWPORT.width / 2);
   expect((points?.x ?? Infinity) + (points?.width ?? 0)).toBeLessThanOrEqual(IPHONE_VIEWPORT.width);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    IPHONE_VIEWPORT.width,
+  );
+
+  // As long as a name can be (60 characters), with no space to wrap at: it wraps anyway.
+  await showSeason(page, 'W'.repeat(60));
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     IPHONE_VIEWPORT.width,
   );

@@ -55,6 +55,13 @@ async function centerOnScreen(page: Page, name: string) {
   await chart.evaluate((element) => element.scrollIntoView({ block: 'center' }));
 }
 
+/** Scrolls the shot chart section (the court, its legend and the zone tiles) into view. */
+async function showShotChart(page: Page) {
+  const section = page.getByRole('region', { name: 'Shot chart' });
+  await expect(section.getByRole('figure')).toBeVisible();
+  await section.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+}
+
 const shots: Shot[] = [
   { name: 'season-stats-top', setup: seedSeason, viewportOnly: true },
   { name: 'season-stats-full', setup: seedSeason },
@@ -76,6 +83,12 @@ const shots: Shot[] = [
     },
   },
   {
+    name: 'season-stats-shot-chart',
+    setup: seedSeason,
+    viewportOnly: true,
+    interact: showShotChart,
+  },
+  {
     name: 'season-stats-live-game',
     setup: (page) => seedDemoData(page, { today: DEMO_TODAY, liveGame: true }),
     viewportOnly: true,
@@ -92,7 +105,8 @@ const shots: Shot[] = [
     setup: seedTwoYears,
     interact: async (page) => {
       await page.getByRole('radio', { name: 'All', exact: true }).tap();
-      await expect(page.getByText('All seasons · 10 games')).toBeVisible();
+      // The summary's line (the shot chart's caption repeats it).
+      await expect(page.getByText('All seasons · 10 games').first()).toBeVisible();
     },
   },
   {
