@@ -4,6 +4,7 @@ import './styles/global.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { seedDemoData } from '@/data/demo';
+import { replayPendingStats } from '@/data/pendingStats';
 import { requestPersistentStorage } from '@/data/persistence';
 import { clearAllData, exportAll } from '@/data/transfer';
 import { App } from './App';
@@ -22,3 +23,8 @@ createRoot(container).render(
     <App />
   </StrictMode>,
 );
+
+// Stats that an earlier page kept but couldn't save before it closed (see
+// src/data/pendingStats.ts): saved now, in the background. Nothing waits on it, and
+// it never shows anything: the saved stats simply appear.
+void replayPendingStats();

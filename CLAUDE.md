@@ -10,7 +10,7 @@ Offline-first iPhone web app (PWA). A parent records their daughter's basketball
 - **Never lose data.** Save every tap immediately. Never rely on a later "save" step, on the page staying open, or on in-memory state.
 - **Never interrupt a live game.** Nothing may pop up, navigate away or reload on the tracking screen. That's why the update banner lives only in the tab-screen shell.
 - **No zooming on the game screen.** Its root element sets `touch-action: pan-x pan-y` (not just its buttons), so fast taps between buttons can't double-tap-zoom and a stray pinch can't zoom either. Its sheets sit outside that element, so they still scroll.
-- **Every tap counts exactly once on the game screen.** A double tap on Undo or Next acts once, a button that just appeared ignores taps for a moment, and a stat that couldn't be saved stays on screen and is retried until it is (`src/screens/TrackGame/session.ts`).
+- **Every tap counts exactly once on the game screen.** A double tap on Undo or Next acts once, and the line's Undo ignores taps for a moment after an Undo (never after a stat, so "wrong stat, Undo" stays quick). Each tap is written to the pending-stats journal (`src/data/pendingStats.ts`, in localStorage) before its save starts, and saved under an id made at the tap: a stat that couldn't be saved stays on screen, is retried until it is, is still saved after a relaunch, and is never saved twice. Undo goes by tap time and never says it removed a stat that was already gone (`src/screens/TrackGame/session.ts`).
 - **Resume after a relaunch.** iOS may relaunch the app at `start_url` in the middle of a game, so the Games screen must offer to resume the live game.
 
 ## Stack
@@ -129,6 +129,15 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - `getLastChangeAt()`: when the data last changed (for the backup; read it before exporting).
 - `subscribeToChanges(listener)`: calls `listener` the moment any write commits (this tab or another), before the hooks re-read; returns a function that stops it. For code that keeps its own copy of the data, like the backup file Settings prepares so the share sheet can open straight from a tap.
 
+### Taps not saved yet (`data/pendingStats.ts`)
+
+The live game screen keeps every stat tap that isn't confirmed saved in a small journal in localStorage, so no tap depends on the page staying open or on IndexedDB answering (WebKit can lose its IndexedDB connection while the app is in the background, and then every write fails until it's back or the page reloads).
+
+- One key per tap, `hoop-stats.pendingStat.<id>`, holding `{ id, gameId, type, period, at, location? }`: no write ever rewrites the others. It's written synchronously at the tap, before the IndexedDB write starts, and removed once the save is confirmed or the tap is undone.
+- `newPendingStat({ gameId, type, period, location? }, after?)` makes a tap: its stat's `id` and its tap time `at` (`nextTimestamp` after the latest stat or tap, so taps keep their order). `savePendingStat(stat)` saves it through `recordStat` with that `id` and `at`: idempotent, so saving a tap twice is still one stat.
+- `addPendingStat(stat)` (false if it couldn't be kept), `removePendingStat(id)`, `isPendingStat(id)` and `listPendingStats(gameId?)` (in tap order; an entry this version can't read is skipped and left alone). They never throw: without localStorage (full, blocked), taps are still saved, just not kept across a reload, and the screen says so.
+- `replayPendingStats()` runs from `main.tsx` after the first render, in the background, never blocking or showing anything: it saves each kept tap once and forgets it, keeps one it can't save for next time, drops the taps of games that no longer exist, and saves taps of finished games too. A tracking session also starts with its game's kept taps, listed as not saved (counted, and undoable) until they are.
+
 ### Stats math (`data/stats.ts`, pure)
 
 - `STAT_DEFS[type]` is the single source of truth for buttons, the event log and reports. It has `label` ('2PT Made', 'Off Reb', 'Charge Taken'), `shortLabel` ('Made 2', 'OReb'), `kind` ('made' | 'miss' | 'other', for colors), `points` and `shot`. `STAT_TYPES` gives the order. For a type read from stored data, use `statDefOf(type)`: it's undefined for a type this version doesn't know (e.g. from a newer app).
@@ -174,7 +183,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 
 - Unit-test logic in `src/lib/` and `src/data/` with plain Vitest, stats math most of all.
 - Test screens and components with Testing Library, querying by role and name like a user would. `renderRoute(paths.x)` renders the whole app at a route; `renderWithRouter(<Thing />)` renders one component inside a router. Both live in `src/test/render.tsx`.
-- `fake-indexeddb/auto` is loaded in the test setup, so Dexie runs in unit tests. The setup empties the database before every test, so seed data in `beforeEach` or in the test itself (never `beforeAll`), through `repo.ts` or `importAll`. To freeze time, fake only `Date`: `vi.useFakeTimers({ toFake: ['Date'], now })`. Faking every timer stalls IndexedDB.
+- `fake-indexeddb/auto` is loaded in the test setup, so Dexie runs in unit tests. The setup empties the database (and localStorage) before every test, so seed data in `beforeEach` or in the test itself (never `beforeAll`), through `repo.ts` or `importAll`. To freeze time, fake only `Date`: `vi.useFakeTimers({ toFake: ['Date'], now })`. Faking every timer stalls IndexedDB.
 - jsdom can't open a `<dialog>`, so `src/test/dialogPolyfill.ts` stands in for `showModal`, `close` and Escape (like browsers, it marks the page outside the top modal `inert` and fires `close` from a queued task); `e2e/ui-kit.spec.ts` checks sheets in a real browser. Closing a sheet or a toast finishes asynchronously: wait with `waitFor` or a `findBy` query.
 - The toast area is `getByRole('status', { name: 'Notifications' })` and is always on screen, so give your own status messages a name or query them by text.
 - End-to-end tests cover key flows. They build the app and serve it under `/Basketball/`, like GitHub Pages. For data, use `e2e/support/data.ts`: `await seedDemoData(page)` after `page.goto('./')`, then navigate (e.g. to `paths.gameReport(demoGameId(10))`).

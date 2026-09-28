@@ -2,7 +2,14 @@ import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, expectRoute, IPHONE_SAFE_BOTTOM, IPHONE_VIEWPORT } from './support/app';
 import { demoGameId, seedDemoData } from './support/data';
-import { failNextSaves, lastAction, notSaved, startGame, stats } from './support/tracking';
+import {
+  expectAllSaved,
+  failNextSaves,
+  lastAction,
+  notSaved,
+  startGame,
+  stats,
+} from './support/tracking';
 
 // Screenshots of the live game screen in its main states, at the typical iPhone size
 // and the smallest and largest ones (as installed apps: the status bar is above the
@@ -92,6 +99,7 @@ async function midGame(page: Page) {
   }
   await expect(stats(page).getByText('Points: 14')).toBeAttached();
   await expect(lastAction(page)).toContainText('Foul · Q3');
+  await expectAllSaved(page);
 }
 
 /** A finished game being corrected: one more foul puts her in foul trouble (4). */
@@ -105,6 +113,7 @@ async function finishedGame(page: Page) {
     .getByRole('button', { name: 'Foul' })
     .tap();
   await expect(stats(page).getByText('Fouls: 4 (foul trouble)')).toBeAttached();
+  await expectAllSaved(page);
 }
 
 interface Shot {
@@ -132,7 +141,7 @@ const shots: Shot[] = [
           .tap();
       }
       await expect(notSaved(page)).toContainText('2 stats not saved');
-      await expect(notSaved(page)).toContainText('Tap Retry');
+      await expect(notSaved(page)).toContainText('kept on this phone');
     },
   },
   {
@@ -157,8 +166,44 @@ const shots: Shot[] = [
       await sheet.getByRole('heading', { name: 'Final score' }).focus();
     },
   },
+  {
+    name: 'end-game-not-saved',
+    device: IPHONE_SE,
+    capture: async (page) => {
+      await midGame(page);
+      await failNextSaves(page, 1000);
+      await page
+        .getByRole('group', { name: 'Record a stat' })
+        .getByRole('button', { name: 'Steal' })
+        .tap();
+      await expect(notSaved(page)).toContainText('Steal not saved');
+      await page.getByRole('button', { name: 'End game' }).tap();
+      const sheet = page.getByRole('dialog', { name: 'Final score' });
+      await sheet.getByLabel('Our team').fill('46');
+      await sheet.getByLabel('Opponent').fill('39');
+      await sheet.getByRole('button', { name: 'End game' }).tap();
+      await expect(sheet.getByRole('button', { name: 'End anyway' })).toBeEnabled();
+      await sheet.getByRole('heading', { name: 'Final score' }).focus();
+    },
+  },
   { name: 'finished', device: IPHONE, capture: finishedGame },
   { name: 'finished-se', device: IPHONE_SE, capture: finishedGame },
+  {
+    name: 'done-not-saved',
+    device: IPHONE,
+    capture: async (page) => {
+      await finishedGame(page);
+      await failNextSaves(page, 1000);
+      await page
+        .getByRole('group', { name: 'Record a stat' })
+        .getByRole('button', { name: 'Turnover' })
+        .tap();
+      await expect(notSaved(page)).toContainText('Turnover not saved');
+      await page.getByRole('button', { name: 'Done' }).tap();
+      const sheet = page.getByRole('dialog', { name: "1 stat isn't saved yet" });
+      await expect(sheet.getByRole('button', { name: 'Done anyway' })).toBeEnabled();
+    },
+  },
 ];
 
 const outputDir = process.env.SCREENSHOT_DIR || 'screenshots';

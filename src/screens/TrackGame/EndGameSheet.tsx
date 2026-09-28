@@ -3,7 +3,8 @@ import { Button } from '@/components/Button/Button';
 import { Sheet } from '@/components/Sheet/Sheet';
 import { TextField } from '@/components/TextField/TextField';
 import type { FinalScore } from '@/data/repo';
-import { parseScore } from './tracking';
+import type { NotSaved } from './session';
+import { notSavedMessage, parseScore } from './tracking';
 import styles from './EndGameSheet.module.css';
 
 export interface EndGameSheetProps {
@@ -12,10 +13,12 @@ export interface EndGameSheetProps {
   teamScore?: number;
   opponentScore?: number;
   /**
-   * Ends the game with the scores that were typed (a blank one clears a saved score).
-   * Resolves once it's done; rejects if it couldn't be saved.
+   * Ends the game with the scores that were typed (a blank one clears a saved score),
+   * after saving every stat not saved yet, unless `anyway`. Resolves to the stats
+   * still not saved (the game isn't ended then), or to null once it's ended. Rejects
+   * if it couldn't be ended.
    */
-  onEnd: (score: FinalScore) => Promise<void>;
+  onEnd: (score: FinalScore, anyway: boolean) => Promise<NotSaved | null>;
   /** "Keep tracking": close without ending the game. */
   onClose: () => void;
 }
@@ -25,6 +28,8 @@ const NUMBERS_ONLY = 'Use numbers only (0–999)';
 /**
  * "Final score" form for ending the game. Only its own buttons close it, so a stray
  * tap can't lose what was typed. Mount it fresh (a new `key`) each time it opens.
+ * If some stats aren't saved yet, it says so and stays open, offering to try again
+ * or to end the game anyway (kept stats are saved later on their own).
  */
 export function EndGameSheet({
   open,
@@ -39,12 +44,13 @@ export function EndGameSheet({
   const [opponent, setOpponent] = useState(opponentScore?.toString() ?? '');
   const [showErrors, setShowErrors] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Stats that weren't saved when the game was about to end.
+  const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
 
   const parsedTeam = parseScore(team);
   const parsedOpponent = parseScore(opponent);
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const end = async (anyway: boolean) => {
     if (saving) return;
     if (parsedTeam === null || parsedOpponent === null) {
       setShowErrors(true);
@@ -58,12 +64,17 @@ export function EndGameSheet({
     else if (opponentScore !== undefined) score.opponentScore = null;
     setSaving(true);
     try {
-      await onEnd(score);
+      setNotSaved(await onEnd(score, anyway));
     } catch {
       // The caller has said what went wrong; let them try again.
     } finally {
       setSaving(false);
     }
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void end(false);
   };
 
   return (
@@ -76,14 +87,24 @@ export function EndGameSheet({
       footer={
         <>
           <Button type="submit" form={formId} size="lg" disabled={saving}>
-            End game
+            {notSaved ? 'Try again' : 'End game'}
           </Button>
+          {notSaved ? (
+            <Button variant="secondary" size="lg" disabled={saving} onClick={() => void end(true)}>
+              End anyway
+            </Button>
+          ) : null}
           <Button variant="secondary" size="lg" onClick={onClose}>
             Keep tracking
           </Button>
         </>
       }
     >
+      {notSaved ? (
+        <p role="alert" className={styles.notSaved}>
+          {notSavedMessage(notSaved.count, notSaved.kept)}
+        </p>
+      ) : null}
       <form id={formId} className={styles.form} noValidate onSubmit={submit}>
         <TextField
           label="Our team"

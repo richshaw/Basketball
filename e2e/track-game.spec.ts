@@ -6,6 +6,7 @@ import {
   doubleTap,
   expectStats,
   failNextSaves,
+  keptTaps,
   lastAction,
   lineButton,
   notSaved,
@@ -14,9 +15,9 @@ import {
   tapStats,
 } from './support/tracking';
 
-// The live game screen in a real browser: fast taps, undo, double taps, failed saves,
-// a reload mid-game, ending the game, and a layout that fits the phone without
-// scrolling.
+// The live game screen in a real browser: fast taps, undo, double taps, failed saves
+// (kept on the phone and saved after a reload), a reload mid-game, ending the game,
+// and a layout that fits the phone without scrolling.
 
 async function gameEvents(page: Page, gameId: string) {
   const data = await exportAll(page);
@@ -186,10 +187,11 @@ test('a stat that could not be saved stays on screen and is saved by the next ta
   await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['ast']);
   await expect(notSaved(page)).toContainText('Steal not saved');
 
-  // Tapping another stat retries it first, so it lands before that one.
+  // Tapping another stat retries it first. Saved late, it still sorts where it was
+  // tapped: before the Assist.
   await tapStats(page, ['Block']);
   await expect(notSaved(page)).toHaveCount(0);
-  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['ast', 'stl', 'blk']);
+  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['stl', 'ast', 'blk']);
   await expectStats(page, 'Steals: 1', 'Assists: 1', 'Blocks: 1');
 });
 
@@ -218,6 +220,69 @@ test('double-tapping Retry saves the stat and leaves it saved', async ({ page })
   await page.waitForTimeout(500);
   expect(await gameEventTypes(page, gameId)).toEqual(['stl']);
   await expectStats(page, 'Steals: 1');
+});
+
+test('a stat that could not be saved is kept on the phone, and saved once after a reload', async ({
+  page,
+}) => {
+  const gameId = await startGame(page);
+  await tapStats(page, ['Assist']);
+  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['ast']);
+
+  // IndexedDB stops taking writes, as when WebKit loses its connection in the background.
+  await failNextSaves(page, 1000);
+  await tapStats(page, ['Steal']);
+  await expect(notSaved(page)).toContainText('Steal not saved');
+  await expect(notSaved(page)).toContainText(
+    "It's kept on this phone and will be saved automatically.",
+  );
+  await expectStats(page, 'Steals: 1');
+  expect(await keptTaps(page)).toHaveLength(1);
+
+  // The app is relaunched mid-game, with writes working again.
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1, name: 'vs Westfield' })).toBeVisible();
+  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['ast', 'stl']);
+  await expect(notSaved(page)).toHaveCount(0);
+  await expectStats(page, 'Steals: 1', 'Assists: 1');
+  await expect(lastAction(page)).toContainText('Steal · Q1');
+  // Once, though both the app's start and the live game screen saved it.
+  await page.waitForTimeout(500);
+  expect(await gameEventTypes(page, gameId)).toEqual(['ast', 'stl']);
+  expect(await keptTaps(page)).toEqual([]);
+});
+
+test('ending the game with a stat not saved says so, and End anyway still saves it later', async ({
+  page,
+}) => {
+  const gameId = await startGame(page);
+  await failNextSaves(page, 1000);
+  await tapStats(page, ['Block']);
+  await expect(notSaved(page)).toContainText('Block not saved');
+
+  await page.getByRole('button', { name: 'End game' }).tap();
+  const sheet = page.getByRole('dialog', { name: 'Final score' });
+  await sheet.getByLabel('Our team').fill('50');
+  await sheet.getByRole('button', { name: 'End game' }).tap();
+  await expect(sheet.getByRole('alert')).toHaveText(
+    "1 stat isn't saved yet. It's kept on this phone and will be saved automatically.",
+  );
+  await expect(sheet.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await sheet.getByRole('button', { name: 'End anyway' }).tap();
+  await expectRoute(page, paths.gameReport(gameId));
+  const ended = await exportAll(page);
+  expect(ended.games.find((game) => game.id === gameId)).toMatchObject({ status: 'final' });
+  expect(await gameEventTypes(page, gameId)).toEqual([]);
+
+  // The next launch saves it, once, and the report shows it.
+  await page.reload();
+  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['blk']);
+  await expect(
+    page.getByRole('list', { name: '1st quarter plays' }).getByRole('button', { name: /Block/ }),
+  ).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(await gameEventTypes(page, gameId)).toEqual(['blk']);
+  expect(await keptTaps(page)).toEqual([]);
 });
 
 test('the log deletes a stat once confirmed', async ({ page }) => {

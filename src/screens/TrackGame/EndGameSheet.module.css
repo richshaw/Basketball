@@ -5,3 +5,11 @@
   align-items: end;
   gap: var(--space-3);
 }
+
+/* Stats not saved yet: said above the scores, which stay as typed. */
+.notSaved {
+  margin-bottom: var(--space-4);
+  color: var(--color-danger-text);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-normal);
+}

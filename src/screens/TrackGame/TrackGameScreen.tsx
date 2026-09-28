@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Button } from '@/components/Button/Button';
-import { ButtonLink } from '@/components/Button/ButtonLink';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
@@ -16,7 +15,9 @@ import { paths } from '@/routes';
 import { EndGameSheet } from './EndGameSheet';
 import { LastActionLine, type LastAction } from './LastActionLine';
 import { LogSheet } from './LogSheet';
+import { NotSavedSheet } from './NotSavedSheet';
 import { PeriodSheet } from './PeriodSheet';
+import type { NotSaved, TakingBack, Tap } from './session';
 import { StatGrid } from './StatGrid';
 import { StatStrip } from './StatStrip';
 import { TopBar } from './TopBar';
@@ -28,6 +29,7 @@ import {
   formatClockTime,
   statKind,
   statLabel,
+  withTaps,
 } from './tracking';
 import { UnsavedStats } from './UnsavedStats';
 import { useTrackingSession } from './useTrackingSession';
@@ -37,7 +39,7 @@ import styles from './TrackGameScreen.module.css';
 /** Puts a message on the last-action line. */
 type ShowAction = (action: Omit<LastAction, 'key'>) => void;
 
-type OpenSheet = 'period' | 'log' | 'end' | null;
+type OpenSheet = 'period' | 'log' | 'end' | 'notSaved' | null;
 
 /** ' · 4 fouls' once she's in foul trouble, so the line says it right at the tap. */
 function foulNote(fouls: number): string {
@@ -50,14 +52,27 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   const toast = useToast();
   const confirm = useConfirm();
   const navigate = useNavigate();
-  const [openSheet, setOpenSheet] = useState<OpenSheet>(null);
+  const [openSheet, setOpenSheetState] = useState<OpenSheet>(null);
+  // Read after a wait (e.g. saving before the game ends): was the sheet closed meanwhile?
+  const openSheetRef = useRef<OpenSheet>(null);
+  const setOpenSheet = useCallback((sheet: OpenSheet) => {
+    openSheetRef.current = sheet;
+    setOpenSheetState(sheet);
+  }, []);
   // Bumped each time the end-game sheet opens, so its form starts fresh.
   const [endSheetKey, setEndSheetKey] = useState(0);
   const [lastAction, setLastAction] = useState<LastAction | null>(null);
   // Bumped by the grid's Undo: the line's own Undo, just below it, then ignores taps
   // for a moment.
   const [lineHold, setLineHold] = useState(0);
-  const [session, { period, unsaved, retrying }] = useTrackingSession(game.id, game.currentPeriod);
+  // Done on a finished game: the stats that weren't saved, and whether it's busy.
+  const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const [session, { period, pending, unsaved, unsavedKept, retrying }] = useTrackingSession(
+    game.id,
+    game.currentPeriod,
+    events,
+  );
   // A double tap on the grid's Undo or on Next acts once.
   const [undoGuard] = useState(() => createTapGuard());
   const [nextGuard] = useState(() => createTapGuard());
@@ -67,31 +82,47 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   const periodText = periodLabel(period, periodFormat);
   const isFinal = game.status === 'final';
 
-  // Recording a stat changes `events`; only these two derive from it.
-  const counts = useMemo(() => countByType(events), [events]);
-  const line = useMemo(() => computeStatLine(events), [events]);
-
-  // Read by tap handlers, which stay stable so the grid doesn't re-render.
-  const eventsRef = useRef(events);
-  const foulsRef = useRef(counts.foul);
-  useEffect(() => {
-    eventsRef.current = events;
-    foulsRef.current = counts.foul;
-  }, [events, counts.foul]);
+  // The saved stats plus the taps not among them yet, each once: a tap counts from
+  // the moment it's made, saved yet or not.
+  const counted = useMemo(() => withTaps(events, pending), [events, pending]);
+  const counts = useMemo(() => countByType(counted), [counted]);
+  const line = useMemo(() => computeStatLine(counted), [counted]);
 
   const show = useCallback<ShowAction>((action) => {
     setLastAction((previous) => ({ ...action, key: (previous?.key ?? 0) + 1 }));
   }, []);
 
-  /** Says a stat is gone right away, and speaks up if removing it fails. */
+  /**
+   * Says a stat is gone: at once for a tap not saved yet (it no longer counts), else
+   * once its removal is done. Speaks up if it couldn't be removed.
+   */
   const takeBack = useCallback(
-    (label: string, removal: Promise<boolean>) => {
-      show({ message: `Removed ${label}`, tone: 'muted' });
-      void removal.then((removed) => {
-        if (!removed) show({ message: `Couldn't remove ${label}. Try again.`, tone: 'error' });
+    ({ type, immediate, removal }: TakingBack) => {
+      const label = statLabel(type);
+      if (immediate) show({ message: `Removed ${label}`, tone: 'muted' });
+      void removal.then((result) => {
+        if (result === 'failed') {
+          show({ message: `Couldn't remove ${label}. Try again.`, tone: 'error' });
+        } else if (!immediate) {
+          const message =
+            result === 'removed' ? `Removed ${label}` : `${label} was already removed`;
+          show({ message, tone: 'muted' });
+        }
       });
     },
     [show],
+  );
+
+  /** The line for one stat, e.g. '3PT Made · Q2', with an Undo for exactly that stat. */
+  const statAction = useCallback(
+    (stat: Pick<Tap, 'id' | 'type' | 'period'>, note = ''): Omit<LastAction, 'key'> => ({
+      message: `${statLabel(stat.type)} · ${periodLabel(stat.period, periodFormat)}${note}`,
+      kind: statKind(stat.type),
+      tapId: stat.id,
+      actionLabel: 'Undo',
+      onAction: () => takeBack(session.undo(stat)),
+    }),
+    [session, takeBack, periodFormat],
   );
 
   // Stable for the whole game (the period comes from the session at the tap), so the
@@ -99,26 +130,22 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   const record = useCallback(
     (type: StatType) => {
       const tap = session.record(type);
-      const label = statLabel(type);
-      const fouls = type === 'foul' ? foulNote(foulsRef.current + 1) : '';
-      show({
-        message: `${label} · ${periodLabel(tap.period, periodFormat)}${fouls}`,
-        kind: statKind(type),
-        tapId: tap.id,
-        actionLabel: 'Undo',
-        onAction: () => takeBack(label, session.undo(tap)),
-      });
+      // Counted by the session, taps not saved yet included, so two quick fouls after
+      // three say 4 and then 5, before the saved stats on screen catch up.
+      show(statAction(tap, type === 'foul' ? foulNote(session.count('foul')) : ''));
     },
-    [session, show, takeBack, periodFormat],
+    [session, show, statAction],
   );
 
   const undo = useCallback((): boolean => {
     if (!undoGuard()) return false;
-    const outcome = session.undoLatest(eventsRef.current);
+    const outcome = session.undoLatest();
     if (outcome === 'busy') return false;
     setLineHold((holds) => holds + 1);
-    if (outcome === 'nothing') show({ message: 'Nothing to undo', tone: 'muted' });
-    else takeBack(statLabel(outcome.type), outcome.done);
+    void outcome.then((taking) => {
+      if (taking === 'nothing') show({ message: 'Nothing to undo', tone: 'muted' });
+      else takeBack(taking);
+    });
     return true;
   }, [session, show, takeBack, undoGuard]);
 
@@ -157,10 +184,10 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
       setOpenSheet(null);
       moveTo(to);
     },
-    [moveTo],
+    [moveTo, setOpenSheet],
   );
-  const openPeriods = useCallback(() => setOpenSheet('period'), []);
-  const closeSheet = useCallback(() => setOpenSheet(null), []);
+  const openPeriods = useCallback(() => setOpenSheet('period'), [setOpenSheet]);
+  const closeSheet = useCallback(() => setOpenSheet(null), [setOpenSheet]);
   const retry = useCallback(() => session.retry(), [session]);
 
   const deleteFromLog = useCallback(
@@ -174,14 +201,24 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
       });
       if (!confirmed) return;
       // The log shows it's gone; the line says so once the log is closed.
-      if (await session.remove(event)) show({ message: `Deleted ${what}`, tone: 'muted' });
+      const result = await session.undo(event).removal;
+      if (result === 'removed') show({ message: `Deleted ${what}`, tone: 'muted' });
+      else if (result === 'gone') show({ message: `${what} was already deleted`, tone: 'muted' });
       else toast.show({ message: `Couldn't delete ${what}. Try again.` });
     },
     [confirm, toast, show, session, periodFormat],
   );
 
+  // End game: every stat is saved first, unless it's "End anyway" (kept stats are
+  // saved later on their own).
   const finishGame = useCallback(
-    async (score: FinalScore) => {
+    async (score: FinalScore, anyway: boolean): Promise<NotSaved | null> => {
+      if (!anyway) {
+        const left = await session.saveAll();
+        // "Keep tracking" was tapped while it saved: the game goes on.
+        if (openSheetRef.current !== 'end') return null;
+        if (left.count > 0) return left;
+      }
       try {
         await endGame(gameId, score);
       } catch (error) {
@@ -189,24 +226,45 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
         throw error;
       }
       await navigate(paths.gameReport(gameId), { replace: true });
+      return null;
     },
-    [gameId, navigate, toast],
+    [gameId, navigate, session, toast],
   );
 
-  // Before anything is tapped, the line shows the game's latest stat (e.g. after a
-  // relaunch), or how to start.
-  const latest = events.at(-1);
-  let shownAction: LastAction =
-    lastAction ??
-    (latest
-      ? {
-          key: 0,
-          message: `${statLabel(latest.type)} · ${periodLabel(latest.period, periodFormat)}`,
-          kind: statKind(latest.type),
-          actionLabel: 'Undo',
-          onAction: () => takeBack(statLabel(latest.type), session.remove(latest)),
+  // Done, on a finished game: the same, with its own "not saved yet" sheet.
+  const leave = async (anyway: boolean) => {
+    if (leaving) return;
+    const sheet = openSheetRef.current;
+    setLeaving(true);
+    try {
+      if (!anyway) {
+        const left = await session.saveAll();
+        // Its sheet was closed (or another opened) while it saved: stay.
+        if (openSheetRef.current !== sheet) return;
+        if (left.count > 0) {
+          setNotSaved(left);
+          setOpenSheet('notSaved');
+          return;
         }
-      : { key: 0, message: 'Tap a button to record a stat', tone: 'muted' });
+      }
+      await navigate(paths.gameReport(gameId), { replace: true });
+    } finally {
+      setLeaving(false);
+    }
+  };
+
+  // Before anything is tapped, the line shows the game's latest stat (after a
+  // relaunch, maybe a tap an earlier page couldn't save), or how to start.
+  const latestSaved = events.at(-1);
+  const latestTap = pending.at(-1);
+  let shownAction: LastAction = { key: 0, message: 'Tap a button to record a stat', tone: 'muted' };
+  if (lastAction) {
+    shownAction = lastAction;
+  } else if (latestTap && !(latestSaved && latestSaved.createdAt >= latestTap.at)) {
+    shownAction = { key: 0, ...statAction(latestTap) };
+  } else if (latestSaved) {
+    shownAction = { key: 0, ...statAction(latestSaved) };
+  }
   // The tap on the line couldn't be saved (yet): say so there too.
   const unsavedTap = unsaved.find((tap) => tap.id === shownAction.tapId);
   if (unsavedTap) {
@@ -231,7 +289,7 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
         {isFinal ? <p className={styles.banner}>Editing a finished game</p> : null}
         <div className={styles.stripArea}>
           <StatStrip line={line} />
-          <UnsavedStats unsaved={unsaved} retrying={retrying} onRetry={retry} />
+          <UnsavedStats unsaved={unsaved} kept={unsavedKept} retrying={retrying} onRetry={retry} />
         </div>
         {/*
           The shot chart (a later PR) slots in here, above the grid: the grid takes
@@ -244,9 +302,9 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
             Log
           </Button>
           {isFinal ? (
-            <ButtonLink to={paths.gameReport(gameId)} replace>
+            <Button disabled={leaving} onClick={() => void leave(false)}>
               Done
-            </ButtonLink>
+            </Button>
           ) : (
             <Button
               variant="secondary"
@@ -284,6 +342,14 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
         onEnd={finishGame}
         onClose={closeSheet}
       />
+      <NotSavedSheet
+        open={openSheet === 'notSaved'}
+        notSaved={notSaved}
+        busy={leaving}
+        onTryAgain={() => void leave(false)}
+        onDoneAnyway={() => void leave(true)}
+        onClose={closeSheet}
+      />
     </>
   );
 }
@@ -307,8 +373,9 @@ function GameNotFound() {
 /**
  * Live game tracking: big one-tap stat buttons for a parent in a loud gym. Full
  * screen on purpose: no tab bar and no update banner may interrupt a live game.
- * Every tap is saved immediately; nothing here ever waits on the database first,
- * and a tap that couldn't be saved stays on screen until it is (see session.ts).
+ * Every tap is kept on the phone and saved at once; nothing here ever waits on the
+ * database first, and a tap that couldn't be saved stays on screen until it is (see
+ * session.ts), even across a relaunch.
  */
 export function TrackGameScreen() {
   const { gameId } = useParams();

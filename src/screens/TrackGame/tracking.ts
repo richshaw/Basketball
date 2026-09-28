@@ -27,6 +27,44 @@ export function statKind(type: StatType): StatDef['kind'] {
   return statDefOf(type)?.kind ?? 'other';
 }
 
+/** A saved stat or a tap, as the screen counts them. */
+export interface Counted {
+  readonly id: string;
+  readonly type: StatType;
+}
+
+/**
+ * The game's saved stats plus the taps not among them yet, each once (by id): what
+ * the screen counts, from the moment of each tap.
+ */
+export function withTaps(saved: readonly Counted[], taps: readonly Counted[]): readonly Counted[] {
+  if (taps.length === 0) return saved;
+  const savedIds = new Set(saved.map((stat) => stat.id));
+  const notSaved = taps.filter((tap) => !savedIds.has(tap.id));
+  return notSaved.length === 0 ? saved : [...saved, ...notSaved];
+}
+
+/**
+ * What happens to stats not saved yet: kept on this phone (the pending-stats journal)
+ * and saved later, or (with no room to keep them) only while the app stays open.
+ */
+export function unsavedNote(count: number, kept: boolean): string {
+  const they = count === 1 ? "It's" : "They're";
+  return kept
+    ? `${they} kept on this phone and will be saved automatically.`
+    : `${they} not kept on this phone, so keep the app open.`;
+}
+
+/** E.g. "1 stat isn't saved yet" or "2 stats aren't saved yet". */
+export function notSavedTitle(count: number): string {
+  return count === 1 ? "1 stat isn't saved yet" : `${count} stats aren't saved yet`;
+}
+
+/** E.g. "1 stat isn't saved yet. It's kept on this phone and will be saved automatically." */
+export function notSavedMessage(count: number, kept: boolean): string {
+  return `${notSavedTitle(count)}. ${unsavedNote(count, kept)}`;
+}
+
 /** Local clock time of a timestamp as 'h:mm:ss' (12-hour, no AM/PM), e.g. '7:42:05'. */
 export function formatClockTime(timestamp: number): string {
   const time = new Date(timestamp);

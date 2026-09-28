@@ -3,65 +3,131 @@
  * for as long as the page is open), so no tap is lost to a re-render or to leaving
  * the screen and coming back.
  *
- * - Every tap is saved at once, into the period on screen when it was tapped.
- * - A tap that can't be saved is kept, and tried again: once on its own after
+ * - A tap gets its stat's id and tap time at once, is kept in the pending-stats
+ *   journal (src/data/pendingStats.ts, in localStorage, so it outlives the page), and
+ *   is then saved into the period on screen when it was tapped. Saving is idempotent
+ *   by id, so a retry can never add it twice, whatever its earlier write did.
+ * - A tap that can't be saved stays kept, and is tried again: once on its own after
  *   AUTO_RETRY_MS, then before each new tap, when the page is shown again, and on
- *   Retry. The screen lists these taps until they're saved, whatever is tapped next.
- * - Undo takes back one particular tap, saved or not. A tap that was undone is
- *   never retried, and is removed once its save lands.
+ *   Retry. The screen lists these taps until they're saved. A new session (e.g. after
+ *   a reload) starts with the taps an earlier page kept for its game.
+ * - The session holds a tap only until it's among the saved stats the screen shows
+ *   (syncSavedEvents): saved stats are the database's business. Undo takes back the
+ *   most recent stat by tap time, a tap or a saved stat; one that turns out to be gone
+ *   already is skipped, and never reported as removed.
  * - The period moves on screen at once and is then saved; the saved period takes
  *   over again once no move is being saved (or a move couldn't be saved).
  */
-import { deleteStat, recordStat, setCurrentPeriod } from '@/data/repo';
+import {
+  addPendingStat,
+  listPendingStats,
+  newPendingStat,
+  removePendingStat,
+  savePendingStat,
+  type PendingStat,
+} from '@/data/pendingStats';
+import { deleteStat, setCurrentPeriod } from '@/data/repo';
 import type { StatEvent, StatType } from '@/data/types';
 
 /** How long after a tap couldn't be saved it's tried again on its own. */
 export const AUTO_RETRY_MS = 1000;
 
+/** How long saveAll() waits for saves under way before counting them as not saved. */
+export const SAVE_ALL_WAIT_MS = 3000;
+
 /** The writes a session makes (the repository's, or fakes in tests). */
 export interface SessionDeps {
-  recordStat(gameId: string, type: StatType, period: number): Promise<StatEvent>;
+  /** Saves a tap as its stat. Must be idempotent by the tap's id, like recordStat. */
+  recordStat(stat: PendingStat): Promise<StatEvent>;
   deleteStat(eventId: string): Promise<StatEvent | undefined>;
   setCurrentPeriod(gameId: string, period: number): Promise<unknown>;
 }
 
 // Looked up on each call (not captured), so tests can spy on the repository.
 const repoDeps: SessionDeps = {
-  recordStat: (gameId, type, period) => recordStat(gameId, type, undefined, { period }),
+  recordStat: (stat) => savePendingStat(stat),
   deleteStat: (eventId) => deleteStat(eventId),
   setCurrentPeriod: (gameId, period) => setCurrentPeriod(gameId, period),
 };
 
 /** One tap of a stat button. */
 export interface Tap {
-  readonly id: number;
+  /** Its stat's id: the event it's saved as. */
+  readonly id: string;
   readonly type: StatType;
   /** The period on screen at the tap: the stat is saved there, even by a later retry. */
   readonly period: number;
+  /** When it was tapped (epoch ms): its stat's createdAt, however late it's saved. */
+  readonly at: number;
 }
 
-interface TapRecord extends Tap {
-  status: 'saving' | 'saved' | 'failed';
-  /** A save of this tap has failed at least once. */
+interface TapRecord {
+  readonly stat: PendingStat;
+  /** 'saving': a save is under way. 'failed': the last one failed. 'saved': one landed. */
+  status: 'saving' | 'failed' | 'saved';
+  /** A save of it has failed: it's listed as not saved until one lands. */
   hasFailed: boolean;
-  /** Taken back: never retried, and removed once saved. */
-  undone: boolean;
-  event?: StatEvent;
+  /** It's in the journal, so it outlives the page. */
+  kept: boolean;
+  /** Tried again on its own already (that happens once). */
+  autoRetried: boolean;
   /** Settles (never rejects) once the save under way is done. */
   settled: Promise<void>;
+  /** Taken back: never saved again, and its stat removed if a save landed anyway. */
+  undone: boolean;
+  /** How taking it back went, once it has been. */
+  removal?: Promise<Removal>;
+  /**
+   * Taken back before any save of it was confirmed, but removing its stat by id (in
+   * case a save landed after all) failed: tried again with the next retry, or when
+   * the stat shows up among the saved ones.
+   */
+  orphan: boolean;
+}
+
+/** How removing a stat went. */
+export type Removal =
+  /** It's gone: it doesn't count any more. */
+  | 'removed'
+  /** It was gone already (e.g. deleted on another screen): nothing was removed. */
+  | 'gone'
+  /** It couldn't be removed: it still counts. */
+  | 'failed';
+
+/** A stat that Undo (or the log) is taking back. */
+export interface TakingBack {
+  readonly type: StatType;
+  /**
+   * The tap was taken back at once (it no longer counts): true for a tap not
+   * confirmed saved. False for a saved stat, which only goes once `removal` says so.
+   */
+  readonly immediate: boolean;
+  /** Settles once its stat is dealt with; 'failed' if it counts again. */
+  readonly removal: Promise<Removal>;
+}
+
+/** Stats that aren't saved yet when the game is ended (see saveAll). */
+export interface NotSaved {
+  readonly count: number;
+  /** All of them are kept in the journal, so they'll be saved later even if the app closes. */
+  readonly kept: boolean;
 }
 
 export interface SessionSnapshot {
   /** The period on screen. */
   readonly period: number;
-  /** Taps that couldn't be saved yet, oldest first. */
+  /**
+   * Taps that count but aren't among the saved stats yet (being saved, not saved, or
+   * saved a moment ago), in tap order.
+   */
+  readonly pending: readonly Tap[];
+  /** The ones that couldn't be saved yet, in tap order. */
   readonly unsaved: readonly Tap[];
+  /** Every one of those is kept in the journal (on this phone, even across a relaunch). */
+  readonly unsavedKept: boolean;
   /** Some of them are being saved again right now. */
   readonly retrying: boolean;
 }
-
-/** What the grid's Undo did: removing a stat of `type` (done: true once it's gone). */
-export type UndoLatestOutcome = { type: StatType; done: Promise<boolean> } | 'nothing' | 'busy';
 
 /** Calls a write, turning a synchronous throw into a rejection. */
 function attempt<T>(write: () => Promise<T>): Promise<T> {
@@ -72,16 +138,31 @@ function attempt<T>(write: () => Promise<T>): Promise<T> {
   }
 }
 
-function sameTaps(a: readonly Tap[], b: readonly Tap[]): boolean {
-  return a.length === b.length && a.every((tap, index) => tap.id === b[index]?.id);
+function tapOf({ stat }: TapRecord): Tap {
+  return { id: stat.id, type: stat.type, period: stat.period, at: stat.at };
+}
+
+function sameTaps(taps: readonly Tap[], records: readonly TapRecord[]): boolean {
+  return (
+    taps.length === records.length && taps.every((tap, index) => tap.id === records[index]?.stat.id)
+  );
+}
+
+function isTapRecord(item: TapRecord | StatEvent): item is TapRecord {
+  return 'stat' in item;
 }
 
 export class TrackingSession {
-  private readonly taps: TapRecord[] = [];
-  /** Saved stats removed through this session (their deletion may still be under way). */
-  private readonly removedIds = new Set<string>();
+  /** Taps not among the saved stats yet, and taken-back taps still being dealt with. */
+  private taps: TapRecord[] = [];
+  /** The game's saved stats, oldest first, as the screen last showed them. */
+  private saved: readonly StatEvent[] = [];
+  private savedIds = new Set<string>();
+  /** Saved stats removed (or being removed) through this session, until they're gone. */
+  private readonly removing = new Set<string>();
+  /** The latest tap time given out or seen, so the next tap sorts after it. */
+  private lastAt: number | undefined;
   private readonly listeners = new Set<() => void>();
-  private nextTapId = 1;
   private period: number;
   private savedPeriod: number;
   private movesInFlight = 0;
@@ -96,7 +177,21 @@ export class TrackingSession {
     this.deps = deps;
     this.period = period;
     this.savedPeriod = period;
-    this.snapshot = { period, unsaved: [], retrying: false };
+    // Taps an earlier page kept but couldn't save (or didn't hear back about).
+    for (const stat of listPendingStats(gameId)) {
+      this.taps.push({
+        stat,
+        status: 'failed',
+        hasFailed: true,
+        kept: true,
+        autoRetried: false,
+        settled: Promise.resolve(),
+        undone: false,
+        orphan: false,
+      });
+      this.lastAt = Math.max(this.lastAt ?? stat.at, stat.at);
+    }
+    this.snapshot = this.nextSnapshot();
   }
 
   /** For useSyncExternalStore. */
@@ -108,57 +203,113 @@ export class TrackingSession {
   /** For useSyncExternalStore: the same object until something on screen changes. */
   readonly getSnapshot = (): SessionSnapshot => this.snapshot;
 
-  private emit(): void {
-    const unsaved = this.taps.filter(
-      (tap) => tap.hasFailed && tap.status !== 'saved' && !tap.undone,
-    );
-    const retrying = unsaved.some((tap) => tap.status === 'saving');
-    const previous = this.snapshot;
+  private nextSnapshot(): SessionSnapshot {
+    const pending = this.taps.filter((record) => !record.undone);
+    const unsaved = pending.filter((record) => record.hasFailed && record.status !== 'saved');
+    const unsavedKept = unsaved.every((record) => record.kept);
+    const retrying = unsaved.some((record) => record.status === 'saving');
+    const previous = this.snapshot as SessionSnapshot | undefined;
     if (
-      previous.period === this.period &&
+      previous?.period === this.period &&
+      previous.unsavedKept === unsavedKept &&
       previous.retrying === retrying &&
+      sameTaps(previous.pending, pending) &&
       sameTaps(previous.unsaved, unsaved)
     ) {
-      return;
+      return previous;
     }
-    this.snapshot = {
+    return {
       period: this.period,
-      unsaved: unsaved.map(({ id, type, period }) => ({ id, type, period })),
+      pending: pending.map(tapOf),
+      unsaved: unsaved.map(tapOf),
+      unsavedKept,
       retrying,
     };
+  }
+
+  private emit(): void {
+    const next = this.nextSnapshot();
+    if (next === this.snapshot) return;
+    this.snapshot = next;
     for (const listener of this.listeners) listener();
+  }
+
+  /** Stops holding a tap. */
+  private drop(record: TapRecord): void {
+    this.taps = this.taps.filter((each) => each !== record);
+    this.emit();
+  }
+
+  /**
+   * The game's saved stats, oldest first, as the screen shows them (they change when a
+   * save lands, or elsewhere). Taps among them are the database's from here on.
+   */
+  syncSavedEvents(events: readonly StatEvent[]): void {
+    this.saved = events;
+    this.savedIds = new Set(events.map((event) => event.id));
+    const newest = events.at(-1)?.createdAt;
+    if (newest !== undefined) this.lastAt = Math.max(this.lastAt ?? newest, newest);
+    for (const id of this.removing) {
+      if (!this.savedIds.has(id)) this.removing.delete(id);
+    }
+    for (const record of this.taps) {
+      if (!this.savedIds.has(record.stat.id)) continue;
+      if (!record.undone) {
+        // Saved, whatever its own write said: nothing left to keep.
+        removePendingStat(record.stat.id);
+      } else if (record.orphan) {
+        // A tap taken back whose save landed after all: remove it again.
+        void this.removeOrphan(record);
+      }
+    }
+    this.taps = this.taps.filter((record) => record.undone || !this.savedIds.has(record.stat.id));
+    this.emit();
   }
 
   /** Records a tap in the period on screen, after retrying any taps not saved yet. */
   record(type: StatType): Tap {
     this.retry();
-    const tap: TapRecord = {
-      id: this.nextTapId++,
-      type,
-      period: this.period,
+    const stat = newPendingStat({ gameId: this.gameId, type, period: this.period }, this.lastAt);
+    this.lastAt = stat.at;
+    // Kept before its write starts, so it outlives the page even if the write never lands.
+    const kept = addPendingStat(stat);
+    const record: TapRecord = {
+      stat,
       status: 'saving',
       hasFailed: false,
-      undone: false,
+      kept,
+      autoRetried: false,
       settled: Promise.resolve(),
+      undone: false,
+      orphan: false,
     };
-    this.taps.push(tap);
-    this.save(tap);
-    return { id: tap.id, type, period: tap.period };
+    this.taps.push(record);
+    this.save(record);
+    return tapOf(record);
   }
 
-  private save(tap: TapRecord): void {
-    tap.status = 'saving';
-    tap.settled = attempt(() => this.deps.recordStat(this.gameId, tap.type, tap.period)).then(
-      (event) => {
-        tap.status = 'saved';
-        tap.event = event;
+  private save(record: TapRecord): void {
+    record.status = 'saving';
+    record.settled = attempt(() => this.deps.recordStat(record.stat)).then(
+      () => {
+        record.status = 'saved';
+        removePendingStat(record.stat.id);
+        // Shown among the saved stats already (e.g. an earlier write of it landed).
+        if (!record.undone && this.savedIds.has(record.stat.id)) this.drop(record);
         this.emit();
       },
       () => {
-        const firstFailure = !tap.hasFailed;
-        tap.status = 'failed';
-        tap.hasFailed = true;
-        if (firstFailure && !tap.undone) this.scheduleRetry();
+        record.status = 'failed';
+        record.hasFailed = true;
+        // (Unless it was taken back, or has shown up among the saved stats meanwhile.)
+        if (!record.undone && this.taps.includes(record)) {
+          // The journal may have been full at the tap: try to keep it now.
+          record.kept ||= addPendingStat(record.stat);
+          if (!record.autoRetried) {
+            record.autoRetried = true;
+            this.scheduleRetry();
+          }
+        }
         this.emit();
       },
     );
@@ -173,91 +324,197 @@ export class TrackingSession {
     }, AUTO_RETRY_MS);
   }
 
-  /** Tries again to save the taps that couldn't be saved (not ones undone or saving). */
+  /**
+   * Tries again to save the taps that couldn't be saved (not ones being saved or taken
+   * back), and to remove taken-back taps whose removal failed.
+   */
   retry(): void {
-    for (const tap of this.taps) {
-      if (tap.status === 'failed' && !tap.undone) this.save(tap);
+    for (const record of this.taps) {
+      if (record.undone) {
+        if (record.orphan) void this.removeOrphan(record);
+      } else if (record.status === 'failed') {
+        this.save(record);
+      }
     }
   }
 
   /**
-   * Takes back one tap: drops it if it was never saved, or removes its stat once
-   * saved. Resolves to false if the stat couldn't be removed (the tap counts again).
-   * Taking back a tap twice does nothing the second time.
+   * Saves every tap not saved yet (retrying those that failed), e.g. before the game
+   * ends, and resolves once they've all answered (or after `waitMs`) to those still
+   * not saved.
    */
-  undo(tap: Tap): Promise<boolean> {
-    const record = this.taps.find((each) => each.id === tap.id);
-    if (!record || record.undone) return Promise.resolve(true);
-    record.undone = true;
-    this.emit();
-    return record.settled.then(() => this.removeSaved(record));
+  async saveAll(waitMs = SAVE_ALL_WAIT_MS): Promise<NotSaved> {
+    this.retry();
+    const saving = this.taps
+      .filter((record) => !record.undone && record.status === 'saving')
+      .map((record) => record.settled);
+    if (saving.length > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        Promise.all(saving),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, waitMs);
+        }),
+      ]);
+      clearTimeout(timer);
+    }
+    const notSaved = this.taps.filter((record) => !record.undone && record.status !== 'saved');
+    return { count: notSaved.length, kept: notSaved.every((record) => record.kept) };
   }
 
-  private removeSaved(record: TapRecord): Promise<boolean> {
-    if (record.status !== 'saved' || !record.event) return Promise.resolve(true);
-    return this.deleteEvent(record.event).then((removed) => {
-      if (!removed) {
-        record.undone = false;
-        this.emit();
-      }
-      return removed;
-    });
-  }
-
-  private deleteEvent(event: StatEvent): Promise<boolean> {
-    this.removedIds.add(event.id);
-    return attempt(() => this.deps.deleteStat(event.id)).then(
-      () => true,
-      () => {
-        this.removedIds.delete(event.id);
-        return false;
+  /** Removes a saved stat by id: 'removed', 'gone' if it wasn't there, or 'failed'. */
+  private removeStat(id: string): Promise<Removal> {
+    this.removing.add(id);
+    return attempt(() => this.deps.deleteStat(id)).then(
+      (event): Removal => (event ? 'removed' : 'gone'),
+      (): Removal => {
+        this.removing.delete(id);
+        return 'failed';
       },
     );
   }
 
-  /**
-   * Removes one saved stat (from the log, or the line's Undo for a stat recorded
-   * before this session). Resolves to false if it couldn't be removed.
-   */
-  remove(event: StatEvent): Promise<boolean> {
-    const tap = this.taps.find((each) => each.event?.id === event.id);
-    if (tap) return this.undo(tap);
-    if (this.removedIds.has(event.id)) return Promise.resolve(true);
-    return this.deleteEvent(event);
+  private removeOrphan(record: TapRecord): Promise<Removal> {
+    record.orphan = false;
+    return this.removeStat(record.stat.id).then((removal) => {
+      if (removal === 'failed') record.orphan = true;
+      else this.drop(record);
+      return removal;
+    });
+  }
+
+  /** Takes back a tap: at once if it isn't confirmed saved, else by removing its stat. */
+  private takeBack(record: TapRecord): TakingBack {
+    const { type, id } = record.stat;
+    if (record.undone) {
+      // Taken back already: the same outcome (and another go at removing its stat, if
+      // that failed).
+      if (record.orphan) record.removal = this.removeOrphan(record);
+      return { type, immediate: false, removal: record.removal ?? Promise.resolve('removed') };
+    }
+    const confirmed = record.status === 'saved';
+    record.undone = true;
+    // Never saved again, even after a reload.
+    removePendingStat(id);
+    this.emit();
+    record.removal = record.settled.then(() => this.finishTakingBack(record));
+    return { type, immediate: !confirmed, removal: record.removal };
+  }
+
+  private finishTakingBack(record: TapRecord): Promise<Removal> {
+    // A save of it may have landed (even one that seemed to fail): remove it by id.
+    const confirmed = record.status === 'saved';
+    return this.removeStat(record.stat.id).then((removal): Removal => {
+      if (removal !== 'failed') {
+        this.drop(record);
+        return confirmed ? removal : 'removed';
+      }
+      if (confirmed) {
+        // Its stat is saved and stays: the tap counts again.
+        record.undone = false;
+        record.removal = undefined;
+        this.emit();
+        return 'failed';
+      }
+      // No save of it ever landed, as far as anyone heard: it's taken back. In case one
+      // did, removing it is tried again later.
+      record.orphan = true;
+      return 'removed';
+    });
   }
 
   /**
-   * The grid's Undo: takes back the latest tap that still counts, saved or not;
-   * with none left, removes the latest stat in `events` (the game's saved stats,
-   * oldest first) recorded before this session. 'busy' while an Undo's removal is
-   * still under way, so a double tap can't take away two stats.
+   * Takes back one stat, by id: a tap from this session (the line's Undo) or a saved
+   * stat (the log, or the line's Undo after a relaunch). Taking one back twice gives
+   * the same outcome.
    */
-  undoLatest(events: readonly StatEvent[]): UndoLatestOutcome {
-    if (this.undoInFlight) return 'busy';
-    const tap = this.taps.findLast((each) => !each.undone);
-    if (tap && tap.status !== 'saved') {
-      // Not saved (yet): dropped now, or removed in the background once it's saved.
-      return { type: tap.type, done: this.undo(tap) };
+  undo(stat: Pick<Tap, 'id' | 'type'>): TakingBack {
+    const record = this.taps.find((each) => each.stat.id === stat.id);
+    if (record) return this.takeBack(record);
+    return { type: stat.type, immediate: false, removal: this.removeStat(stat.id) };
+  }
+
+  /** The most recent stat tapped before `before`: a tap that counts, or a saved stat. */
+  private latest(before: number): TapRecord | StatEvent | undefined {
+    let latest: TapRecord | StatEvent | undefined;
+    let latestAt = -Infinity;
+    const held = new Set<string>();
+    for (const record of this.taps) {
+      held.add(record.stat.id);
+      const { at } = record.stat;
+      if (!record.undone && at < before && at > latestAt) {
+        latest = record;
+        latestAt = at;
+      }
     }
-    let type: StatType;
-    let done: Promise<boolean>;
-    if (tap) {
-      type = tap.type;
-      done = this.undo(tap);
-    } else {
-      const ownIds = new Set(this.taps.flatMap((each) => (each.event ? [each.event.id] : [])));
-      const target = events.findLast(
-        (event) => !ownIds.has(event.id) && !this.removedIds.has(event.id),
-      );
-      if (!target) return 'nothing';
-      type = target.type;
-      done = this.deleteEvent(target);
+    for (const event of this.saved) {
+      const at = event.createdAt;
+      if (at < before && at > latestAt && !held.has(event.id) && !this.removing.has(event.id)) {
+        latest = event;
+        latestAt = at;
+      }
+    }
+    return latest;
+  }
+
+  /**
+   * The grid's Undo: takes back the most recent stat by tap time, a tap or a saved
+   * stat. A saved stat that turns out to be gone already is skipped for the one
+   * before it. A tap not confirmed saved is taken back at once; otherwise it's 'busy'
+   * until the removal is done, so a double tap can't take away two stats.
+   */
+  undoLatest(): Promise<TakingBack | 'nothing'> | 'busy' {
+    if (this.undoInFlight) return 'busy';
+    const first = this.latest(Infinity);
+    if (!first) return Promise.resolve('nothing');
+    if (isTapRecord(first) && first.status !== 'saved') {
+      // Taken back at once: the next Undo can go on to the stat before it.
+      return Promise.resolve(this.takeBack(first));
     }
     this.undoInFlight = true;
-    void done.then(() => {
+    const undo = async (): Promise<TakingBack | 'nothing'> => {
+      let item: TapRecord | StatEvent | undefined = first;
+      while (item) {
+        const taking = isTapRecord(item)
+          ? this.takeBack(item)
+          : { type: item.type, immediate: false, removal: this.removeStat(item.id) };
+        if (taking.immediate) return taking;
+        const removal = await taking.removal;
+        if (removal !== 'gone') return { ...taking, removal: Promise.resolve(removal) };
+        // Gone already (e.g. deleted on the report): the one before it.
+        item = this.latest(isTapRecord(item) ? item.stat.at : item.createdAt);
+      }
+      return 'nothing';
+    };
+    return undo().finally(() => {
       this.undoInFlight = false;
     });
-    return { type, done };
+  }
+
+  /**
+   * How many stats of `type` the game has, counting the taps not saved yet: right at
+   * a tap, before the saved stats on screen have caught up.
+   */
+  count(type: StatType): number {
+    let count = 0;
+    const held = new Set<string>();
+    for (const record of this.taps) {
+      held.add(record.stat.id);
+      if (!record.undone && record.stat.type === type) count += 1;
+    }
+    for (const event of this.saved) {
+      if (event.type === type && !held.has(event.id) && !this.removing.has(event.id)) count += 1;
+    }
+    return count;
+  }
+
+  /**
+   * The screen is closing: the taps it saved are the database's alone (whatever reads
+   * the game next reads them afresh). Taps not saved yet stay, and so do the kept ones.
+   */
+  forgetSaved(): void {
+    this.taps = this.taps.filter((record) => record.undone || record.status !== 'saved');
+    this.emit();
   }
 
   /**
@@ -272,6 +529,7 @@ export class TrackingSession {
     return attempt(() => this.deps.setCurrentPeriod(this.gameId, to)).then(
       () => {
         this.movesInFlight -= 1;
+        this.savedPeriod = to;
         return true;
       },
       () => {

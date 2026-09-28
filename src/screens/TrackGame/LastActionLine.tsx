@@ -18,7 +18,7 @@ export interface LastAction {
   actionLabel?: string;
   onAction?: () => void;
   /** The tap this line confirms, if it's a stat (so the screen can say it wasn't saved). */
-  tapId?: number;
+  tapId?: string;
 }
 
 export interface LastActionLineProps {

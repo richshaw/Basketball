@@ -1,4 +1,7 @@
-/* Laid over the stat strip (its parent is position: relative), exactly its size. */
+/*
+ * Laid over the stat strip (its parent is position: relative), exactly its size.
+ * Nothing spills out of it onto the stat buttons below, where it would catch taps.
+ */
 .row {
   position: absolute;
   inset: 0;
@@ -6,6 +9,7 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  overflow: hidden;
   border-radius: var(--radius-lg);
   background-color: var(--color-danger);
   color: var(--color-on-danger);

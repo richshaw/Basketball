@@ -59,6 +59,21 @@ export async function doubleTap(page: Page, name: string, gapMs = 120) {
   await page.touchscreen.tap(x, y);
 }
 
+/** The taps kept on the phone until they're saved (see src/data/pendingStats.ts). */
+export function keptTaps(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    Object.keys(localStorage).filter((key) => key.startsWith('hoop-stats.pendingStat.')),
+  );
+}
+
+/**
+ * Waits until every tap so far is saved. (The screen counts a tap from the moment it's
+ * made, so the numbers on it don't say that.)
+ */
+export async function expectAllSaved(page: Page) {
+  await expect.poll(() => keptTaps(page)).toEqual([]);
+}
+
 /**
  * Makes the next `count` stat saves fail in IndexedDB, as a write can when iOS brings
  * the app back from the background. Each failed save throws inside its transaction.
