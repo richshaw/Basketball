@@ -1,0 +1,108 @@
+/* Full-width strip that never takes taps; only the action button does. */
+.viewport {
+  position: fixed;
+  right: 0;
+  left: 0;
+  z-index: var(--z-toast);
+  display: flex;
+  justify-content: center;
+  padding-inline: calc(var(--safe-left) + var(--space-3)) calc(var(--safe-right) + var(--space-3));
+  pointer-events: none;
+}
+
+/* Above the home indicator, and the tab bar and update banner on tab screens. */
+.bottom {
+  bottom: calc(var(--overlay-inset-bottom) + var(--space-3));
+}
+
+/* Under the screen header's back-button bar, clear of a screen's bottom controls. */
+.top {
+  top: calc(var(--safe-top) + var(--header-bar-height) + var(--space-2));
+}
+
+/* Inside an open sheet: hangs from the outlet under the sheet's header (Sheet.module.css). */
+.overSheet {
+  position: absolute;
+  top: var(--space-2);
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--content-max-width);
+  min-height: calc(var(--tap-target) + 2 * var(--space-1));
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-inverse);
+  color: var(--color-on-inverse);
+  box-shadow: var(--shadow-overlay);
+  animation: enter var(--duration-normal) var(--ease-out);
+}
+
+.withAction {
+  padding-inline-end: var(--space-1);
+}
+
+/*
+ * On its way out: fades while its action button still swallows taps (ToastProvider.tsx).
+ * (Two classes, so the reduced-motion entrance below can't override it.)
+ */
+.toast.leaving {
+  animation: leave var(--duration-slow) var(--ease-in) forwards;
+}
+
+.message {
+  flex: 1;
+  min-width: 0;
+  padding-block: var(--space-2);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+}
+
+.action {
+  flex-shrink: 0;
+  min-width: var(--tap-target);
+  min-height: var(--tap-target);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-on-inverse-accent);
+  font-weight: var(--font-weight-bold);
+  pointer-events: auto;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.action:active {
+  opacity: 0.6;
+}
+
+/* The usual blue ring is hard to see on the inverse fill. */
+.action:focus-visible {
+  outline-color: var(--color-on-inverse);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation-name: fadeIn;
+  }
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2)) scale(0.96);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes leave {
+  to {
+    opacity: 0;
+  }
+}

@@ -33,7 +33,8 @@ src/
   screens/<Feature>/       one folder per screen: <Feature>Screen.tsx, .module.css, tests, screen-only parts
   data/                    the data layer: model types, Dexie database, repository, hooks, stats math,
                            backup format, demo data (see "Data layer" below)
-  lib/                     pure helpers: no React, no DOM (e.g. cx, color, court, format, id)
+  lib/                     pure helpers, plus thin guarded wrappers over browser APIs: no React,
+                           no DOM elements (e.g. cx, color, court, format, id, share)
   pwa/                     service worker registration and app-update state
   styles/                  tokens.css (design tokens), global.css (element defaults, utilities)
   test/                    Vitest setup and render helpers
@@ -57,7 +58,26 @@ Keep changes inside your own screen folder where you can. Code used by more than
 - One CSS Module per component, camelCase class names (`styles.titleRow`). Combine classes with `cx()` from `src/lib/cx.ts`.
 - Every tappable element is at least 44x44px (`--tap-target`); main actions use 56px (`--tap-target-lg`). Game-screen buttons should be much bigger, with big, bold type (`--font-size-xl` and up, `--font-size-display` for scores). Put `.tabular-nums` on numbers that change.
 - The status bar is black (`black` style), and the page starts below it. `ScreenHeader` pads the top safe-area inset (0 there), `TabBar` the bottom one (home indicator) and `body` the sides. Put screen content in `ScreenBody`: it adds the page padding and, on full-screen routes, clears the home indicator.
-- Reach for the shared components before writing new basics: `Button` / `ButtonLink` (variants `primary`, `secondary`, `danger`, `ghost`; sizes `md`, `lg`; `block`), `Card`, `EmptyState`, `ScreenHeader`. Add icons as inline SVG components in `src/components/Icons/Icons.tsx`.
+- Reach for the [shared components](#shared-components) before writing new basics. Add icons as inline SVG components in `src/components/Icons/Icons.tsx`.
+
+## Shared components
+
+Each lives in `src/components/<Name>/`. See them all, in their main states, at `#/dev/ui` (a hidden gallery that `npm run screenshots` also captures); add new shared components there too.
+
+- `Button` / `ButtonLink`: variants `primary`, `secondary`, `danger`, `ghost`; sizes `md` (44px), `lg` (56px); `block`. Use `ButtonLink` when the action is navigation.
+- `ScreenHeader`, `ScreenBody`, `Card`, `EmptyState`: the screen title (optional back link and action), the padded content area (clears the home indicator on full-screen routes), a rounded surface, and the "nothing here yet" placeholder.
+- `SegmentedControl<T>`: pick one of 2–4 options: `options`, `value`, `onChange`, `aria-label` (or `aria-labelledby`), `size`. It's a radio group, so the arrow keys work.
+- `TextField` / `TextArea`: a labelled field with `hint` and `error` (wired to aria-describedby and aria-invalid). Takes every native prop (`type`, `inputMode`, `enterKeyHint`, ...); `suggestions` adds a datalist.
+- `Sheet`: bottom sheet on `<dialog>`: `open`, `onClose`, `title`, `description`, `footer`, `onClosed`. The X, Escape and a tap on the dimmed page all call `onClose`; `dismissible={false}` leaves only the sheet's own buttons (use it for forms). Closing gives the page back at once (focus returns), then `onClosed` fires once the sheet has slid away. It rides above the iPhone keyboard, and a `ConfirmDialog` inside it closes without closing the sheet.
+- `ConfirmDialog` / `useConfirm()`: `if (await confirm({ title, message, confirmLabel: 'Delete game', destructive: true }))`. Prefer undo; confirm only what can't be undone. One question at a time: a `confirm()` asked while a dialog is on screen opens once that one has closed, with focus on its safe button.
+- `useToast()`: `toast.show({ message, actionLabel: 'Undo', onAction, duration, placement })` returns an id for `toast.hide(id)`; `actionLabel` and `onAction` come together. One at a time, 4 s by default; it floats above the home indicator, tab bar and update banner (`placement: 'top'` puts it under the header bar instead), and only its action takes taps. After a toast's action runs (or it times out) it stays 350 ms, catching taps, so a double tap can't reach what's underneath; a toast shown meanwhile waits. Toasts vanish, so never make one the only way to do something. **Screens with controls along the bottom (the live game screen) show tap feedback inline, not in a toast.**
+- `GroupedList` + `ListRow`: iOS inset grouped list (`header`, `footer`). Rows take `title`, `subtitle`, `value` (text or a `Badge`), `icon`, `chevron`, `destructive`, and `to` (link) or `onClick` (button) or neither (static).
+- `StatTable`: table of numbers: `caption`, `columns` (`{ key, header, fullLabel?, align?, width? }`), `rows`, `totalRow`, `highlightedRow` (read to screen readers as "current", or your `highlightLabel`). Wide tables scroll sideways under a sticky first column.
+- `StatTileGrid` + `StatTile`: big-number tiles (`value`, `label`, `fullLabel`, `detail`, `highlight`), four across on most iPhones (`columns` fixes the count).
+- `Badge`: small pill label; `tone` is `neutral`, `accent`, `made`, `miss` or `stat`.
+- `shareText({ title, text })` in `src/lib/share.ts`: the share sheet, else the clipboard. Resolves to `'shared' | 'cancelled' | 'copied' | 'failed'` and never throws; call it straight from a tap.
+
+`App` mounts `UiProviders` (toasts and confirmations) once at the root, and the test render helpers include it. A toast shown while a sheet is open appears inside the sheet, under its header. `TabBar` and the update banner raise `--overlay-inset-bottom` so toasts clear them; a screen with its own bottom controls can set it on `:root` too.
 
 ## Data layer
 
@@ -151,6 +171,8 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - Unit-test logic in `src/lib/` and `src/data/` with plain Vitest, stats math most of all.
 - Test screens and components with Testing Library, querying by role and name like a user would. `renderRoute(paths.x)` renders the whole app at a route; `renderWithRouter(<Thing />)` renders one component inside a router. Both live in `src/test/render.tsx`.
 - `fake-indexeddb/auto` is loaded in the test setup, so Dexie runs in unit tests. The setup empties the database before every test, so seed data in `beforeEach` or in the test itself (never `beforeAll`), through `repo.ts` or `importAll`. To freeze time, fake only `Date`: `vi.useFakeTimers({ toFake: ['Date'], now })`. Faking every timer stalls IndexedDB.
+- jsdom can't open a `<dialog>`, so `src/test/dialogPolyfill.ts` stands in for `showModal`, `close` and Escape (like browsers, it marks the page outside the top modal `inert` and fires `close` from a queued task); `e2e/ui-kit.spec.ts` checks sheets in a real browser. Closing a sheet or a toast finishes asynchronously: wait with `waitFor` or a `findBy` query.
+- The toast area is `getByRole('status', { name: 'Notifications' })` and is always on screen, so give your own status messages a name or query them by text.
 - End-to-end tests cover key flows. They build the app and serve it under `/Basketball/`, like GitHub Pages. For data, use `e2e/support/data.ts`: `await seedDemoData(page)` after `page.goto('./')`, then navigate (e.g. to `paths.gameReport(demoGameId(10))`).
 - Add each new screen to `e2e/screenshots.spec.ts` (one line), run `npm run screenshots`, and look at the PNGs in light and dark mode.
 - @playwright/test is pinned to exactly 1.56.1 to match the preinstalled Chromium. Don't run `playwright install` in the agent environment; CI installs its own browser.

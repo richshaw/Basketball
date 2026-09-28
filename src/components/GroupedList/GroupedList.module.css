@@ -1,0 +1,147 @@
+.group {
+  --row-inset: var(--space-4);
+
+  min-width: 0;
+}
+
+.group + .group {
+  margin-top: var(--space-6);
+}
+
+.header {
+  margin: 0 var(--row-inset) var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.list {
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  list-style: none;
+}
+
+.footer {
+  margin: var(--space-2) var(--row-inset) 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+}
+
+/* Rows */
+
+.item {
+  position: relative;
+}
+
+/* Hairline between rows, inset to where the text starts (iOS style). */
+.item + .item::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--row-inset);
+  z-index: 1;
+  border-top: 0.5px solid var(--color-border);
+  content: '';
+  pointer-events: none;
+}
+
+.item.withIcon::before {
+  left: calc(var(--row-inset) + var(--list-icon-size) + var(--space-3));
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--tap-target);
+  padding: var(--space-3) var(--row-inset);
+  color: var(--color-text);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-tight);
+  text-align: start;
+  text-decoration: none;
+}
+
+.interactive {
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+/* Tap feedback, like a highlighted iOS table row. */
+.interactive:active:not(:disabled) {
+  background-color: var(--color-surface-2);
+}
+
+@media (hover: hover) {
+  .interactive:hover:not(:disabled) {
+    background-color: var(--color-surface-2);
+  }
+}
+
+/* The list clips its rounded corners, so draw the focus ring inside the row. */
+.interactive:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.interactive:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: var(--list-icon-size);
+  height: var(--list-icon-size);
+  font-size: var(--font-size-lg);
+  line-height: 1;
+}
+
+.text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.title {
+  overflow-wrap: anywhere;
+}
+
+.destructive .title {
+  color: var(--color-danger-text);
+}
+
+.subtitle {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.value {
+  flex-shrink: 0;
+  max-width: 50%;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.chevron {
+  flex-shrink: 0;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  margin-inline-end: calc(-1 * var(--space-1));
+  color: var(--color-text-muted);
+  stroke-width: 2.5;
+}

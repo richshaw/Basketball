@@ -1,0 +1,188 @@
+/*
+ * The <dialog> fills the screen and draws the dimmed page itself, so a tap outside
+ * the panel lands on the dialog (see handleClick) and no ::backdrop styling is needed.
+ */
+.dialog {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background-color: var(--color-scrim);
+  color: inherit;
+  animation: fadeIn var(--duration-slow) var(--ease-out);
+}
+
+.dialog::backdrop {
+  background-color: transparent;
+}
+
+/* With nothing focusable inside, the dialog itself takes focus: no ring around the screen. */
+.dialog:focus {
+  outline: none;
+}
+
+/*
+ * Sheet.tsx sets --keyboard-inset and --viewport-inset-top from the visual viewport:
+ * iOS doesn't shrink the page for its keyboard, so the panel rides above it itself.
+ */
+.panel {
+  position: absolute;
+  right: 0;
+  bottom: var(--keyboard-inset, 0px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--content-max-width);
+  /* Leave a strip of the dimmed page visible at the top, and fit above the keyboard. */
+  max-height: calc(
+    100% - var(--keyboard-inset, 0px) - var(--viewport-inset-top, 0px) - var(--safe-top) -
+      var(--space-4)
+  );
+  margin-inline: auto;
+  /* The keyboard covers the home indicator, so pad for it only while there's no keyboard. */
+  padding: 0 var(--safe-right) max(0px, var(--safe-bottom) - var(--keyboard-inset, 0px))
+    var(--safe-left);
+  border-top: 1px solid var(--color-border);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  background-color: var(--color-bg);
+  box-shadow: var(--shadow-overlay);
+  animation: slideIn var(--duration-slow) var(--ease-out);
+}
+
+.header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-2) var(--space-3) var(--space-4);
+}
+
+.headings {
+  flex: 1;
+  min-width: 0;
+  /* Line the title up with the middle of the close button. */
+  padding-top: var(--space-2);
+}
+
+.title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  overflow-wrap: anywhere;
+}
+
+/* The title only takes focus as the sheet's starting point; it isn't a control. */
+.title:focus {
+  outline: none;
+}
+
+.description {
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.closeButton {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: var(--tap-target);
+  height: var(--tap-target);
+  border-radius: var(--radius-full);
+  color: var(--color-text-muted);
+}
+
+.closeButton:active .closeCircle {
+  opacity: 0.6;
+}
+
+.closeCircle {
+  display: grid;
+  place-items: center;
+  width: var(--icon-circle-size);
+  height: var(--icon-circle-size);
+  border-radius: var(--radius-full);
+  background-color: var(--color-surface-2);
+}
+
+.closeIcon {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  stroke-width: 2.75;
+}
+
+/* Toasts shown over this sheet hang from here, just under the header (Toast.module.css). */
+.toastOutlet {
+  position: relative;
+  z-index: 1;
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 var(--space-4) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4) var(--space-4);
+}
+
+/*
+ * Closing: the dialog has already closed, so focus is back and the page works again.
+ * It stays on screen (above the page, below toasts) only to slide away, and swallows
+ * taps meanwhile so a double tap can't reach the page underneath.
+ */
+.dialog[data-closing] {
+  z-index: var(--z-sheet-exit);
+  display: block;
+  animation: fadeOut var(--duration-normal) var(--ease-in) forwards;
+}
+
+.dialog[data-closing] .panel {
+  animation: slideOut var(--duration-normal) var(--ease-in) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation-name: fadeIn;
+  }
+
+  .dialog[data-closing] .panel {
+    animation-name: fadeOut;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes slideOut {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fadeOut {
+  to {
+    opacity: 0;
+  }
+}

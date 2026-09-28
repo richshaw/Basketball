@@ -33,7 +33,7 @@ const textColors = [
   '--color-stat-text',
   '--color-danger-text',
 ];
-const fills = ['accent', 'made', 'miss', 'stat', 'danger'];
+const fills = ['accent', 'made', 'miss', 'stat', 'danger', 'inverse'];
 
 function color(theme: Theme, name: string): string {
   const value = tokens[theme][name];
@@ -61,6 +61,30 @@ describe.each(themes)('%s theme tokens meet WCAG AA', (theme) => {
     expect(contrastRatio(color(theme, '--color-focus'), color(theme, bg))).toBeGreaterThanOrEqual(
       AA_UI_CONTRAST,
     );
+  });
+
+  it.each(backgrounds)('form field outline on %s', (bg) => {
+    expect(
+      contrastRatio(color(theme, '--color-border-strong'), color(theme, bg)),
+    ).toBeGreaterThanOrEqual(AA_UI_CONTRAST);
+  });
+
+  it('the selected segment outline against the track', () => {
+    expect(
+      contrastRatio(color(theme, '--color-border-strong'), color(theme, '--color-surface-2')),
+    ).toBeGreaterThanOrEqual(AA_UI_CONTRAST);
+  });
+
+  it('text on the selected segment', () => {
+    expect(
+      contrastRatio(color(theme, '--color-text'), color(theme, '--color-thumb')),
+    ).toBeGreaterThanOrEqual(AA_TEXT_CONTRAST);
+  });
+
+  it('toast action on the inverse fill', () => {
+    expect(
+      contrastRatio(color(theme, '--color-on-inverse-accent'), color(theme, '--color-inverse')),
+    ).toBeGreaterThanOrEqual(AA_TEXT_CONTRAST);
   });
 });
 

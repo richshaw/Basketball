@@ -12,6 +12,11 @@
   backdrop-filter: saturate(180%) blur(20px);
 }
 
+/* While the tab bar is on screen, floating UI (toasts) stays above it. */
+:global(:root):has(.tabBar) {
+  --overlay-raise-tab-bar: var(--tab-bar-height);
+}
+
 .tab {
   display: flex;
   flex: 1;

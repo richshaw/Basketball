@@ -1,0 +1,79 @@
+.control {
+  /* Gap between the track's edge and the sliding thumb. */
+  --thumb-inset: calc(var(--space-1) / 2);
+
+  position: relative;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  border-radius: var(--track-radius);
+  background-color: var(--color-surface-2);
+}
+
+.md {
+  --track-radius: var(--radius-md);
+}
+
+.lg {
+  --track-radius: var(--radius-lg);
+}
+
+/* The selected "pill" slides under the segments; its position comes from inline custom properties. */
+.thumb {
+  position: absolute;
+  top: var(--thumb-inset);
+  bottom: var(--thumb-inset);
+  left: var(--thumb-inset);
+  width: calc((100% - 2 * var(--thumb-inset)) / var(--segment-count));
+  /* The outline, not the fill, marks the selection: 3:1 against the track (WCAG 1.4.11). */
+  border: 1px solid var(--color-border-strong);
+  border-radius: calc(var(--track-radius) - var(--thumb-inset));
+  background-color: var(--color-thumb);
+  box-shadow: var(--shadow-thumb);
+  transform: translateX(calc(var(--segment-index) * 100%));
+  transition: transform var(--duration-normal) var(--ease-out);
+}
+
+.segment {
+  /* Above the thumb. */
+  position: relative;
+  min-width: 0;
+  padding-inline: var(--space-3);
+  overflow: hidden;
+  border-radius: var(--track-radius);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.md .segment {
+  min-height: var(--tap-target);
+  font-size: var(--font-size-sm);
+}
+
+.lg .segment {
+  min-height: var(--tap-target-lg);
+  font-size: var(--font-size-md);
+}
+
+.selected {
+  font-weight: var(--font-weight-bold);
+}
+
+.segment:active:not(.selected) {
+  opacity: 0.6;
+}
+
+/* Keep the focus ring inside the track. */
+.segment:focus-visible {
+  outline-offset: calc(-1 * var(--space-1));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thumb {
+    transition: none;
+  }
+}
