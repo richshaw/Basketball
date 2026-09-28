@@ -28,13 +28,21 @@ export interface BackupSectionProps {
   fresh: boolean;
   /** The snapshot if it's up to date at this very moment, for the tap handlers. */
   currentSnapshot: () => BackupSnapshot | undefined;
+  /** Cloud backup is on, so the stats aren't only on this phone. */
+  cloudBackupOn?: boolean;
 }
 
 /**
  * Backup files: save one (share sheet or download), restore one, and export the
  * games as a spreadsheet.
  */
-export function BackupSection({ games, snapshot, fresh, currentSnapshot }: BackupSectionProps) {
+export function BackupSection({
+  games,
+  snapshot,
+  fresh,
+  currentSnapshot,
+  cloudBackupOn = false,
+}: BackupSectionProps) {
   const toast = useToast();
   const [lastSaved, setLastSaved] = useState(readLastBackupFile);
   const [sharing, setSharing] = useState(false);
@@ -119,7 +127,11 @@ export function BackupSection({ games, snapshot, fresh, currentSnapshot }: Backu
     <div>
       <GroupedList
         header="Backup"
-        footer="Your stats are stored only on this phone. Save a backup file now and then (to Files, iCloud Drive or email) so you can always get them back."
+        footer={
+          cloudBackupOn
+            ? 'For a copy you keep yourself, save a backup file now and then (to Files, iCloud Drive or email).'
+            : 'Your stats are stored only on this phone. Save a backup file now and then (to Files, iCloud Drive or email) so you can always get them back.'
+        }
       >
         <ActionRow
           title="Save a backup file"

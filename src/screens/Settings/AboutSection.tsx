@@ -15,18 +15,38 @@ import { APP_VERSION } from './appVersion';
 export interface AboutSectionProps {
   player: Player | null;
   games: readonly Game[];
+  /**
+   * This phone's cloud backup code: `on` (backing up), `kept` (turned off, code kept),
+   * or undefined (none).
+   */
+  backupCode?: 'on' | 'kept';
 }
 
-/** What "Erase all data" will delete, spelled out. */
-function eraseMessage(gameCount: number): string {
+/**
+ * What erasing does to the cloud backup: nothing, and the phone won't overwrite it
+ * (the engine's shrink guard), and how to delete it too.
+ */
+function cloudBackupStays(backupCode: 'on' | 'kept'): string {
+  const deleteRow =
+    backupCode === 'on' ? 'Turn off and delete online backup' : 'Delete online backup';
+  return `Your online backup isn't deleted: this phone keeps its backup code and won't replace the online backup with an empty phone. To delete the online backup too, first use ${deleteRow} in Cloud backup.`;
+}
+
+/** What "Erase all data" will delete (and, with a cloud backup, what it won't), spelled out. */
+function eraseMessage(gameCount: number, backupCode: 'on' | 'kept' | undefined): string {
   if (gameCount === 0) {
-    return "The player's name and number and your settings will be deleted from this phone. This can't be undone.";
+    const erased =
+      "The player's name and number and your settings will be deleted from this phone. This can't be undone.";
+    return backupCode ? `${erased} ${cloudBackupStays(backupCode)}` : erased;
   }
   const games =
     gameCount === 1
       ? 'The game on this phone and its stats'
       : `All ${gameCount} games and their stats`;
-  return `${games}, the player's name and number, and your settings will be deleted from this phone. This can't be undone. If you might want them back, save a backup file first.`;
+  const erased = `${games}, the player's name and number, and your settings will be deleted from this phone. This can't be undone.`;
+  return backupCode
+    ? `${erased} ${cloudBackupStays(backupCode)}`
+    : `${erased} If you might want them back, save a backup file first.`;
 }
 
 /**
@@ -39,7 +59,7 @@ function isFreshPhone(player: Player | null | undefined, games: readonly Game[])
 }
 
 /** The version, sample data to look around with (and removing it), and erasing everything. */
-export function AboutSection({ player, games }: AboutSectionProps) {
+export function AboutSection({ player, games, backupCode }: AboutSectionProps) {
   const confirm = useConfirm();
   const toast = useToast();
   const navigate = useNavigate();
@@ -95,7 +115,7 @@ export function AboutSection({ player, games }: AboutSectionProps) {
   const eraseAll = async () => {
     const confirmed = await confirm({
       title: 'Erase all data?',
-      message: eraseMessage(games.length),
+      message: eraseMessage(games.length, backupCode),
       confirmLabel: 'Erase all data',
       destructive: true,
     });
