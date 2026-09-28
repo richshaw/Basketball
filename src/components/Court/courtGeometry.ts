@@ -29,25 +29,43 @@ export const COURT_SVG_WIDTH = feetToSvg(COURT_WIDTH);
 export const COURT_SVG_HEIGHT = feetToSvg(HALF_COURT_DEPTH);
 
 /**
- * Floor drawn beyond the lines on every side, so the boundary lines aren't clipped
- * and the court clears the rounded corners of its frame.
+ * Floor drawn beyond the lines, so the boundary lines aren't clipped and the court
+ * clears the rounded corners of its frame.
  */
 const APRON = feetToSvg(1);
 
-/** The drawing's view box: the half court plus the apron around it. */
-export const COURT_VIEW_BOX = {
-  x: -APRON,
-  y: -APRON,
-  width: COURT_SVG_WIDTH + 2 * APRON,
-  height: COURT_SVG_HEIGHT + 2 * APRON,
-} as const;
+/** The shallowest court `courtViewBox` shows, in feet from the baseline. */
+const MIN_DEPTH = 1;
 
-export const COURT_VIEW_BOX_ATTRIBUTE = [
-  COURT_VIEW_BOX.x,
-  COURT_VIEW_BOX.y,
-  COURT_VIEW_BOX.width,
-  COURT_VIEW_BOX.height,
-].join(' ');
+/** A rectangle in SVG units, e.g. a view box. */
+export interface ViewBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * What a court drawing shows: from the floor behind the baseline to `depth` feet from
+ * the baseline. By default that's the whole half court, with floor past the half-court
+ * line too. A shallower depth (1 to 42 ft) crops the far end, e.g. to leave room for
+ * buttons below; anything deeper than the crop is cut off.
+ */
+export function courtViewBox(depth: number = HALF_COURT_DEPTH): ViewBox {
+  const feet = Number.isFinite(depth)
+    ? Math.min(Math.max(depth, MIN_DEPTH), HALF_COURT_DEPTH)
+    : HALF_COURT_DEPTH;
+  const bottom = feet < HALF_COURT_DEPTH ? feetToSvg(feet) : COURT_SVG_HEIGHT + APRON;
+  return { x: -APRON, y: -APRON, width: COURT_SVG_WIDTH + 2 * APRON, height: bottom + APRON };
+}
+
+/** The whole half court's view box. */
+export const COURT_VIEW_BOX: ViewBox = courtViewBox();
+
+/** A view box as an SVG `viewBox` attribute: 'x y width height'. */
+export function viewBoxAttribute({ x, y, width, height }: ViewBox): string {
+  return `${x} ${y} ${width} ${height}`;
+}
 
 /** A point in SVG units. */
 export interface SvgPoint {
@@ -82,28 +100,51 @@ export function svgToCourt(x: number, y: number): CourtPoint {
   });
 }
 
+/** An SVG's view box, from its `viewBox` attribute; null if it has none that works. */
+function readViewBox(svg: Pick<Element, 'getAttribute'>): ViewBox | null {
+  const numbers = (svg.getAttribute('viewBox') ?? '')
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  const [x = NaN, y = NaN, width = NaN, height = NaN] = numbers;
+  if (numbers.length !== 4 || ![x, y].every(Number.isFinite)) return null;
+  return width > 0 && height > 0 && Number.isFinite(width + height)
+    ? { x, y, width, height }
+    : null;
+}
+
 /**
  * The court point under a tap or click at (clientX, clientY), e.g. a pointer event's
- * coordinates, on a court drawn by HalfCourt. Works at any rendered size: the SVG's
- * screen transform (getScreenCTM) maps the tap back into SVG units. Clamped onto the
- * half court like `svgToCourt`; null if the SVG isn't laid out (nothing to map onto).
+ * coordinates, on a court drawn by HalfCourt (at any size and depth). It maps the tap
+ * through the SVG's box on screen and its view box, drawn scaled to fit and centered
+ * (preserveAspectRatio "xMidYMid meet"). That box includes CSS transforms on the SVG's
+ * ancestors, which Safari's getScreenCTM leaves out. Assumes no border or padding on
+ * the SVG (HalfCourt has none). Clamped onto the half court like `svgToCourt`; null if
+ * the SVG isn't laid out (nothing to map onto).
  */
 export function clientToCourt(
-  svg: Pick<SVGGraphicsElement, 'getScreenCTM'>,
+  svg: Pick<Element, 'getAttribute' | 'getBoundingClientRect'>,
   clientX: number,
   clientY: number,
 ): CourtPoint | null {
-  const toScreen = svg.getScreenCTM();
-  if (!toScreen) return null;
-  let toSvg: DOMMatrix;
-  try {
-    toSvg = toScreen.inverse();
-  } catch {
-    // A zero-size SVG has no inverse (SVGMatrix throws; DOMMatrix returns NaNs).
-    return null;
-  }
-  const x = toSvg.a * clientX + toSvg.c * clientY + toSvg.e;
-  const y = toSvg.b * clientX + toSvg.d * clientY + toSvg.f;
+  const viewBox = readViewBox(svg);
+  const box = svg.getBoundingClientRect();
+  if (!viewBox || !(box.width > 0 && box.height > 0)) return null;
+  const scale = Math.min(box.width / viewBox.width, box.height / viewBox.height);
+  const left = box.left + (box.width - viewBox.width * scale) / 2;
+  const top = box.top + (box.height - viewBox.height * scale) / 2;
+  const x = viewBox.x + (clientX - left) / scale;
+  const y = viewBox.y + (clientY - top) / scale;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   return svgToCourt(x, y);
+}
+
+/** Whether (clientX, clientY) is on the element's box on screen, edges included. */
+export function isOverBox(
+  element: Pick<Element, 'getBoundingClientRect'>,
+  clientX: number,
+  clientY: number,
+): boolean {
+  const box = element.getBoundingClientRect();
+  return clientX >= box.left && clientX <= box.right && clientY >= box.top && clientY <= box.bottom;
 }

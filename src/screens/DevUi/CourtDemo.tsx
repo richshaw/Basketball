@@ -4,6 +4,10 @@ import { CourtPicker } from '@/components/Court/CourtPicker';
 import { shotValueLabel } from '@/components/Court/shotLabels';
 import { ShotMap } from '@/components/Court/ShotMap';
 import { ShotZoneSummary } from '@/components/Court/ShotZoneSummary';
+import {
+  SegmentedControl,
+  type SegmentedOption,
+} from '@/components/SegmentedControl/SegmentedControl';
 import { buildDemoData, DEMO_SEASON, demoGameId } from '@/data/demo';
 import { shotsFromEvents } from '@/data/shots';
 import type { CourtPoint } from '@/data/types';
@@ -24,10 +28,17 @@ function buildDemoShots() {
 /** A spot on the right wing, beyond the arc. */
 const FIRST_PICK: CourtPoint = { x: 16, y: 15.5 };
 
+type Depth = 'crop' | 'full';
+const depths: SegmentedOption<Depth>[] = [
+  { value: 'crop', label: '30 ft' },
+  { value: 'full', label: 'Half court' },
+];
+
 /** The Court section of the gallery: the shot chart components with demo data. */
 export function CourtDemo() {
   const [shots] = useState(buildDemoShots);
   const [pending, setPending] = useState<CourtPoint | null>(FIRST_PICK);
+  const [depth, setDepth] = useState<Depth>('crop');
 
   return (
     <>
@@ -40,7 +51,18 @@ export function CourtDemo() {
 
       <div className={styles.field}>
         <span className={styles.label}>Where was the shot?</span>
-        <CourtPicker pending={pending} onPick={setPending} shots={shots.latestGame} />
+        <SegmentedControl
+          aria-label="Court depth"
+          options={depths}
+          value={depth}
+          onChange={setDepth}
+        />
+        <CourtPicker
+          pending={pending}
+          onPick={setPending}
+          shots={shots.latestGame}
+          depth={depth === 'crop' ? 30 : undefined}
+        />
         <p className={styles.note} aria-live="polite">
           {pending
             ? `Picked: ${shotValueLabel(pending)} from ${Math.round(shotDistanceFt(pending))} ft`

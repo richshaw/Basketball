@@ -1,9 +1,9 @@
-import { useRef, type PointerEvent } from 'react';
+import { useRef, type PointerEvent, type TouchEvent } from 'react';
 import type { Shot } from '@/data/shots';
 import type { CourtPoint } from '@/data/types';
 import { clampToHalfCourt } from '@/lib/court';
 import { cx } from '@/lib/cx';
-import { clientToCourt, COURT_VIEW_BOX, courtToSvg } from './courtGeometry';
+import { clientToCourt, courtToSvg, courtViewBox, isOverBox, type ViewBox } from './courtGeometry';
 import styles from './CourtPicker.module.css';
 import { HalfCourt } from './HalfCourt';
 import { describeSpot, shotValueLabel } from './shotLabels';
@@ -26,41 +26,38 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-const viewRight = COURT_VIEW_BOX.x + COURT_VIEW_BOX.width;
-const viewBottom = COURT_VIEW_BOX.y + COURT_VIEW_BOX.height;
-
 /**
- * Where the marker is drawn: on the spot, except that a spot right by the outer lines
- * is nudged inward (up to a foot) so the whole marker stays inside the drawing.
+ * Where the marker is drawn: on the spot, except that a spot right by an edge of the
+ * drawing is nudged inward (up to a foot) so the whole marker stays inside it.
  */
-function markerPosition(point: CourtPoint) {
+function markerPosition(point: CourtPoint, view: ViewBox) {
   const { x, y } = courtToSvg(clampToHalfCourt(point));
   const extent = MARKER_RADIUS + MARKER_HALO_WIDTH / 2;
   return {
-    x: clamp(x, COURT_VIEW_BOX.x + extent, viewRight - extent),
-    y: clamp(y, COURT_VIEW_BOX.y + extent, viewBottom - extent),
+    x: clamp(x, view.x + extent, view.x + view.width - extent),
+    y: clamp(y, view.y + extent, view.y + view.height - extent),
   };
 }
 
 /** Where the label goes: right of the marker, or left of it near the right sideline. */
-function labelPosition(marker: { x: number; y: number }) {
+function labelPosition(marker: { x: number; y: number }, view: ViewBox) {
   const right = marker.x + MARKER_RADIUS + LABEL_GAP;
   const x =
-    right + LABEL_WIDTH <= viewRight - LABEL_INSET
+    right + LABEL_WIDTH <= view.x + view.width - LABEL_INSET
       ? right
       : marker.x - MARKER_RADIUS - LABEL_GAP - LABEL_WIDTH;
   const y = clamp(
     marker.y - LABEL_HEIGHT / 2,
-    COURT_VIEW_BOX.y + LABEL_INSET,
-    viewBottom - LABEL_INSET - LABEL_HEIGHT,
+    view.y + LABEL_INSET,
+    view.y + view.height - LABEL_INSET - LABEL_HEIGHT,
   );
   return { x, y };
 }
 
 /** The picked spot: a target ring with a "2PT"/"3PT" label beside it. */
-function PickedSpot({ point }: { point: CourtPoint }) {
-  const marker = markerPosition(point);
-  const label = labelPosition(marker);
+function PickedSpot({ point, view }: { point: CourtPoint; view: ViewBox }) {
+  const marker = markerPosition(point, view);
+  const label = labelPosition(marker, view);
   return (
     <g className={styles.picked}>
       <g transform={`translate(${marker.x} ${marker.y})`}>
@@ -105,6 +102,18 @@ export interface CourtPickerProps {
   pending?: CourtPoint | null;
   /** This game's earlier shots, drawn faintly for context (those with a location). */
   shots?: readonly Shot[];
+  /**
+   * How far from the baseline to show, in feet: the whole half court (42) by default.
+   * Less crops the far end, e.g. 30 to leave room for buttons below.
+   */
+  depth?: number;
+  /**
+   * How the court takes touches. `'manipulation'` (the default) lets a drag that starts
+   * on the court scroll the page, which cancels the tap. `'none'` keeps every touch a
+   * tap even if the finger drifts, picking where it lifts: for a screen that doesn't
+   * scroll, such as the live game screen.
+   */
+  touchAction?: 'manipulation' | 'none';
   /** What the court is for; the picked spot (or a tap hint) is added to it. */
   'aria-label'?: string;
   className?: string;
@@ -113,37 +122,59 @@ export interface CourtPickerProps {
 /**
  * A half court to tap where a shot was taken, for the live game screen. Tapping calls
  * `onPick`; the parent keeps the spot and passes it back as `pending`. It works with
- * touch, mouse and pen, never zooms on a double tap and never takes focus. A shot's
- * location is optional, so screen readers get an image with a description rather
- * than a control (and keyboards are never trapped in it).
+ * touch, mouse and pen, even while other fingers are down elsewhere; it never zooms on
+ * a double tap, never takes focus, and its tap never clicks what appears under the
+ * finger. A shot's location is optional, so screen readers get an image with a
+ * description rather than a control (and keyboards are never trapped in it).
  */
 export function CourtPicker({
   onPick,
   pending,
   shots,
+  depth,
+  touchAction = 'manipulation',
   'aria-label': ariaLabel = 'Shot location',
   className,
 }: CourtPickerProps) {
   // The pointer whose tap is in progress: a tap is a press and a release on the court.
   const activePointer = useRef<number | null>(null);
+  const view = courtViewBox(depth);
 
   const handlePointerDown = (event: PointerEvent<SVGSVGElement>) => {
-    if (!event.isPrimary || event.button !== 0) return;
+    // Any finger or pen, or the main mouse button. The latest press on the court wins,
+    // even with other fingers down elsewhere (fast two-thumb entry).
+    if (event.button !== 0) return;
     // No compatibility mouse events, so focus stays where it was and no text gets selected.
     event.preventDefault();
     activePointer.current = event.pointerId;
+    try {
+      // Hear about the release even off the court (e.g. a mouse dragged away).
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Not a live pointer (a synthetic event): its release is still heard on the court.
+    }
   };
 
   const handlePointerUp = (event: PointerEvent<SVGSVGElement>) => {
     if (activePointer.current !== event.pointerId) return;
     activePointer.current = null;
-    const point = clientToCourt(event.currentTarget, event.clientX, event.clientY);
+    const svg = event.currentTarget;
+    // Released off the court: not a tap.
+    if (!isOverBox(svg, event.clientX, event.clientY)) return;
+    const point = clientToCourt(svg, event.clientX, event.clientY);
     if (point) onPick(point);
   };
 
-  // The browser took the touch over (e.g. to scroll the page): not a tap.
-  const handlePointerCancel = () => {
-    activePointer.current = null;
+  // The browser took the touch over (e.g. to scroll the page), or the pointer went
+  // away: whatever happens next, it's not a tap.
+  const handlePointerGone = (event: PointerEvent<SVGSVGElement>) => {
+    if (activePointer.current === event.pointerId) activePointer.current = null;
+  };
+
+  // The tap is taken on pointerup, so the click that follows it must not land on
+  // whatever onPick puts under the finger (e.g. Made and Missed buttons).
+  const handleTouchEnd = (event: TouchEvent<SVGSVGElement>) => {
+    event.preventDefault();
   };
 
   const label = /[.?!]$/.test(ariaLabel) ? ariaLabel : `${ariaLabel}.`;
@@ -151,14 +182,23 @@ export function CourtPicker({
 
   return (
     <HalfCourt
+      depth={depth}
       aria-label={`${label} ${status}`}
-      className={cx(styles.picker, className)}
+      className={cx(
+        styles.picker,
+        touchAction === 'none' ? styles.touchNone : styles.touchManipulation,
+        className,
+      )}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerCancel}
+      onPointerCancel={handlePointerGone}
+      onLostPointerCapture={handlePointerGone}
+      onTouchEnd={handleTouchEnd}
     >
       {shots && shots.length > 0 ? <ShotMarkers shots={shots} faint /> : null}
-      {pending ? <PickedSpot key={`${pending.x},${pending.y}`} point={pending} /> : null}
+      {pending ? (
+        <PickedSpot key={`${pending.x},${pending.y}`} point={pending} view={view} />
+      ) : null}
     </HalfCourt>
   );
 }

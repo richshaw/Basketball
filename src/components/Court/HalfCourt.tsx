@@ -18,10 +18,10 @@ import { cx } from '@/lib/cx';
 import {
   COURT_SVG_HEIGHT,
   COURT_SVG_WIDTH,
-  COURT_VIEW_BOX,
-  COURT_VIEW_BOX_ATTRIBUTE,
   courtToSvg,
+  courtViewBox,
   feetToSvg,
+  viewBoxAttribute,
 } from './courtGeometry';
 import styles from './HalfCourt.module.css';
 
@@ -90,16 +90,10 @@ const centerCircle = halfCircle(
   'baseline',
 );
 
-// The drawing never changes, so it's built once and React skips it on every re-render.
+// The lines never change, so they're built once and React skips them on every re-render.
+// A shallower view box just cuts them off.
 const courtDrawing = (
   <>
-    <rect
-      className={styles.floor}
-      x={COURT_VIEW_BOX.x}
-      y={COURT_VIEW_BOX.y}
-      width={COURT_VIEW_BOX.width}
-      height={COURT_VIEW_BOX.height}
-    />
     <rect className={styles.paint} {...lane} />
     <g className={styles.lines} strokeWidth={LINE_WIDTH} fill="none">
       {/* Baseline, sidelines and the half-court line. */}
@@ -132,7 +126,15 @@ const courtDrawing = (
   </>
 );
 
-export type HalfCourtProps = Omit<ComponentPropsWithRef<'svg'>, 'viewBox' | 'children'> & {
+export type HalfCourtProps = Omit<
+  ComponentPropsWithRef<'svg'>,
+  'viewBox' | 'width' | 'height' | 'children'
+> & {
+  /**
+   * How far from the baseline to show, in feet: the whole half court (42) by default.
+   * Less crops the far end (see `courtViewBox`), e.g. 30 to leave room for buttons.
+   */
+  depth?: number;
   /**
    * Drawn over the court, e.g. shot markers. Place them in SVG units with
    * `courtToSvg` (courtGeometry.ts).
@@ -146,25 +148,28 @@ export type HalfCourtProps = Omit<ComponentPropsWithRef<'svg'>, 'viewBox' | 'chi
  * image for screen readers: give it an `aria-label` that says what it shows.
  */
 export function HalfCourt({
+  depth,
   children,
   className,
   role = 'img',
   'aria-label': ariaLabel = 'Basketball half court',
   ...props
 }: HalfCourtProps) {
+  const viewBox = courtViewBox(depth);
   return (
     <svg
-      viewBox={COURT_VIEW_BOX_ATTRIBUTE}
+      viewBox={viewBoxAttribute(viewBox)}
       preserveAspectRatio="xMidYMid meet"
       // The CSS sizes it to the available width; these give every browser its proportions.
-      width={COURT_VIEW_BOX.width}
-      height={COURT_VIEW_BOX.height}
+      width={viewBox.width}
+      height={viewBox.height}
       role={role}
       aria-label={ariaLabel}
       focusable="false"
       className={cx(styles.court, className)}
       {...props}
     >
+      <rect className={styles.floor} {...viewBox} />
       {courtDrawing}
       {children}
     </svg>

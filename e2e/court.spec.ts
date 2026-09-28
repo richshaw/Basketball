@@ -3,8 +3,9 @@ import { paths } from '../src/routes';
 import { appUrl, emulateIPhoneSafeArea, screenHeading } from './support/app';
 
 // The CourtPicker in the /dev/ui gallery, in a real browser: taps land on the right
-// spot at any size, the spot is labeled 2PT or 3PT, and tapping never zooms the page
-// or takes focus. Unit tests cover the math with a faked screen transform.
+// spot at any size and depth, the spot is labeled 2PT or 3PT, and tapping never zooms
+// the page, takes focus or clicks anything. Unit tests cover the math with a faked
+// layout; here the layout is real.
 
 // How the court is drawn (src/components/Court/courtGeometry.ts; e2e code can't import
 // it): 10 SVG units per foot, from the left end of the baseline. Court feet have the
@@ -22,10 +23,7 @@ function courtPicker(page: Page) {
   return page.getByRole('img', { name: /^Shot location/ });
 }
 
-/**
- * Where a court point is on screen, worked out from the court's box and view box
- * (independently of the screen transform the component itself uses).
- */
+/** Where a court point is on screen, from the court's box and its view box. */
 async function screenPoint(court: Locator, point: CourtPoint) {
   const box = await court.boundingBox();
   if (!box) throw new Error('The court is not on screen');
@@ -48,6 +46,9 @@ async function tapCourt(page: Page, point: CourtPoint) {
   const { x, y } = await screenPoint(court, point);
   await page.touchscreen.tap(x, y);
 }
+
+/** The gallery's first picked spot, on the right wing: a 3 from 22 ft. */
+const FIRST_PICK = 'Picked: 3PT from 22 ft';
 
 const spots = [
   { name: 'near the rim', point: { x: 1, y: 1.5 }, value: '2PT', feet: 2 },
@@ -96,6 +97,21 @@ test('taps land on the right spot at other sizes too', async ({ page }) => {
   }
 });
 
+test('the court can stop 30 ft from the baseline or show the whole half court', async ({
+  page,
+}) => {
+  const court = courtPicker(page);
+  await court.scrollIntoViewIfNeeded();
+  await expect(court).toHaveAttribute('viewBox', '-10 -10 520 310');
+  await tapCourt(page, { x: 0, y: 24 });
+  await expect(page.getByText('Picked: 3PT from 24 ft')).toBeVisible();
+
+  await page.getByRole('radio', { name: 'Half court' }).tap();
+  await expect(court).toHaveAttribute('viewBox', '-10 -10 520 440');
+  await tapCourt(page, { x: 0, y: 33 });
+  await expect(page.getByText('Picked: 3PT from 33 ft')).toBeVisible();
+});
+
 test('the label stays on the court next to the sideline', async ({ page }) => {
   const court = courtPicker(page);
   await tapCourt(page, { x: 24.5, y: 12 });
@@ -128,4 +144,60 @@ test('tapping the court never takes focus, and quick taps each pick a spot', asy
   await tapCourt(page, { x: 10, y: 20 });
   await tapCourt(page, { x: -10, y: 5 });
   await expect(page.getByText('Picked: 2PT from 11 ft')).toBeVisible();
+});
+
+test("a tap on the court is never also a click on what's under the finger", async ({ page }) => {
+  await page.evaluate(() => {
+    const counter = window as unknown as { clicks: number };
+    counter.clicks = 0;
+    document.addEventListener('click', () => (counter.clicks += 1), true);
+  });
+  const clicks = () => page.evaluate(() => (window as unknown as { clicks: number }).clicks);
+
+  // A tap on a button is a click...
+  await page.getByRole('button', { name: 'Clear spot' }).tap();
+  await expect(page.getByText('Nothing picked')).toBeVisible();
+  expect(await clicks()).toBe(1);
+
+  // ...but a tap on the court isn't, so nothing it shows under the finger gets clicked.
+  await tapCourt(page, { x: 0, y: 10 });
+  await expect(page.getByText('Picked: 2PT from 10 ft')).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(await clicks()).toBe(1);
+});
+
+test('a tap on the court counts while another finger is down elsewhere', async ({ page }) => {
+  const court = courtPicker(page);
+  await court.scrollIntoViewIfNeeded();
+  const label = await page.getByText('Where was the shot?').boundingBox();
+  if (!label) throw new Error('The label is not on screen');
+  const thumb = { x: label.x + 10, y: label.y + label.height / 2, id: 1 };
+  const spot = await screenPoint(court, { x: -4, y: 9 });
+  const finger = { x: spot.x, y: spot.y, id: 2 };
+
+  // A thumb rests off the court, so it's the primary pointer, and a finger comes down
+  // on the court while it's there. Then both lift.
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [thumb] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [thumb, finger] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect(page.getByText('Picked: 2PT from 10 ft')).toBeVisible();
+});
+
+test('a mouse press released off the court picks nothing', async ({ page }) => {
+  const court = courtPicker(page);
+  await court.scrollIntoViewIfNeeded();
+  const box = await court.boundingBox();
+  if (!box) throw new Error('The court is not on screen');
+  const start = await screenPoint(court, { x: 0, y: 10 });
+
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x, box.y + box.height + 30, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByText(FIRST_PICK)).toBeVisible();
+
+  // Nothing is left hanging: the next click on the court picks its spot.
+  await page.mouse.click(start.x, start.y);
+  await expect(page.getByText('Picked: 2PT from 10 ft')).toBeVisible();
 });

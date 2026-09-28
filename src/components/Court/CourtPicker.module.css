@@ -1,12 +1,20 @@
 /* The whole court takes taps. */
 .picker {
-  /* Quick taps on the court never double-tap-zoom the page. */
-  touch-action: manipulation;
   cursor: crosshair;
   /* A long press never selects the label or opens a callout. */
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+}
+
+/* Quick taps on the court never double-tap-zoom the page (the touchAction prop). */
+.touchManipulation {
+  touch-action: manipulation;
+}
+
+/* Nor does a drag scroll it: a drifting finger still makes a tap. */
+.touchNone {
+  touch-action: none;
 }
 
 .picked {

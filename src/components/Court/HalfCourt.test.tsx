@@ -9,8 +9,22 @@ describe('HalfCourt', () => {
     const court = screen.getByRole('img', { name: 'Basketball half court' });
     expect(court).toHaveAttribute('viewBox', '-10 -10 520 440');
     expect(court).toHaveAttribute('preserveAspectRatio', 'xMidYMid meet');
+    expect(court).toHaveAttribute('width', '520');
+    expect(court).toHaveAttribute('height', '440');
     expect(court).toHaveClass('court');
     expect(court).not.toHaveAttribute('tabindex');
+    expect(court.querySelector('.floor')).toHaveAttribute('height', '440');
+  });
+
+  it('can show less than the whole half court', () => {
+    render(<HalfCourt depth={30} />);
+    const court = screen.getByRole('img');
+    // 30 ft from the baseline: the view box ends 300 units below it, with no floor past it.
+    expect(court).toHaveAttribute('viewBox', '-10 -10 520 310');
+    expect(court).toHaveAttribute('height', '310');
+    const floor = court.querySelector('.floor');
+    expect(floor).toHaveAttribute('y', '-10');
+    expect(floor).toHaveAttribute('height', '310');
   });
 
   it('draws the lines to scale, 10 units per foot', () => {
