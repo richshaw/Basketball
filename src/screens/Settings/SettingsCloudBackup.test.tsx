@@ -74,7 +74,7 @@ describe('Settings: cloud backup off', () => {
       'Your stats are stored only on this phone.',
     );
 
-    await user.click(within(cloudList()).getByRole('link', { name: 'Restore from a backup code' }));
+    await user.click(cloudButton('Restore from a backup code'));
     expect(router.state.location.pathname).toBe(paths.restoreBackup());
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Restore from backup' }),
@@ -157,6 +157,24 @@ describe('Settings: cloud backup off', () => {
 });
 
 describe('Settings: cloud backup on', () => {
+  it('offers a restore while on, for an older backup say', async () => {
+    await seedOwnGames();
+    const code = await turnOnCloudBackup();
+    const { user, router } = await renderSettings();
+
+    const restore = cloudButton(/^Restore from backup/);
+    expect(restore).toHaveTextContent(
+      'Brings back games from your online backup, or from an older one.',
+    );
+    await user.click(restore);
+
+    expect(router.state.location.pathname).toBe(paths.restoreBackup());
+    const field = await screen.findByLabelText('Backup code');
+    await waitFor(() => {
+      expect(field).toHaveValue(code);
+    });
+  });
+
   it('shows the code again, to copy or share', async () => {
     await seedOwnGames();
     const code = await turnOnCloudBackup();
@@ -330,7 +348,7 @@ describe('Settings: cloud backup paused or stopped', () => {
     expect(cloudList()).toHaveTextContent(
       'None of the 10 games in your last backup are on this phone, so automatic backup is paused to keep that backup safe.',
     );
-    await user.click(within(cloudList()).getByRole('link', { name: /^Restore from backup/ }));
+    await user.click(cloudButton(/^Restore from backup/));
 
     expect(router.state.location.pathname).toBe(paths.restoreBackup());
     const field = await screen.findByLabelText('Backup code');
@@ -392,6 +410,31 @@ describe('Settings: cloud backup paused or stopped', () => {
     expect(await within(cloudList()).findByText('Backed up just now')).toBeVisible();
   });
 
+  it("can't start a restore while backing up anyway replaces the online backup", async () => {
+    await pauseForMissingGames();
+    const { user } = await renderSettings();
+    const release = cloud.server.hold();
+
+    await user.click(cloudButton(/^Back up anyway/));
+    await user.click(
+      within(await screen.findByRole('alertdialog', { name: 'Back up anyway?' })).getByRole(
+        'button',
+        { name: 'Back up anyway' },
+      ),
+    );
+
+    // It shows as backing up (forced past the pause), with restoring held back.
+    await waitFor(() => {
+      expect(cloudList()).toHaveTextContent('Backing up…');
+    });
+    expect(cloudButton(/^Restore from backup/)).toBeDisabled();
+    release();
+    await expectToast('Backed up');
+    await waitFor(() => {
+      expect(cloudButton(/^Restore from backup/)).toBeEnabled();
+    });
+  });
+
   it('pauses when another phone backs up with the code, and takes over after asking', async () => {
     await pauseForAnotherPhone(cloud.server);
     const { user } = await renderSettings();
@@ -400,7 +443,7 @@ describe('Settings: cloud backup paused or stopped', () => {
     expect(cloudList()).toHaveTextContent(
       'Another phone backed up with this backup code just now, so this phone stopped backing up to keep from replacing that backup.',
     );
-    expect(within(cloudList()).getByRole('link', { name: /^Restore from backup/ })).toBeVisible();
+    expect(cloudButton(/^Restore from backup/)).toBeVisible();
     await user.click(cloudButton(/^Use this phone for backups/));
     const question = await screen.findByRole('alertdialog', {
       name: 'Use this phone for backups?',
@@ -421,7 +464,7 @@ describe('Settings: cloud backup paused or stopped', () => {
     const code = await pauseForAnotherPhone(cloud.server, buildRealData({ liveGame: true }));
     const { user, router } = await renderSettings();
 
-    await user.click(within(cloudList()).getByRole('link', { name: /^Restore from backup/ }));
+    await user.click(cloudButton(/^Restore from backup/));
     const field = await screen.findByLabelText('Backup code');
     await waitFor(() => {
       expect(field).toHaveValue(code);

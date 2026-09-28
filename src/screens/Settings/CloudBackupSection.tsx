@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
@@ -84,6 +85,7 @@ function StatusRow({ status }: { status: CloudBackupStatus }) {
 export function CloudBackupSection({ status, code, focusOnShow = false }: CloudBackupSectionProps) {
   const confirm = useConfirm();
   const toast = useToast();
+  const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [codeSheet, setCodeSheet] = useState<{ code: string; reason: BackupCodeReason } | null>(
@@ -197,6 +199,9 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
     if (value) showCode(value, 'show');
   };
 
+  // Not while an upload she asked for runs: "Back up anyway" may be replacing the backup.
+  const openRestore = () => void navigate(paths.restoreBackup());
+
   const openTurnOff = () => {
     setTurnOffKey((key) => key + 1);
     setTurnOffOpen(true);
@@ -221,7 +226,7 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
           onClick={turnOn}
           disabled={busy}
         />
-        <ListRow title="Restore from a backup code" to={paths.restoreBackup()} />
+        <ListRow title="Restore from a backup code" chevron onClick={openRestore} disabled={busy} />
         {code ? (
           <ListRow
             title="Delete online backup"
@@ -241,7 +246,9 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
           <ListRow
             title="Restore from backup"
             subtitle="Brings the missing games back from your online backup."
-            to={paths.restoreBackup()}
+            chevron
+            onClick={openRestore}
+            disabled={busy}
           />
           <ListRow
             title="Back up anyway"
@@ -264,11 +271,14 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
           <ListRow
             title="Restore from backup"
             subtitle="Gets the other phone's latest backup onto this phone, then carries on backing up."
-            to={paths.restoreBackup()}
+            chevron
+            onClick={openRestore}
+            disabled={busy}
           />
-          <ActionRow
+          <ListRow
             title="Use this phone for backups"
             subtitle="Replaces the other phone's latest backup with this phone's stats."
+            destructive
             onClick={() =>
               void askThenBackUp(
                 'Use this phone for backups?',
@@ -282,11 +292,20 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
       );
     } else {
       actions = (
-        <ActionRow
-          title="Back up now"
-          onClick={() => void backUp(false)}
-          disabled={busy || state === 'backing-up'}
-        />
+        <>
+          <ActionRow
+            title="Back up now"
+            onClick={() => void backUp(false)}
+            disabled={busy || state === 'backing-up'}
+          />
+          <ListRow
+            title="Restore from backup"
+            subtitle="Brings back games from your online backup, or from an older one."
+            chevron
+            onClick={openRestore}
+            disabled={busy}
+          />
+        </>
       );
     }
     rows = (
