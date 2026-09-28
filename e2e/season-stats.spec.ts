@@ -33,8 +33,8 @@ test('shows the season, switches the chart and opens a game from the log', async
   await expect(screenHeading(page, 'Stats')).toBeVisible();
 
   // The season's numbers: only the ten final games count, not the one in progress.
-  // (The summary's line comes first; the shot chart's caption repeats it.)
-  await expect(page.getByText('Fall 2026 · 10 games').first()).toBeVisible();
+  // (The summary's line, a <p>: the shot chart's caption repeats it.)
+  await expect(page.getByText('Fall 2026 · 10 games').and(page.locator('p'))).toBeVisible();
   await expect(page.getByText('7–3', { exact: true })).toBeVisible();
   const pointsTile = page
     .getByLabel('Averages per game')
