@@ -82,6 +82,23 @@ describe.each(themes)('%s theme tokens meet WCAG AA', (theme) => {
   });
 });
 
+describe.each(themes)('%s theme court colors (shot chart)', (theme) => {
+  const courtSurfaces = ['--color-court', '--color-court-paint'];
+  const onCourt = (name: string) => courtSurfaces.map((surface) => [name, surface] as const);
+
+  it.each([
+    ...onCourt('--color-court-line'),
+    ...onCourt('--color-court-made'),
+    ...onCourt('--color-court-miss'),
+    // The picked-spot marker; its label is --color-on-inverse on --color-inverse (above).
+    ...onCourt('--color-inverse'),
+  ])('%s stands out on %s', (mark, surface) => {
+    expect(contrastRatio(color(theme, mark), color(theme, surface))).toBeGreaterThanOrEqual(
+      AA_UI_CONTRAST,
+    );
+  });
+});
+
 describe('index.html', () => {
   it.each(themes)('uses the %s background as its theme-color', (theme) => {
     const meta = new RegExp(
