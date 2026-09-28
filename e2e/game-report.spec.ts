@@ -60,6 +60,13 @@ test('a game report: the numbers, a score fix, a copied recap, then deleting the
   await expect(tileValue(page, 'Game totals', 'Points')).toHaveText(String(stats.pts));
   await expect(tileValue(page, 'Game totals', 'Rebounds')).toHaveText(String(stats.reb));
   await expect(tileValue(page, 'Game totals', 'Assists')).toHaveText(String(stats.ast));
+  // The shot chart: her shots on the court, and her shooting by zone.
+  const shotChart = page.getByRole('region', { name: 'Shot chart' });
+  await expect(shotChart.getByRole('figure')).toBeVisible();
+  await expect(
+    shotChart.getByRole('img', { name: /^Shot chart: \d+ shots? on the map/ }),
+  ).toBeVisible();
+  await expect(shotChart.getByLabel('Shooting by zone')).toBeVisible();
   // Only the by-quarter table scrolls sideways; the page itself never does.
   await expect(page.getByRole('table', { name: 'Stats by quarter' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(

@@ -10,10 +10,11 @@ import {
   getGameEvents,
   recordStat,
   updateGame,
+  updateSettings,
 } from '@/data/repo';
 import { computeStatLine, percentage, statLinesByPeriod } from '@/data/stats';
 import { EXPORT_APP, EXPORT_SCHEMA_VERSION, importAll } from '@/data/transfer';
-import type { Game, Player, StatEvent, StatType } from '@/data/types';
+import type { CourtPoint, Game, Player, StatEvent, StatType } from '@/data/types';
 import { formatMadeAttempted, formatPct } from '@/lib/format';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
@@ -57,8 +58,14 @@ function makeGame(overrides: Partial<Game> = {}): Game {
   };
 }
 
-/** [type, period] in the order they happened: 8 points, 3 rebounds and a bit of everything. */
-const PLAYS: [StatType, number][] = [
+/** A stat as [type, period], plus where the shot was taken when that was recorded. */
+type Play = [type: StatType, period: number, location?: CourtPoint];
+
+/**
+ * In the order they happened: 8 points, 3 rebounds and a bit of everything. No shot
+ * has a spot.
+ */
+const PLAYS: Play[] = [
   ['fg2_made', 1],
   ['fg3_miss', 1],
   ['dreb', 1],
@@ -80,12 +87,13 @@ const PLAYS: [StatType, number][] = [
 
 /** Stores the player, `game` and its plays (one a minute from 6:05), replacing everything. */
 async function seed(game: Game = makeGame(), plays = PLAYS): Promise<StatEvent[]> {
-  const events = plays.map(([type, period], index) => ({
+  const events = plays.map(([type, period, location], index) => ({
     id: `e${String(index + 1).padStart(2, '0')}`,
     gameId: game.id,
     type,
     period,
     createdAt: at(18, 5 + index),
+    ...(location ? { location } : {}),
   }));
   await importAll(
     {
@@ -525,10 +533,73 @@ describe('GameReportScreen', () => {
     expect(screen.queryByRole('region', { name: 'Notes' })).not.toBeInTheDocument();
   });
 
-  it('keeps a spot for the shot chart', async () => {
-    await seed();
-    await renderReport();
-    expect(screen.getByRole('region', { name: 'Shot chart' })).toBeInTheDocument();
+  describe('shot chart', () => {
+    it('maps the shots that have a spot, and her shooting by zone', async () => {
+      await seed(makeGame(), [
+        ['fg2_made', 1, { x: 0.5, y: 2 }], // a layup: the paint
+        ['fg2_miss', 1, { x: -9, y: 12 }], // an elbow jumper: mid-range
+        ['fg3_made', 2, { x: 22, y: -2 }], // a corner three
+        ['fg3_miss', 3], // no spot
+        ['fg2_made', 4], // no spot
+        ['ft_made', 4],
+        ['ast', 4],
+      ]);
+      await renderReport();
+
+      const section = screen.getByRole('region', { name: 'Shot chart' });
+      const figure = within(section).getByRole('figure');
+      expect(within(figure).getByRole('img')).toHaveAccessibleName(
+        /^Shot chart: 3 shots on the map, 2 made \(67%\)\./,
+      );
+      expect(within(figure).getByText('Made').closest('p')).toHaveTextContent('Made 2 · Missed 1');
+      expect(within(figure).getByText('3 of 5 shots have a location')).toBeInTheDocument();
+
+      // Paint, mid-range and 3PT. 3PT counts both threes, like the box score, spot or not.
+      const zones = within(screen.getByLabelText('Shooting by zone'));
+      expect(zones.getAllByRole('term')).toHaveLength(3);
+      expect(zones.getAllByText(/%$/).map((value) => value.textContent)).toEqual([
+        '100%',
+        '0%',
+        '50%',
+      ]);
+      expect(zones.getAllByText(/ made$/).map((detail) => detail.textContent)).toEqual([
+        '1 of 1 made',
+        '0 of 1 made',
+        '1 of 2 made',
+      ]);
+    });
+
+    it('says no spots were recorded when the setting asks for them', async () => {
+      // Her five shots, none with a spot; the setting is on by default.
+      await seed();
+      await renderReport();
+
+      const section = screen.getByRole('region', { name: 'Shot chart' });
+      expect(section).toHaveTextContent('No shot spots were recorded in this game.');
+      expect(within(section).queryByRole('figure')).not.toBeInTheDocument();
+    });
+
+    it('leaves the section out when no spot was recorded and the setting is off', async () => {
+      await seed();
+      await updateSettings({ shotChart: false });
+      await renderReport();
+
+      expect(screen.queryByRole('heading', { name: 'Shot chart' })).not.toBeInTheDocument();
+      expect(screen.queryByText(/No shot spots/)).not.toBeInTheDocument();
+    });
+
+    it('leaves the section out when she took no shots', async () => {
+      await seed(makeGame(), [
+        ['ft_made', 1],
+        ['ft_miss', 1],
+        ['ast', 2],
+        ['dreb', 3],
+      ]);
+      await renderReport();
+
+      expect(screen.queryByRole('region', { name: 'Shot chart' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Shot chart' })).not.toBeInTheDocument();
+    });
   });
 
   describe('a live game', () => {

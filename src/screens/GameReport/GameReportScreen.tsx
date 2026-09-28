@@ -4,14 +4,17 @@ import { Button } from '@/components/Button/Button';
 import { ButtonLink } from '@/components/Button/ButtonLink';
 import { Card } from '@/components/Card/Card';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
+import { ShotMap } from '@/components/Court/ShotMap';
+import { ShotZoneSummary } from '@/components/Court/ShotZoneSummary';
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useToast } from '@/components/Toast/toastContext';
-import { useGame, useGameEvents, usePlayer } from '@/data/hooks';
+import { useGame, useGameEvents, usePlayer, useSettings } from '@/data/hooks';
 import { deleteGame } from '@/data/repo';
+import { shotChartSection, shotsFromEvents } from '@/data/shots';
 import { computeStatLine } from '@/data/stats';
 import type { Game, Player, StatEvent } from '@/data/types';
 import { formatGameDate } from '@/lib/format';
@@ -25,7 +28,6 @@ import { PeriodTable } from './PeriodTable';
 import { PlayByPlay } from './PlayByPlay';
 import { buildGameRecap, matchupLabel, recapTitle } from './recap';
 import { ReportSection } from './ReportSection';
-import { ShotChartPlaceholder } from './ShotChartPlaceholder';
 import styles from './GameReportScreen.module.css';
 
 /** Title while the game loads, and when there's no such game. */
@@ -41,6 +43,7 @@ export function GameReportScreen() {
   const game = useGame(gameId);
   const events = useGameEvents(gameId);
   const player = usePlayer();
+  const settings = useSettings();
   // While the game is being deleted, the report stays on screen as it was until
   // Games replaces it, instead of flashing "loading" or "not found" on its way out.
   const [leaving, setLeaving] = useState<ReportData | null>(null);
@@ -67,7 +70,7 @@ export function GameReportScreen() {
     );
   }
 
-  if (!game || events === undefined || player === undefined) {
+  if (!game || events === undefined || player === undefined || settings === undefined) {
     // Loading: IndexedDB answers in a few milliseconds, so show just the header.
     return (
       <main aria-busy="true">
@@ -76,13 +79,23 @@ export function GameReportScreen() {
     );
   }
 
-  return <GameReport game={game} events={events} player={player} onLeaving={setLeaving} />;
+  return (
+    <GameReport
+      game={game}
+      events={events}
+      player={player}
+      askForSpots={settings.shotChart}
+      onLeaving={setLeaving}
+    />
+  );
 }
 
 interface ReportData {
   game: Game;
   events: StatEvent[];
   player: Player | null;
+  /** The Shot chart setting: whether the live game screen asks where shots were taken. */
+  askForSpots: boolean;
 }
 
 interface GameReportProps extends ReportData {
@@ -103,12 +116,14 @@ function statsCount(count: number): string {
   return count === 1 ? ' and its 1 stat' : ` and all ${count} of its stats`;
 }
 
-function GameReport({ game, events, player, onLeaving }: GameReportProps) {
+function GameReport({ game, events, player, askForSpots, onLeaving }: GameReportProps) {
   const confirm = useConfirm();
   const toast = useToast();
   const navigate = useNavigate();
   const [editor, setEditor] = useState<EditorState>({ open: false, session: 0 });
   const line = computeStatLine(events);
+  const shots = shotsFromEvents(events);
+  const shotChart = shotChartSection(shots, askForSpots);
   const live = game.status === 'live';
   const matchup = matchupLabel(game);
 
@@ -134,7 +149,7 @@ function GameReport({ game, events, player, onLeaving }: GameReportProps) {
       destructive: true,
     });
     if (!confirmed) return;
-    onLeaving({ game, events, player });
+    onLeaving({ game, events, player, askForSpots });
     try {
       await deleteGame(game.id);
     } catch (error) {
@@ -180,10 +195,19 @@ function GameReport({ game, events, player, onLeaving }: GameReportProps) {
           <PeriodTable game={game} events={events} />
         </ReportSection>
 
-        {/* PLACEHOLDER: a later PR swaps ShotChartPlaceholder for the real shot map. */}
-        <ReportSection title="Shot chart">
-          <ShotChartPlaceholder />
-        </ReportSection>
+        {shotChart ? (
+          <ReportSection
+            title="Shot chart"
+            note={shotChart === 'noSpots' ? 'No shot spots were recorded in this game.' : undefined}
+          >
+            {shotChart === 'map' ? (
+              <>
+                <ShotMap shots={shots} />
+                <ShotZoneSummary shots={shots} />
+              </>
+            ) : null}
+          </ReportSection>
+        ) : null}
 
         {game.notes ? (
           <ReportSection title="Notes">
