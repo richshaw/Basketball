@@ -8,6 +8,7 @@ import {
   createSpreadsheetFile,
   describeBackup,
   describePlayer,
+  nothingNewMessage,
   readBackupFile,
   readLastBackupSavedAt,
   rememberBackupSaved,
@@ -120,10 +121,25 @@ describe('describing a backup', () => {
     expect(countGames(12)).toBe('12 games');
   });
 
-  it('confirms a restore', () => {
-    expect(restoredMessage(10)).toBe('Restored 10 games');
-    expect(restoredMessage(1)).toBe('Restored 1 game');
-    expect(restoredMessage(0)).toBe('Backup restored');
+  it('confirms a restore with what it actually took', () => {
+    expect(restoredMessage({ games: 10, events: 250 }, 10)).toBe('Restored 10 games');
+    expect(restoredMessage({ games: 1, events: 12 }, 1)).toBe('Restored 1 game');
+    expect(restoredMessage({ games: 2, events: 40 }, 10)).toBe(
+      'Restored 2 games · 8 already up to date',
+    );
+    expect(restoredMessage({ games: 1, events: 9 }, 2)).toBe(
+      'Restored 1 game · 1 already up to date',
+    );
+    expect(restoredMessage({ games: 0, events: 0 }, 10)).toBe('Nothing new in this backup');
+    expect(restoredMessage({ games: 0, events: 0 }, 0)).toBe('Backup restored');
+  });
+
+  it('explains a backup with nothing new, and points to Replace', () => {
+    expect(nothingNewMessage(10)).toBe(
+      "Nothing new was added: this phone already has all 10 games in this backup (the same, or changed here since). To go back to the backup's versions, use Replace everything on this phone.",
+    );
+    expect(nothingNewMessage(2)).toMatch(/already has both games in this backup/);
+    expect(nothingNewMessage(1)).toMatch(/already has the game in this backup/);
   });
 });
 

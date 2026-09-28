@@ -3,7 +3,12 @@
  * picked, describing it before a restore, and remembering when one was last saved.
  */
 import { primaryPlayer } from '@/data/repo';
-import { ExportFileError, parseExportFile, type ExportFile } from '@/data/transfer';
+import {
+  ExportFileError,
+  parseExportFile,
+  type ExportFile,
+  type ImportSummary,
+} from '@/data/transfer';
 import { formatPlayerName, todayLocalISO } from '@/lib/format';
 
 /** e.g. 'hoop-stats-backup-2026-09-28.json' (the local date). */
@@ -91,9 +96,28 @@ export function describeBackup(file: ExportFile): string {
   return backupSummary(file).join(' · ');
 }
 
-/** What the toast says after a restore: 'Restored 10 games'. */
-export function restoredMessage(gameCount: number): string {
-  return gameCount === 0 ? 'Backup restored' : `Restored ${countGames(gameCount)}`;
+/**
+ * What the toast says after a restore, from what importAll actually took (not what
+ * the file holds): 'Restored 10 games', 'Restored 2 games · 8 already up to date' (the
+ * phone had those, the same or newer), or 'Backup restored' for a backup with no games.
+ */
+export function restoredMessage(taken: ImportSummary, backupGameCount: number): string {
+  if (backupGameCount === 0) return 'Backup restored';
+  if (taken.games === 0) return 'Nothing new in this backup';
+  const restored = `Restored ${countGames(taken.games)}`;
+  const upToDate = backupGameCount - taken.games;
+  return upToDate > 0 ? `${restored} · ${upToDate} already up to date` : restored;
+}
+
+/**
+ * Why adding a backup took nothing (this phone already has every game in it), and the
+ * way to get the backup's versions back anyway.
+ */
+export function nothingNewMessage(backupGameCount: number): string {
+  let games = `all ${backupGameCount} games`;
+  if (backupGameCount === 1) games = 'the game';
+  else if (backupGameCount === 2) games = 'both games';
+  return `Nothing new was added: this phone already has ${games} in this backup (the same, or changed here since). To go back to the backup's versions, use Replace everything on this phone.`;
 }
 
 // When this phone last saved a backup file. A per-device reminder, so it lives in

@@ -12,3 +12,9 @@
   color: var(--color-text);
   font-weight: var(--font-weight-semibold);
 }
+
+/* Why "Add" found nothing new: under the choices, lined up like a list footer. */
+.result {
+  margin: var(--space-3) var(--space-4) 0;
+  color: var(--color-text);
+}

@@ -12,7 +12,7 @@ import {
   savePlayer,
   updateSettings,
 } from '@/data/repo';
-import { parseExportFile, type ExportFile } from '@/data/transfer';
+import { importAll, parseExportFile, type ExportFile } from '@/data/transfer';
 import { todayLocalISO } from '@/lib/format';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
@@ -218,6 +218,51 @@ describe('Settings: restore from a backup file', () => {
       'Lincoln',
     ]);
     expect(games.find((game) => game.id === phoneGame.id)).toBeDefined();
+  });
+
+  it('says how many games were restored and how many the phone already had', async () => {
+    // This phone already has the fixture's first game.
+    const fixture = parseExportFile(fixtureJson);
+    const firstGame = fixture.games.slice(0, 1);
+    await importAll(
+      {
+        ...fixture,
+        games: firstGame,
+        events: fixture.events.filter((event) => event.gameId === firstGame[0]?.id),
+      },
+      'replace',
+    );
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+
+    await expectToast('Restored 1 game · 1 already up to date');
+    expect(await listGames()).toHaveLength(2);
+  });
+
+  it('explains a backup with nothing new, next to the way to use it anyway', async () => {
+    await importAll(parseExportFile(fixtureJson), 'replace');
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+
+    // The sheet stays open and says why, instead of claiming "Restored 2 games".
+    expect(await within(sheet).findByRole('status', { name: 'Restore result' })).toHaveTextContent(
+      "Nothing new was added: this phone already has both games in this backup (the same, or changed here since). To go back to the backup's versions, use Replace everything on this phone.",
+    );
+    expect(notifications()).toBeEmptyDOMElement();
+
+    await user.click(
+      within(sheet).getByRole('button', { name: /Replace everything on this phone/ }),
+    );
+    await user.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Replace everything' }),
+    );
+    await expectToast('Restored 2 games');
   });
 
   it('replaces everything on the phone after a confirmation', async () => {

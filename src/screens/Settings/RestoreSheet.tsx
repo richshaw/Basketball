@@ -6,8 +6,9 @@ import { ListRow } from '@/components/GroupedList/ListRow';
 import { Sheet } from '@/components/Sheet/Sheet';
 import { useToast } from '@/components/Toast/toastContext';
 import { importAll, type ExportFile, type ImportMode } from '@/data/transfer';
+import { cx } from '@/lib/cx';
 import { ActionRow } from './ActionRow';
-import { backupSummary, restoredMessage } from './backupFiles';
+import { backupSummary, nothingNewMessage, restoredMessage } from './backupFiles';
 import styles from './RestoreSheet.module.css';
 
 /**
@@ -68,6 +69,8 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
   const confirm = useConfirm();
   const toast = useToast();
   const [restoring, setRestoring] = useState(false);
+  // The request whose "Add" found nothing new: a new file starts without the note.
+  const [nothingNewFor, setNothingNewFor] = useState<RestoreRequest | null>(null);
 
   if (!request) return null;
 
@@ -93,6 +96,7 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
   }
 
   const { backup, phoneGameCount } = request;
+  const phoneIsEmpty = phoneGameCount === 0;
 
   const restore = async (mode: ImportMode) => {
     if (restoring) return;
@@ -107,9 +111,14 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
     }
     setRestoring(true);
     try {
-      await importAll(backup, mode);
+      const taken = await importAll(backup, mode);
+      if (mode === 'merge' && taken.games === 0 && backup.games.length > 0 && !phoneIsEmpty) {
+        // Nothing to add: say so next to Replace, the way to get the backup's versions.
+        setNothingNewFor(request);
+        return;
+      }
       onClose();
-      toast.show({ message: restoredMessage(backup.games.length) });
+      toast.show({ message: restoredMessage(taken, backup.games.length) });
     } catch (error) {
       console.error('Restoring a backup failed', error);
       toast.show({ message: RESTORE_FAILED });
@@ -117,8 +126,6 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
       setRestoring(false);
     }
   };
-
-  const phoneIsEmpty = phoneGameCount === 0;
 
   return (
     <Sheet
@@ -145,27 +152,37 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
           There are no games on this phone yet, so nothing will be lost.
         </p>
       ) : (
-        <GroupedList aria-label="How to restore">
-          <ActionRow
-            title="Add to what's on this phone"
-            subtitle={
-              <>
-                <strong className={styles.recommended}>Recommended.</strong> Keeps everything here
-                and adds what&apos;s missing, even games deleted here. For a game on both, the newer
-                version wins, stats and all.
-              </>
-            }
-            onClick={() => void restore('merge')}
-            disabled={restoring}
-          />
-          <ListRow
-            title="Replace everything on this phone"
-            subtitle={replaceSubtitle(phoneGameCount, backup)}
-            destructive
-            onClick={() => void restore('replace')}
-            disabled={restoring}
-          />
-        </GroupedList>
+        <>
+          <GroupedList aria-label="How to restore">
+            <ActionRow
+              title="Add to what's on this phone"
+              subtitle={
+                <>
+                  <strong className={styles.recommended}>Recommended.</strong> Keeps everything here
+                  and adds what&apos;s missing, even games deleted here. For a game on both, the
+                  newer version wins, stats and all.
+                </>
+              }
+              onClick={() => void restore('merge')}
+              disabled={restoring}
+            />
+            <ListRow
+              title="Replace everything on this phone"
+              subtitle={replaceSubtitle(phoneGameCount, backup)}
+              destructive
+              onClick={() => void restore('replace')}
+              disabled={restoring}
+            />
+          </GroupedList>
+          {/* Always there (empty until needed), so screen readers announce what appears. */}
+          <div role="status" aria-label="Restore result">
+            {nothingNewFor === request ? (
+              <p className={cx(styles.note, styles.result)}>
+                {nothingNewMessage(backup.games.length)}
+              </p>
+            ) : null}
+          </div>
+        </>
       )}
     </Sheet>
   );
