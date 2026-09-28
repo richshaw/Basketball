@@ -1,7 +1,7 @@
 .grid {
   display: grid;
   /* As many tiles as fit: 4 across a 390px iPhone, 3 on a 320px one. */
-  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(var(--stat-tile-min-width), 1fr));
   gap: var(--space-2);
 }
 

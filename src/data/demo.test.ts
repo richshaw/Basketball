@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isOnHalfCourt, isThreePoint } from '@/lib/court';
 import { todayLocalISO } from '@/lib/format';
 import { buildDemoData, DEMO_LIVE_GAME_ID, DEMO_SEASON, demoGameId, seedDemoData } from './demo';
-import { getLiveGame, getPlayer, listGames, savePlayer } from './repo';
+import { createGame, getGame, getLiveGame, getPlayer, listGames, savePlayer } from './repo';
 import { computeStatLine, gameResult, groupEventsByGame, isFieldGoalType } from './stats';
 import { exportAll, parseExportFile } from './transfer';
 
@@ -132,17 +132,36 @@ describe('buildDemoData', () => {
 });
 
 describe('seedDemoData', () => {
-  it('replaces the data on the device with the demo data', async () => {
-    await savePlayer({ name: 'Someone else' });
+  it('loads the demo data onto an empty device, and again over earlier demo data', async () => {
     await seedDemoData({ today: TODAY });
-
     expect((await getPlayer())?.name).toBe('Ava');
     expect(await listGames()).toHaveLength(10);
     expect(await getLiveGame()).toBeUndefined();
-    const exported = await exportAll();
-    expect(exported.events).toEqual(demo.events);
+    expect((await exportAll()).events).toEqual(demo.events);
 
     await seedDemoData({ today: TODAY, liveGame: true });
     expect((await getLiveGame())?.id).toBe(DEMO_LIVE_GAME_ID);
+  });
+
+  it("refuses to replace the device's own data unless forced", async () => {
+    const game = await createGame({
+      opponent: 'Real opponent',
+      date: '2026-09-27',
+      periodFormat: 'quarters',
+    });
+    const before = await exportAll();
+
+    await expect(seedDemoData({ today: TODAY })).rejects.toThrow(/force: true/);
+    expect({ ...(await exportAll()), exportedAt: '' }).toEqual({ ...before, exportedAt: '' });
+
+    await seedDemoData({ today: TODAY, force: true });
+    expect(await getGame(game.id)).toBeUndefined();
+    expect(await listGames()).toHaveLength(10);
+  });
+
+  it('counts a player set up on the device as its own data', async () => {
+    await savePlayer({ name: 'Someone else' });
+    await expect(seedDemoData({ today: TODAY })).rejects.toThrow(/own data/);
+    expect((await getPlayer())?.name).toBe('Someone else');
   });
 });

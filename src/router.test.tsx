@@ -21,9 +21,15 @@ const updateBanner = () => screen.queryByRole('complementary', { name: 'App upda
 describe('app routes', () => {
   it.each([...tabScreens, ...fullScreens])(
     'renders the $title screen at $path',
-    ({ path, title }) => {
+    async ({ path, title }) => {
       renderRoute(path);
-      expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument();
+      // findBy: some screens (the UI kit gallery) load on demand, slowly on a cold start.
+      const heading = await screen.findByRole(
+        'heading',
+        { level: 1, name: title },
+        { timeout: 5000 },
+      );
+      expect(heading).toBeInTheDocument();
     },
   );
 
