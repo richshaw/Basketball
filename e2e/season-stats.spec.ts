@@ -33,7 +33,8 @@ test('shows the season, switches the chart and opens a game from the log', async
   await expect(screenHeading(page, 'Stats')).toBeVisible();
 
   // The season's numbers: only the ten final games count, not the one in progress.
-  await expect(page.getByText('Fall 2026 · 10 games')).toBeVisible();
+  // (The summary's line comes first; the shot chart's caption repeats it.)
+  await expect(page.getByText('Fall 2026 · 10 games').first()).toBeVisible();
   await expect(page.getByText('7–3', { exact: true })).toBeVisible();
   const pointsTile = page
     .getByLabel('Averages per game')
@@ -43,6 +44,9 @@ test('shows the season, switches the chart and opens a game from the log', async
     (points / finalGames.size).toFixed(1),
   );
   await expect(page.getByText(/The game against Westfield is still in progress/)).toBeVisible();
+  // The season's shot chart, named by its caption.
+  await expect(page.getByRole('figure', { name: 'Fall 2026 · 10 games' })).toBeVisible();
+  await expect(page.getByLabel('Shooting by zone')).toBeVisible();
   // Nothing on the screen makes the page scroll sideways.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     IPHONE_VIEWPORT.width,
@@ -77,7 +81,7 @@ test('a long season name leaves the totals in view', async ({ page }) => {
   );
   await page.goto('about:blank');
   await page.goto(appUrl(paths.stats));
-  await expect(page.getByText(`${season} · 10 games`)).toBeVisible();
+  await expect(page.getByText(`${season} · 10 games`).first()).toBeVisible();
 
   const totals = page.getByRole('table', { name: 'Totals' });
   await totals.scrollIntoViewIfNeeded();
