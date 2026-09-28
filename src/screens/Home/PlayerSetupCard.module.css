@@ -1,0 +1,77 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-4) var(--space-2);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  width: var(--tap-target-lg);
+  height: var(--tap-target-lg);
+  margin-bottom: var(--space-3);
+  border-radius: var(--radius-full);
+  background-color: var(--color-surface-2);
+  font-size: var(--font-size-2xl);
+  line-height: 1;
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-heavy);
+  letter-spacing: -0.01em;
+}
+
+.message {
+  max-width: 30ch;
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.form > button {
+  margin-top: var(--space-1);
+}
+
+/* Name and jersey number side by side, the number narrower; aligned at the fields. */
+.fields {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.name {
+  flex: 2;
+}
+
+.number {
+  flex: 1;
+}
+
+.restore {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+/* Small text, but still a full 44px tap target. */
+.restoreLink {
+  display: inline-block;
+  padding-block: var(--space-3);
+  font-weight: var(--font-weight-semibold);
+}

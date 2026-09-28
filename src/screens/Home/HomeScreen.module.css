@@ -1,0 +1,38 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.loading {
+  visibility: hidden;
+}
+
+/* Whose games these are, beside the large title. */
+.player {
+  max-width: 45vw;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.newGame {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.hurry {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.plus {
+  width: var(--space-5);
+  height: var(--space-5);
+  margin-inline-start: calc(-1 * var(--space-1));
+}
