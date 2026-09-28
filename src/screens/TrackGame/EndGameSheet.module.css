@@ -1,0 +1,7 @@
+.form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* An error above one field mustn't push its input out of line with the other. */
+  align-items: end;
+  gap: var(--space-3);
+}

@@ -21,9 +21,10 @@ const updateBanner = () => screen.queryByRole('complementary', { name: 'App upda
 describe('app routes', () => {
   it.each([...tabScreens, ...fullScreens])(
     'renders the $title screen at $path',
-    ({ path, title }) => {
+    async ({ path, title }) => {
       renderRoute(path);
-      expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument();
+      // Screens that load a game from the database show their heading once it has loaded.
+      expect(await screen.findByRole('heading', { level: 1, name: title })).toBeInTheDocument();
     },
   );
 
@@ -62,12 +63,12 @@ describe('app routes', () => {
     expect(router.state.location.pathname).toBe(paths.home);
   });
 
-  it('goes from a game report to live tracking and back', async () => {
+  it('goes from a game report to live tracking, and from there back to Games', async () => {
     const { user, router } = renderRoute(paths.gameReport('g 1'));
     await user.click(screen.getByRole('link', { name: 'Track game' }));
     expect(router.state.location.pathname).toBe(paths.trackGame('g 1'));
 
-    await user.click(screen.getByRole('link', { name: 'Report' }));
-    expect(router.state.location.pathname).toBe(paths.gameReport('g 1'));
+    await user.click(await screen.findByRole('link', { name: 'Games' }));
+    expect(router.state.location.pathname).toBe(paths.home);
   });
 });

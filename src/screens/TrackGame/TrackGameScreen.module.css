@@ -1,0 +1,39 @@
+/*
+ * Exactly the height of the screen, never scrolling: top bar, stat strip, the
+ * button grid (which takes whatever height is left), the last-action line and the
+ * bottom bar. A shot chart can later take room above the grid without other changes.
+ */
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100dvh;
+  padding: 0 var(--space-2) max(var(--space-2), var(--safe-bottom));
+  overflow: hidden;
+  /* Fast taps between buttons must never zoom, select text or open a callout. */
+  touch-action: manipulation;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Says this isn't a live game, without shouting over the stats. */
+.banner {
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-2);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  text-align: center;
+}
+
+.bottomBar {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}

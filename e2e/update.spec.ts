@@ -78,7 +78,6 @@ test('updating never reloads a live game open in another window', async ({ conte
   await expect(updateBanner(game)).toHaveCount(0);
 
   // After the game, the tab screens offer the update, which is now just a reload.
-  await game.getByRole('link', { name: 'Report' }).tap();
   await game.getByRole('link', { name: 'Games' }).tap();
   await updateBanner(game).getByRole('button', { name: 'Update' }).tap();
   await expect(runningBuild(game)).toHaveAttribute('content', 'b', { timeout: 15_000 });

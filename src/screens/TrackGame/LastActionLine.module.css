@@ -1,0 +1,98 @@
+.line {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  /* Always this tall, with or without a button, so nothing above or below ever moves. */
+  height: var(--tap-target);
+  padding-inline: var(--space-3) var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.message {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+  animation: update var(--duration-normal) var(--ease-out);
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+.error {
+  color: var(--color-danger-text);
+}
+
+.dot {
+  flex-shrink: 0;
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: var(--radius-full);
+}
+
+.made {
+  background-color: var(--color-made);
+}
+
+.miss {
+  background-color: var(--color-miss);
+}
+
+.other {
+  background-color: var(--color-stat);
+}
+
+.action {
+  flex-shrink: 0;
+  min-width: var(--tap-target-lg);
+  min-height: var(--tap-target);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+}
+
+.action:active {
+  opacity: 0.6;
+}
+
+.action:focus-visible {
+  outline-offset: -3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message {
+    animation-name: fade;
+  }
+}
+
+/* Each new message slides in a little, so even a repeat of the same stat is noticed. */
+@keyframes update {
+  from {
+    opacity: 0.2;
+    transform: translateY(var(--space-1));
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0.2;
+  }
+}
