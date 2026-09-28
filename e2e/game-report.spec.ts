@@ -62,7 +62,7 @@ test('a game report: the numbers, a score fix, a copied recap, then deleting the
   await expect(tileValue(page, 'Game totals', 'Assists')).toHaveText(String(stats.ast));
   // The shot chart: her shots on the court, and her shooting by zone.
   const shotChart = page.getByRole('region', { name: 'Shot chart' });
-  await expect(shotChart.getByRole('figure')).toBeVisible();
+  await expect(shotChart.getByRole('figure', { name: 'Shot chart', exact: true })).toBeVisible();
   await expect(
     shotChart.getByRole('img', { name: /^Shot chart: \d+ shots? on the map/ }),
   ).toBeVisible();

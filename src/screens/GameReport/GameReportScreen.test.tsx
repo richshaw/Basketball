@@ -547,7 +547,7 @@ describe('GameReportScreen', () => {
       await renderReport();
 
       const section = screen.getByRole('region', { name: 'Shot chart' });
-      const figure = within(section).getByRole('figure');
+      const figure = within(section).getByRole('figure', { name: 'Shot chart' });
       expect(within(figure).getByRole('img')).toHaveAccessibleName(
         /^Shot chart: 3 shots on the map, 2 made \(67%\)\./,
       );

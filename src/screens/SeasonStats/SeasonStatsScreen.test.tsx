@@ -72,8 +72,10 @@ function expectedLegend(events: readonly StatEvent[]): string {
 /** The legend of the shot map of `games` games in `scope`, e.g. ('Fall 2026', 10). */
 function shotMapLegend(scope: string, games: number) {
   const chart = screen.getByRole('region', { name: 'Shot chart' });
-  // Named by its caption, e.g. "Fall 2026 · 10 games".
-  const map = within(chart).getByRole('figure', { name: `${scope} · ${formatGameCount(games)}` });
+  // Named by the section's heading, then its caption: "Shot chart Fall 2026 · 10 games".
+  const map = within(chart).getByRole('figure', {
+    name: `Shot chart ${scope} · ${formatGameCount(games)}`,
+  });
   return within(map).getByText('Made').closest('p');
 }
 

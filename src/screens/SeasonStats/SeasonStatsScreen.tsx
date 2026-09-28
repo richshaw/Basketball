@@ -33,8 +33,16 @@ import { TotalsTable } from './TotalsTable';
 import { TrendChart } from './TrendChart';
 import styles from './SeasonStatsScreen.module.css';
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  const headingId = useId();
+interface SectionProps {
+  title: string;
+  /** The heading's id, e.g. for something in the section to be named by it. */
+  headingId?: string;
+  children: ReactNode;
+}
+
+function Section({ title, headingId: givenHeadingId, children }: SectionProps) {
+  const generatedHeadingId = useId();
+  const headingId = givenHeadingId ?? generatedHeadingId;
   return (
     <section className={styles.section} aria-labelledby={headingId}>
       <h2 id={headingId} className={styles.sectionTitle}>
@@ -160,6 +168,7 @@ export function SeasonStatsScreen() {
   const settings = useSettings();
   const toast = useToast();
   const [remembered, setRemembered] = useState(readRememberedSeason);
+  const shotChartHeadingId = useId();
 
   // Season labels, most recent first (what useSeasons() reads, without a second query).
   const seasons = useMemo(() => games && seasonLabels(games), [games]);
@@ -286,11 +295,13 @@ export function SeasonStatsScreen() {
               </Section>
 
               {shotChart ? (
-                <Section title="Shot chart">
+                <Section title="Shot chart" headingId={shotChartHeadingId}>
                   {shotChart === 'map' ? (
                     <>
+                      {/* Named by the section's heading and the caption, as on the game report. */}
                       <ShotMap
                         shots={shots}
+                        aria-labelledby={shotChartHeadingId}
                         caption={<span className={styles.shotMapCaption}>{caption}</span>}
                       />
                       <ShotZoneSummary shots={shots} />

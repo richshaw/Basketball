@@ -44,8 +44,8 @@ test('shows the season, switches the chart and opens a game from the log', async
     (points / finalGames.size).toFixed(1),
   );
   await expect(page.getByText(/The game against Westfield is still in progress/)).toBeVisible();
-  // The season's shot chart, named by its caption.
-  await expect(page.getByRole('figure', { name: 'Fall 2026 · 10 games' })).toBeVisible();
+  // The season's shot chart, named by the section's heading and its caption.
+  await expect(page.getByRole('figure', { name: 'Shot chart Fall 2026 · 10 games' })).toBeVisible();
   await expect(page.getByLabel('Shooting by zone')).toBeVisible();
   // Nothing on the screen makes the page scroll sideways.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(

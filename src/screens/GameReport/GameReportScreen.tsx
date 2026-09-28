@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Button } from '@/components/Button/Button';
 import { ButtonLink } from '@/components/Button/ButtonLink';
@@ -126,6 +126,7 @@ function GameReport({ game, events, player, askForSpots, onLeaving }: GameReport
   const toast = useToast();
   const navigate = useNavigate();
   const [editor, setEditor] = useState<EditorState>({ open: false, session: 0 });
+  const shotChartHeadingId = useId();
   const line = computeStatLine(events);
   const shots = shotsFromEvents(events);
   const shotChart = shotChartSection(shots, askForSpots);
@@ -203,11 +204,13 @@ function GameReport({ game, events, player, askForSpots, onLeaving }: GameReport
         {shotChart ? (
           <ReportSection
             title="Shot chart"
+            headingId={shotChartHeadingId}
             note={shotChart === 'noSpots' ? noSpotsNote(live) : undefined}
           >
             {shotChart === 'map' ? (
               <>
-                <ShotMap shots={shots} />
+                {/* Named by the section's heading, as on the Stats tab. */}
+                <ShotMap shots={shots} aria-labelledby={shotChartHeadingId} />
                 <ShotZoneSummary shots={shots} />
               </>
             ) : null}

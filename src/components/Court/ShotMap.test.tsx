@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import type { Shot } from '@/data/shots';
 import { ShotMap } from './ShotMap';
@@ -70,6 +71,32 @@ describe('ShotMap', () => {
     const figure = screen.getByRole('figure', { name: 'Season shot chart Fall 2026 · 10 games' });
     expect(within(figure).getByText('Season shot chart')).toBeInTheDocument();
     expect(court()).toHaveAccessibleName(/^Season shot chart: 5 shots on the map, 3 made/);
+  });
+
+  it('can be named by another element first, such as the heading of its section', () => {
+    const inSection = (map: ReactElement) => (
+      <section>
+        <h2 id="shot-chart-heading">Shot chart</h2>
+        {map}
+      </section>
+    );
+    const { rerender } = render(
+      inSection(<ShotMap shots={shots} aria-labelledby="shot-chart-heading" />),
+    );
+    expect(screen.getByRole('figure', { name: 'Shot chart' })).toBeInTheDocument();
+
+    rerender(
+      inSection(
+        <ShotMap
+          shots={shots}
+          aria-labelledby="shot-chart-heading"
+          caption="Fall 2026 · 10 games"
+        />,
+      ),
+    );
+    expect(
+      screen.getByRole('figure', { name: 'Shot chart Fall 2026 · 10 games' }),
+    ).toBeInTheDocument();
   });
 
   it('names the chart "Shot chart" without a title, even an empty one', () => {
