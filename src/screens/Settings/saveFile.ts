@@ -2,6 +2,7 @@
  * Hands a file to the parent: the share sheet when the browser can share files (on
  * an iPhone: Save to Files, iCloud Drive, AirDrop, Mail…), else a download.
  */
+import { shareFile } from '@/lib/share';
 
 /**
  * - `shared`: the share sheet finished.
@@ -21,33 +22,10 @@ const REVOKE_DOWNLOAD_URL_AFTER_MS = 60_000;
  * call this straight from the tap handler, with no `await` before it.
  */
 export async function saveFile(file: File): Promise<SaveFileResult> {
-  if (canShareFile(file)) {
-    try {
-      // Files only: with a title or text too, iOS saves an extra text file next to it.
-      await navigator.share({ files: [file] });
-      return 'shared';
-    } catch (error) {
-      if (isAbortError(error)) return 'cancelled';
-      // Anything else (e.g. the tap was too long ago): download it instead.
-    }
-  }
+  const shared = await shareFile(file);
+  if (shared !== 'unavailable') return shared;
+  // No file sharing here, or it failed (e.g. the tap was too long ago): download it.
   return downloadFile(file) ? 'downloaded' : 'failed';
-}
-
-function canShareFile(file: File): boolean {
-  if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') return false;
-  try {
-    return typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
-  } catch {
-    return false;
-  }
-}
-
-/** The parent closed the share sheet (a DOMException named AbortError). */
-function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError'
-  );
 }
 
 /** Downloads `file` through a temporary `<a download>` link. Returns false if that failed. */

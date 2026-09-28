@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { copyText, shareText } from './share';
+import { copyText, shareFile, shareText } from './share';
 
 /** Replaces `navigator` with just the given APIs. */
 function stubNavigator(apis: Record<string, unknown>) {
@@ -98,6 +98,48 @@ describe('shareText', () => {
     stubNavigator({});
 
     await expect(shareText({ text: '14 PTS' })).resolves.toBe('failed');
+  });
+});
+
+describe('shareFile', () => {
+  const file = () => new File(['{}'], 'hoop-stats-backup-2026-09-28.json');
+
+  it('shares just the file when the share sheet takes files', async () => {
+    const share = resolves();
+    stubNavigator({ share, canShare: () => true });
+    const backup = file();
+
+    await expect(shareFile(backup)).resolves.toBe('shared');
+    expect(share).toHaveBeenCalledWith({ files: [backup] });
+  });
+
+  it('is unavailable where the share sheet cannot take files, or cannot say', async () => {
+    const share = resolves();
+    stubNavigator({ share, canShare: () => false });
+    await expect(shareFile(file())).resolves.toBe('unavailable');
+
+    // No canShare: an older share sheet, for text only.
+    stubNavigator({ share });
+    await expect(shareFile(file())).resolves.toBe('unavailable');
+    stubNavigator({});
+    await expect(shareFile(file())).resolves.toBe('unavailable');
+    expect(share).not.toHaveBeenCalled();
+  });
+
+  it('reports a closed share sheet as cancelled', async () => {
+    stubNavigator({
+      share: rejectsWith(new DOMException('Share canceled', 'AbortError')),
+      canShare: () => true,
+    });
+    await expect(shareFile(file())).resolves.toBe('cancelled');
+  });
+
+  it('is unavailable when the share sheet fails for another reason', async () => {
+    stubNavigator({
+      share: rejectsWith(new DOMException('No user gesture', 'NotAllowedError')),
+      canShare: () => true,
+    });
+    await expect(shareFile(file())).resolves.toBe('unavailable');
   });
 });
 
