@@ -535,6 +535,29 @@ describe('GameReportScreen', () => {
       expect(within(sheet).getByLabelText('Opponent')).not.toHaveAccessibleDescription();
     });
 
+    it('has no score fields while the game is live, and keeps its stored score', async () => {
+      // E.g. a game that was ended with a score, then reopened.
+      await seed(makeGame({ status: 'live', currentPeriod: 3, endedAt: undefined }));
+      const { user } = await renderReport();
+
+      await user.click(screen.getByRole('button', { name: 'Edit details' }));
+      const sheet = screen.getByRole('dialog', { name: 'Edit game' });
+      expect(sheet).toHaveAccessibleDescription(
+        "You'll add the final score when you end the game.",
+      );
+      expect(within(sheet).queryByLabelText('Our score')).not.toBeInTheDocument();
+      expect(within(sheet).queryByLabelText('Their score')).not.toBeInTheDocument();
+      await user.type(within(sheet).getByLabelText('Notes'), 'Up by two at the half.');
+      await user.click(within(sheet).getByRole('button', { name: 'Save' }));
+
+      await waitForNoDialog();
+      expect(await getGame('g1')).toMatchObject({
+        notes: 'Up by two at the half.',
+        teamScore: 45,
+        opponentScore: 38,
+      });
+    });
+
     it('changes nothing on Cancel', async () => {
       await seed();
       const { user } = await renderReport();

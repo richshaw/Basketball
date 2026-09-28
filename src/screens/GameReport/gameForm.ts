@@ -3,7 +3,7 @@
  * the `updateGame` patch they turn into. Pure: no React, no database.
  */
 import type { GamePatch } from '@/data/repo';
-import { TEXT_LIMITS, type Game, type HomeAway } from '@/data/types';
+import { MAX_SCORE, TEXT_LIMITS, type Game, type HomeAway } from '@/data/types';
 import { isLocalISODate } from '@/lib/format';
 
 /** `'unset'` selects no segment: the game doesn't say where it was played. */
@@ -26,8 +26,13 @@ export type GameFormErrors = Partial<Record<keyof GameForm, string>>;
 
 export type GameFormResult = { ok: true; patch: GamePatch } | { ok: false; errors: GameFormErrors };
 
-/** Highest score the data layer accepts. */
-export const MAX_SCORE = 999;
+export interface GameFormOptions {
+  /**
+   * Whether the form has the score fields (default true). A live game's form doesn't:
+   * its final score is entered when the game ends, so the patch leaves it as it is.
+   */
+  withScores?: boolean;
+}
 
 function scoreText(score: number | undefined): string {
   return score === undefined ? '' : String(score);
@@ -46,7 +51,7 @@ export function gameFormFrom(game: Game): GameForm {
   };
 }
 
-/** '' is "no score"; otherwise a whole number from 0 to 999, or undefined if it isn't one. */
+/** '' is "no score"; otherwise a whole number from 0 to MAX_SCORE, or undefined if it isn't one. */
 function parseScore(text: string): number | null | undefined {
   const trimmed = text.trim();
   if (trimmed === '') return null;
@@ -58,10 +63,14 @@ function parseScore(text: string): number | null | undefined {
 const SCORE_ERROR = `Enter a number from 0 to ${MAX_SCORE}`;
 
 /**
- * Checks the form. Valid: the patch for `updateGame`, which names every field so an
- * emptied one is cleared (null) rather than kept. Invalid: a message per bad field.
+ * Checks the form. Valid: the patch for `updateGame`, which names every field on the
+ * form so an emptied one is cleared (null) rather than kept. Invalid: a message per
+ * bad field.
  */
-export function validateGameForm(form: GameForm): GameFormResult {
+export function validateGameForm(
+  form: GameForm,
+  { withScores = true }: GameFormOptions = {},
+): GameFormResult {
   const errors: GameFormErrors = {};
   const opponent = form.opponent.trim();
   if (!opponent) errors.opponent = 'Enter the opponent';
@@ -77,9 +86,9 @@ export function validateGameForm(form: GameForm): GameFormResult {
     errors.season = `Use at most ${TEXT_LIMITS.season} characters`;
   }
 
-  const teamScore = parseScore(form.teamScore);
+  const teamScore = withScores ? parseScore(form.teamScore) : null;
   if (teamScore === undefined) errors.teamScore = SCORE_ERROR;
-  const opponentScore = parseScore(form.opponentScore);
+  const opponentScore = withScores ? parseScore(form.opponentScore) : null;
   if (opponentScore === undefined) errors.opponentScore = SCORE_ERROR;
 
   const notes = form.notes.trim();
@@ -90,16 +99,16 @@ export function validateGameForm(form: GameForm): GameFormResult {
   if (teamScore === undefined || opponentScore === undefined || Object.keys(errors).length > 0) {
     return { ok: false, errors };
   }
-  return {
-    ok: true,
-    patch: {
-      opponent,
-      date: form.date,
-      season: season || null,
-      homeAway: form.venue === 'unset' ? null : form.venue,
-      teamScore,
-      opponentScore,
-      notes: notes || null,
-    },
+  const patch: GamePatch = {
+    opponent,
+    date: form.date,
+    season: season || null,
+    homeAway: form.venue === 'unset' ? null : form.venue,
+    notes: notes || null,
   };
+  if (withScores) {
+    patch.teamScore = teamScore;
+    patch.opponentScore = opponentScore;
+  }
+  return { ok: true, patch };
 }

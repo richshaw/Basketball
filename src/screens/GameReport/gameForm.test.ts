@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TEXT_LIMITS, type Game } from '@/data/types';
+import { MAX_SCORE, TEXT_LIMITS, type Game } from '@/data/types';
 import { gameFormFrom, validateGameForm, type GameForm } from './gameForm';
 
 const game: Game = {
@@ -115,17 +115,36 @@ describe('validateGameForm', () => {
     });
   });
 
-  it('accepts only whole-number scores from 0 to 999', () => {
-    for (const bad of ['-1', '4.5', '1e2', 'abc', '1000']) {
+  it('accepts only whole-number scores from 0 to the highest score stored', () => {
+    expect(MAX_SCORE).toBe(999);
+    for (const bad of ['-1', '4.5', '1e2', 'abc', String(MAX_SCORE + 1)]) {
       const result = validateGameForm(form({ teamScore: bad, opponentScore: bad }));
       expect(result.ok, bad).toBe(false);
-      expect(result.ok ? null : Object.keys(result.errors), bad).toEqual([
-        'teamScore',
-        'opponentScore',
-      ]);
+      expect(result.ok ? null : result.errors, bad).toEqual({
+        teamScore: 'Enter a number from 0 to 999',
+        opponentScore: 'Enter a number from 0 to 999',
+      });
     }
-    const highest = validateGameForm(form({ teamScore: '999', opponentScore: '007' }));
-    expect(highest.ok && highest.patch).toMatchObject({ teamScore: 999, opponentScore: 7 });
+    const highest = validateGameForm(form({ teamScore: String(MAX_SCORE), opponentScore: '007' }));
+    expect(highest.ok && highest.patch).toMatchObject({ teamScore: MAX_SCORE, opponentScore: 7 });
+  });
+
+  it('leaves the score out, so it is kept, when the form has no score fields', () => {
+    // A live game: whatever is in the (hidden) score fields is ignored.
+    const result = validateGameForm(form({ teamScore: 'junk', opponentScore: '' }), {
+      withScores: false,
+    });
+    expect(result).toEqual({
+      ok: true,
+      patch: {
+        opponent: 'Central',
+        date: '2026-09-27',
+        season: 'Fall 2026',
+        homeAway: 'away',
+        notes: 'Great game',
+      },
+    });
+    expect(result.ok && Object.keys(result.patch)).not.toContain('teamScore');
   });
 
   it('rejects text longer than the data layer stores', () => {

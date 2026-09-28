@@ -9,7 +9,7 @@ import { TextArea, TextField } from '@/components/TextField/TextField';
 import { useToast } from '@/components/Toast/toastContext';
 import { useGames, useSeasons } from '@/data/hooks';
 import { updateGame } from '@/data/repo';
-import { TEXT_LIMITS, type Game } from '@/data/types';
+import { MAX_SCORE, TEXT_LIMITS, type Game } from '@/data/types';
 import {
   gameFormFrom,
   validateGameForm,
@@ -25,6 +25,9 @@ const VENUES: readonly SegmentedOption<Venue>[] = [
   { value: 'away', label: 'Away' },
   { value: 'neutral', label: 'Neutral' },
 ];
+
+/** Longest score anyone can type: as many digits as the highest score. */
+const SCORE_DIGITS = String(MAX_SCORE).length;
 
 /** Fields in the order they appear, to focus the first one with a problem. */
 const FIELD_ORDER = [
@@ -48,12 +51,17 @@ export interface EditGameSheetProps {
  * Edits a game's details: opponent, date, season, venue, final score and notes.
  * Nothing is saved until Save, and only Save or Cancel close it, so a stray tap
  * can't throw away what was typed. Mount it fresh (a new `key`) for each opening.
+ *
+ * A live game has no score fields: its final score is entered when it ends (the
+ * report shows no score until then), so Save leaves the stored score as it is.
  */
 export function EditGameSheet({ game, open, onClose, focusScore }: EditGameSheetProps) {
   const toast = useToast();
   const games = useGames();
   const seasons = useSeasons();
   const [form, setForm] = useState<GameForm>(() => gameFormFrom(game));
+  // Fixed while open, so a game that ends meanwhile can't have its new score cleared.
+  const [withScores] = useState(game.status !== 'live');
   const [errors, setErrors] = useState<GameFormErrors>({});
   const [saving, setSaving] = useState(false);
   const formId = useId();
@@ -82,7 +90,7 @@ export function EditGameSheet({ game, open, onClose, focusScore }: EditGameSheet
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (saving) return;
-    const result = validateGameForm(form);
+    const result = validateGameForm(form, { withScores });
     if (!result.ok) {
       setErrors(result.errors);
       const first = FIELD_ORDER.find((key) => result.errors[key]);
@@ -107,6 +115,7 @@ export function EditGameSheet({ game, open, onClose, focusScore }: EditGameSheet
       open={open}
       onClose={onClose}
       title="Edit game"
+      description={withScores ? undefined : "You'll add the final score when you end the game."}
       dismissible={false}
       initialFocusRef={
         focusScore === 'teamScore'
@@ -173,34 +182,36 @@ export function EditGameSheet({ game, open, onClose, focusScore }: EditGameSheet
             onChange={change('venue')}
           />
         </div>
-        <div className={styles.pair}>
-          <TextField
-            ref={teamScoreRef}
-            id={fieldIds.teamScore}
-            label="Our score"
-            value={form.teamScore}
-            onChange={(event) => change('teamScore')(event.target.value)}
-            error={errors.teamScore}
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={3}
-            autoComplete="off"
-            enterKeyHint="done"
-          />
-          <TextField
-            ref={opponentScoreRef}
-            id={fieldIds.opponentScore}
-            label="Their score"
-            value={form.opponentScore}
-            onChange={(event) => change('opponentScore')(event.target.value)}
-            error={errors.opponentScore}
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={3}
-            autoComplete="off"
-            enterKeyHint="done"
-          />
-        </div>
+        {withScores ? (
+          <div className={styles.pair}>
+            <TextField
+              ref={teamScoreRef}
+              id={fieldIds.teamScore}
+              label="Our score"
+              value={form.teamScore}
+              onChange={(event) => change('teamScore')(event.target.value)}
+              error={errors.teamScore}
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={SCORE_DIGITS}
+              autoComplete="off"
+              enterKeyHint="done"
+            />
+            <TextField
+              ref={opponentScoreRef}
+              id={fieldIds.opponentScore}
+              label="Their score"
+              value={form.opponentScore}
+              onChange={(event) => change('opponentScore')(event.target.value)}
+              error={errors.opponentScore}
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={SCORE_DIGITS}
+              autoComplete="off"
+              enterKeyHint="done"
+            />
+          </div>
+        ) : null}
         <TextArea
           id={fieldIds.notes}
           label="Notes"
