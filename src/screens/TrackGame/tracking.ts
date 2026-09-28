@@ -123,7 +123,7 @@ export function widestWordOnCanvas(
 
 /**
  * Taps on one control closer together than this are a double tap: only the first
- * counts. Also how long a button that just changed ignores taps.
+ * counts. Also how long the last-action line's button ignores taps after an Undo.
  */
 export const DOUBLE_TAP_MS = 400;
 

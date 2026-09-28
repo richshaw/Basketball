@@ -79,7 +79,7 @@
   opacity: 0.6;
 }
 
-/* Briefly off after the line changes (see LastActionLine.tsx): no visible change, no flicker. */
+/* Briefly off after its own tap or the grid's Undo (see LastActionLine.tsx): no visible change. */
 .action:disabled {
   cursor: default;
 }

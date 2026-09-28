@@ -21,11 +21,10 @@ describe('LastActionLine', () => {
     expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
   });
 
-  it('runs each action once, however many taps reach it', async () => {
+  it('runs each action once, however many taps reach it', () => {
     const onAction = vi.fn();
     render(<LastActionLine action={action({ onAction })} />);
     const undo = screen.getByRole('button', { name: 'Undo' });
-    await waitFor(() => expect(undo).toBeEnabled());
 
     fireEvent.click(undo);
     fireEvent.click(undo);
@@ -33,27 +32,63 @@ describe('LastActionLine', () => {
     expect(onAction).toHaveBeenCalledOnce();
   });
 
-  it('ignores taps for a moment after the line changes, then takes the new action', async () => {
+  it('takes a tap at once when a new stat shows (a quick "wrong stat, Undo")', () => {
     const first = vi.fn();
     const second = vi.fn();
     const { rerender } = render(<LastActionLine action={action({ onAction: first })} />);
     const button = screen.getByRole('button', { name: 'Undo' });
-    await waitFor(() => expect(button).toBeEnabled());
+    expect(button).toBeEnabled();
+
+    rerender(
+      <LastActionLine action={action({ key: 2, message: 'Block · Q3', onAction: second })} />,
+    );
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledOnce();
+  });
+
+  it('ignores taps for a moment after its own action, then takes the new one', async () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = render(<LastActionLine action={action({ onAction: first })} />);
+    const button = screen.getByRole('button', { name: 'Undo' });
     fireEvent.click(button);
 
-    // E.g. Retry saved the stat and the line now offers Undo in the same spot: the
-    // second tap of a double tap mustn't undo it.
-    const shownAt = performance.now();
+    // The line now offers another action in the same spot (e.g. after "Now in Q3",
+    // Undo): the second tap of the double tap mustn't take it.
+    const tappedAt = performance.now();
     rerender(<LastActionLine action={action({ key: 2, onAction: second })} />);
     expect(button).toBeDisabled();
     fireEvent.click(button);
     expect(second).not.toHaveBeenCalled();
 
     await waitFor(() => expect(button).toBeEnabled());
-    expect(performance.now() - shownAt).toBeGreaterThanOrEqual(DOUBLE_TAP_MS - 50);
+    expect(performance.now() - tappedAt).toBeGreaterThanOrEqual(DOUBLE_TAP_MS - 50);
     fireEvent.click(button);
     expect(first).toHaveBeenCalledOnce();
     expect(second).toHaveBeenCalledOnce();
+  });
+
+  it("ignores taps for a moment after the grid's Undo", async () => {
+    const onAction = vi.fn();
+    const line = (holdKey: number) => (
+      <LastActionLine action={action({ onAction })} holdKey={holdKey} />
+    );
+    const { rerender } = render(line(0));
+    const button = screen.getByRole('button', { name: 'Undo' });
+    expect(button).toBeEnabled();
+
+    // The grid's Undo sits just above this button: the second tap of a double tap on
+    // it mustn't land here.
+    rerender(line(1));
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onAction).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    expect(onAction).toHaveBeenCalledOnce();
   });
 
   it('shows a message without a button', () => {

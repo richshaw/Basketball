@@ -54,6 +54,9 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   // Bumped each time the end-game sheet opens, so its form starts fresh.
   const [endSheetKey, setEndSheetKey] = useState(0);
   const [lastAction, setLastAction] = useState<LastAction | null>(null);
+  // Bumped by the grid's Undo: the line's own Undo, just below it, then ignores taps
+  // for a moment.
+  const [lineHold, setLineHold] = useState(0);
   const [session, { period, unsaved, retrying }] = useTrackingSession(game.id, game.currentPeriod);
   // A double tap on the grid's Undo or on Next acts once.
   const [undoGuard] = useState(() => createTapGuard());
@@ -113,6 +116,7 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
     if (!undoGuard()) return false;
     const outcome = session.undoLatest(eventsRef.current);
     if (outcome === 'busy') return false;
+    setLineHold((holds) => holds + 1);
     if (outcome === 'nothing') show({ message: 'Nothing to undo', tone: 'muted' });
     else takeBack(statLabel(outcome.type), outcome.done);
     return true;
@@ -234,7 +238,7 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
           whatever height is left, so it shrinks to make room.
         */}
         <StatGrid counts={counts} onRecord={record} onUndo={undo} />
-        <LastActionLine action={shownAction} />
+        <LastActionLine action={shownAction} holdKey={lineHold} />
         <div className={styles.bottomBar}>
           <Button variant="secondary" onClick={() => setOpenSheet('log')}>
             Log

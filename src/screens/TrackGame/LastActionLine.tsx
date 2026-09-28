@@ -21,6 +21,15 @@ export interface LastAction {
   tapId?: number;
 }
 
+export interface LastActionLineProps {
+  action: LastAction;
+  /**
+   * Bump it when the grid's Undo is tapped: the line's button then ignores taps for a
+   * moment, like after its own action.
+   */
+  holdKey?: number;
+}
+
 /**
  * The fixed line between the button grid and the bottom bar that confirms the last
  * action ("3PT Made · Q2") with an inline Undo. It always takes the same space, so
@@ -28,19 +37,25 @@ export interface LastAction {
  * toast would, and its Undo could catch a tap meant for the button under it).
  *
  * Only the message is a live region, so a screen reader doesn't read "Undo" again
- * with every stat. The button ignores taps for a moment after the line changes (the
- * second tap of a double tap on the button before it must not land on this one), and
- * each action runs at most once.
+ * with every stat. Each action runs at most once. The button takes a tap right after
+ * a stat is recorded (a quick "wrong stat, Undo" must work), but ignores taps for a
+ * moment after its own action and after the grid's Undo (just above it), so the
+ * second tap of a double tap on either can't act on the line that replaces it.
  */
-export function LastActionLine({ action }: { action: LastAction }) {
+export function LastActionLine({ action, holdKey = 0 }: LastActionLineProps) {
   const { key, message, kind, tone, actionLabel, onAction } = action;
-  const [readyKey, setReadyKey] = useState<number | null>(null);
   const usedKey = useRef<number | null>(null);
+  // Every hold (the button's own tap, or the grid's Undo) bumps `holds`; the button
+  // is off until DOUBLE_TAP_MS after the latest one.
+  const [ownHolds, setOwnHolds] = useState(0);
+  const holds = ownHolds + holdKey;
+  const [releasedHolds, setReleasedHolds] = useState(holds);
+  const held = releasedHolds !== holds;
 
   useEffect(() => {
-    const timer = setTimeout(() => setReadyKey(key), DOUBLE_TAP_MS);
+    const timer = setTimeout(() => setReleasedHolds(holds), DOUBLE_TAP_MS);
     return () => clearTimeout(timer);
-  }, [key]);
+  }, [holds]);
 
   return (
     <div className={styles.line}>
@@ -54,10 +69,11 @@ export function LastActionLine({ action }: { action: LastAction }) {
         <button
           type="button"
           className={styles.action}
-          disabled={readyKey !== key}
+          disabled={held}
           onClick={() => {
-            if (usedKey.current === key) return;
+            if (held || usedKey.current === key) return;
             usedKey.current = key;
+            setOwnHolds((count) => count + 1);
             onAction();
           }}
         >

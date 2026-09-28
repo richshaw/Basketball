@@ -225,11 +225,10 @@ describe('TrackGameScreen', () => {
     fireEvent.click(statButton('Steal'));
     fireEvent.click(statButton('Assist'));
     const undo = lineButton();
-    // Just after the line changed, it ignores taps (a double tap on the stat button
-    // must not reach it).
-    expect(undo).toBeDisabled();
-    await waitFor(() => expect(undo).toBeEnabled());
+    // Right after a stat, a quick "wrong stat, Undo" counts...
+    expect(undo).toBeEnabled();
     fireEvent.click(undo);
+    // ...and the second tap of a double tap does nothing more.
     fireEvent.click(undo);
 
     expect(lastAction()).toHaveTextContent('Removed Assist');
