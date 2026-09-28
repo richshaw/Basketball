@@ -14,8 +14,10 @@ installDialogPolyfill();
 // one falls back as it would in a browser without it.
 Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { value: () => null });
 
-// Every test starts with an empty database (seed data in beforeEach, not beforeAll).
+// Every test starts with an empty database (seed data in beforeEach, not beforeAll),
+// and with nothing in localStorage (e.g. taps kept by src/data/pendingStats.ts).
 beforeEach(async () => {
+  localStorage.clear();
   await resetDatabase();
 });
 
