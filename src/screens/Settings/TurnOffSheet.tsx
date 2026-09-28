@@ -7,7 +7,7 @@ import { Sheet } from '@/components/Sheet/Sheet';
 import { useToast } from '@/components/Toast/toastContext';
 import { disableCloudBackup } from '@/data/backup/cloudBackup';
 import { ActionRow } from './ActionRow';
-import { DELETE_ONLINE_BACKUP_QUESTION } from './cloudBackupText';
+import { deleteOnlineBackupQuestion } from './cloudBackupText';
 import styles from './TurnOffSheet.module.css';
 
 export interface TurnOffSheetProps {
@@ -15,6 +15,11 @@ export interface TurnOffSheetProps {
   onClose: () => void;
   /** Backup is off (`deleted`: and the online backup is gone). Close the sheet and say so. */
   onTurnedOff: (deleted: boolean) => void;
+  /**
+   * What the online backup has that this phone doesn't (see onlyOnline), while paused
+   * for missing games: deleting it would lose them for good, so both choices say so.
+   */
+  onlyOnlineGames?: string;
 }
 
 /** The engine's reasons run to two sentences: long enough to read them. */
@@ -26,7 +31,7 @@ const MESSAGE_TOAST_MS = 6000;
  * signal. If the delete fails, backup stays on and the sheet says why. Mount it with a
  * new `key` each time it opens, so it starts without the last problem.
  */
-export function TurnOffSheet({ open, onClose, onTurnedOff }: TurnOffSheetProps) {
+export function TurnOffSheet({ open, onClose, onTurnedOff, onlyOnlineGames }: TurnOffSheetProps) {
   const confirm = useConfirm();
   const toast = useToast();
   const [working, setWorking] = useState<'off' | 'delete' | null>(null);
@@ -48,7 +53,7 @@ export function TurnOffSheet({ open, onClose, onTurnedOff }: TurnOffSheetProps) 
   const turnOff = async (deleteCloudCopy: boolean) => {
     if (working) return;
     if (deleteCloudCopy) {
-      if (!(await confirm(DELETE_ONLINE_BACKUP_QUESTION))) return;
+      if (!(await confirm(deleteOnlineBackupQuestion(onlyOnlineGames)))) return;
     }
     setWorking(deleteCloudCopy ? 'delete' : 'off');
     setProblem(undefined);
@@ -87,7 +92,11 @@ export function TurnOffSheet({ open, onClose, onTurnedOff }: TurnOffSheetProps) 
           title={
             working === 'delete' ? 'Deleting online backup…' : 'Turn off and delete online backup'
           }
-          subtitle="Deletes every backup saved with this code, so nobody can restore from it. Needs an internet connection."
+          subtitle={
+            onlyOnlineGames
+              ? `${onlyOnlineGames}: deleting the online backup loses them for good. Needs an internet connection.`
+              : 'Deletes every backup saved with this code, so nobody can restore from it. Needs an internet connection.'
+          }
           destructive
           onClick={() => void turnOff(true)}
           disabled={working !== null}

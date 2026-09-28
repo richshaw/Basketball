@@ -17,8 +17,9 @@ import { ActionRow } from './ActionRow';
 import { BackupCodeSheet, type BackupCodeReason } from './BackupCodeSheet';
 import {
   backUpAnywayMessage,
-  DELETE_ONLINE_BACKUP_QUESTION,
+  deleteOnlineBackupQuestion,
   describeStatus,
+  onlyOnline,
   USE_THIS_PHONE_MESSAGE,
   type StatusTone,
 } from './cloudBackupText';
@@ -180,7 +181,7 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
   // Off, with the code kept: the online backup can still be deleted.
   const deleteOnlineBackup = async () => {
     if (busyRef.current) return;
-    if (!(await confirm(DELETE_ONLINE_BACKUP_QUESTION))) return;
+    if (!(await confirm(deleteOnlineBackupQuestion()))) return;
     await run(async () => {
       const result = await disableCloudBackup({ deleteCloudCopy: true });
       say(
@@ -324,6 +325,7 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
         open={turnOffOpen}
         onClose={() => setTurnOffOpen(false)}
         onTurnedOff={turnedOff}
+        onlyOnlineGames={state === 'paused-shrink' ? onlyOnline(status.shrink) : undefined}
       />
     </section>
   );

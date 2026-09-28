@@ -269,14 +269,35 @@ export function codeFromTyped(text: string): string {
   return text.replace(/^\s*hoop\s*stats\s*backup\s*code\s*:?/i, '').trim();
 }
 
-/** The question before deleting the online backup (Turn off and delete, or Delete while off). */
-export const DELETE_ONLINE_BACKUP_QUESTION = {
-  title: 'Delete your online backup?',
-  message:
-    "Every backup saved with this code will be deleted, and this phone will forget the code. The stats on this phone stay. This can't be undone.",
-  confirmLabel: 'Delete online backup',
-  destructive: true,
-};
+/**
+ * What the online backup has that this phone doesn't, while paused for missing games:
+ * e.g. '10 games in your online backup aren't on this phone'.
+ */
+export function onlyOnline(shrink: CloudBackupStatus['shrink']): string {
+  if (!shrink) return "Your online backup has games that aren't on this phone";
+  const missing = shrink.missingGames;
+  // The guard also pauses when the backup had stats and the phone has none at all.
+  if (missing === 0) return "Your online backup has stats that aren't on this phone";
+  return missing === 1
+    ? "1 game in your online backup isn't on this phone"
+    : `${missing} games in your online backup aren't on this phone`;
+}
+
+/**
+ * The question before deleting the online backup (Turn off and delete, or Delete while
+ * off). `onlyOnlineGames` (see onlyOnline) when it has games this phone doesn't: then the
+ * stats staying on this phone is no comfort, and it says what's lost.
+ */
+export function deleteOnlineBackupQuestion(onlyOnlineGames?: string) {
+  return {
+    title: 'Delete your online backup?',
+    message: onlyOnlineGames
+      ? `${onlyOnlineGames}, so deleting it loses them for good. Every backup saved with this code will be deleted, and this phone will forget the code. This can't be undone.`
+      : "Every backup saved with this code will be deleted, and this phone will forget the code. The stats on this phone stay. This can't be undone.",
+    confirmLabel: 'Delete online backup',
+    destructive: true,
+  };
+}
 
 /** What the server keeps, for the questions that replace the latest backup. */
 const OLDER_BACKUPS =

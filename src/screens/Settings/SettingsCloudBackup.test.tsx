@@ -346,6 +346,32 @@ describe('Settings: cloud backup paused or stopped', () => {
     expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
   });
 
+  it('says the games only online would be lost, before deleting the online backup', async () => {
+    await pauseForMissingGames();
+    const { user } = await renderSettings();
+
+    await user.click(cloudButton('Turn off'));
+    const sheet = await screen.findByRole('dialog', { name: 'Turn off cloud backup?' });
+    const deleteRow = within(sheet).getByRole('button', {
+      name: /^Turn off and delete online backup/,
+    });
+    expect(deleteRow).toHaveTextContent(
+      "10 games in your online backup aren't on this phone: deleting the online backup loses them for good. Needs an internet connection.",
+    );
+    await user.click(deleteRow);
+
+    const question = await screen.findByRole('alertdialog', { name: 'Delete your online backup?' });
+    expect(question).toHaveAccessibleDescription(
+      "10 games in your online backup aren't on this phone, so deleting it loses them for good. Every backup saved with this code will be deleted, and this phone will forget the code. This can't be undone.",
+    );
+    await user.click(within(question).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    expect(cloud.server.accounts.size).toBe(1);
+    expect(await getCloudBackupStatus()).toMatchObject({ enabled: true, state: 'paused-shrink' });
+  });
+
   it('backs up anyway after asking, when games are missing', async () => {
     await pauseForMissingGames();
     const { user } = await renderSettings();
