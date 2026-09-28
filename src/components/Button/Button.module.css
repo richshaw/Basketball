@@ -1,0 +1,83 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: 0;
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    filter var(--duration-fast) var(--ease-out),
+    opacity var(--duration-fast) var(--ease-out);
+}
+
+/* Instant feedback on touch: a slight press-in. */
+.button:active:not(:disabled) {
+  transform: scale(0.97);
+  filter: brightness(0.92);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (hover: hover) {
+  .button:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+}
+
+/* Sizes */
+
+.md {
+  min-height: var(--tap-target);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
+}
+
+.lg {
+  min-height: var(--tap-target-lg);
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-lg);
+}
+
+.block {
+  display: flex;
+  width: 100%;
+}
+
+/* Variants */
+
+.primary {
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.secondary {
+  background-color: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.danger {
+  background-color: var(--color-danger);
+  color: var(--color-on-danger);
+}
+
+.ghost {
+  background-color: transparent;
+  color: var(--color-accent-text);
+}
+
+.ghost.md {
+  padding-inline: var(--space-3);
+}
