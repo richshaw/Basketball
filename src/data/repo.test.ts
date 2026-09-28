@@ -436,6 +436,94 @@ describe('recordStat', () => {
     await recordStat(game.id, 'ast');
     expect((await mustGetGame(game.id)).updatedAt).toBe(T0 + 2);
   });
+
+  describe('with the id and tap time made at the tap', () => {
+    it('saves the stat under that id, at that time', async () => {
+      freezeClock();
+      const game = await newGame();
+      const stat = await recordStat(game.id, 'stl', undefined, {
+        id: 'tap-1',
+        at: T0 - 5000,
+        period: 3,
+      });
+      expect(stat).toEqual({
+        id: 'tap-1',
+        gameId: game.id,
+        type: 'stl',
+        period: 3,
+        createdAt: T0 - 5000,
+      });
+      expect(await getGameEvents(game.id)).toEqual([stat]);
+    });
+
+    it('saves a tap once, however often it is saved again, and changes nothing the next time', async () => {
+      freezeClock();
+      const game = await newGame();
+      const options = { id: 'tap-1', at: T0, period: 1 };
+      const first = await recordStat(game.id, 'fg3_made', { x: 1, y: 22 }, options);
+      const updatedAt = (await mustGetGame(game.id)).updatedAt;
+      const lastChangeAt = await getLastChangeAt();
+      const listener = vi.fn();
+      const stop = subscribeToChanges(listener);
+
+      vi.setSystemTime(T0 + 60_000);
+      const again = await recordStat(game.id, 'fg3_made', { x: 1, y: 22 }, options);
+      // Two saves of one tap at the same moment (e.g. a retry and a replay) add it once too.
+      const both = await Promise.all([
+        recordStat(game.id, 'fg3_made', undefined, options),
+        recordStat(game.id, 'fg3_made', undefined, options),
+      ]);
+      stop();
+
+      expect(again).toEqual(first);
+      expect(both).toEqual([first, first]);
+      expect(await getGameEvents(game.id)).toEqual([first]);
+      expect((await mustGetGame(game.id)).updatedAt).toBe(updatedAt);
+      expect(await getLastChangeAt()).toBe(lastChangeAt);
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('keeps tap order for a stat saved after later taps', async () => {
+      freezeClock();
+      const game = await newGame();
+      // Tapped first, but its save only lands after two later taps were saved.
+      await recordStat(game.id, 'ast', undefined, { id: 'second', at: T0 + 10 });
+      await recordStat(game.id, 'blk', undefined, { id: 'third', at: T0 + 20 });
+      await recordStat(game.id, 'stl', undefined, { id: 'first', at: T0 });
+      expect((await getGameEvents(game.id)).map((e) => e.id)).toEqual(['first', 'second', 'third']);
+      expect((await undoLastStat(game.id))?.id).toBe('third');
+    });
+
+    it('moves a tap time another stat of the game has to the next free millisecond', async () => {
+      const game = await newGame();
+      const other = await newGame({ opponent: 'Roosevelt' });
+      await recordStat(game.id, 'ast', undefined, { at: T0 });
+      await recordStat(game.id, 'ast', undefined, { at: T0 + 1 });
+      await recordStat(other.id, 'ast', undefined, { at: T0 + 2 });
+      const stat = await recordStat(game.id, 'stl', undefined, { id: 'late', at: T0 });
+      expect(stat.createdAt).toBe(T0 + 2);
+      expect((await getGameEvents(game.id)).map((e) => e.createdAt)).toEqual([T0, T0 + 1, T0 + 2]);
+    });
+
+    it('rejects an id another stat has, and a tap time that is not a timestamp', async () => {
+      const game = await newGame();
+      const other = await newGame({ opponent: 'Roosevelt' });
+      const stat = await recordStat(game.id, 'ast', undefined, { id: 'tap-1' });
+      await expect(recordStat(game.id, 'stl', undefined, { id: 'tap-1' })).rejects.toThrow(
+        TypeError,
+      );
+      await expect(recordStat(other.id, 'ast', undefined, { id: 'tap-1' })).rejects.toThrow(
+        TypeError,
+      );
+      for (const at of [-1, 1.5, Number.NaN, Infinity]) {
+        await expect(recordStat(game.id, 'ast', undefined, { at }), String(at)).rejects.toThrow(
+          TypeError,
+        );
+      }
+      await expect(recordStat(game.id, 'ast', undefined, { id: '' })).rejects.toThrow(TypeError);
+      expect(await getAllEvents()).toEqual([stat]);
+    });
+  });
 });
 
 describe('setStatLocation', () => {
