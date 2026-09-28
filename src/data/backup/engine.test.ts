@@ -1,33 +1,58 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createEngineHarness, TEST_START, type EngineHarness } from '@/test/backupHarness';
-import { buildDemoData, DEMO_LIVE_GAME_ID, demoGameId } from '../demo';
 import {
+  buildRealData,
+  createEngineHarness,
+  realGameId,
+  REAL_LIVE_GAME_ID,
+  TEST_START,
+  type EngineHarness,
+} from '@/test/backupHarness';
+import { isDemoGameId, seedDemoData } from '../demo';
+import * as repo from '../repo';
+import {
+  createGame,
   deleteGame,
   endGame,
   getLastChangeAt,
   getSettings,
+  listGames,
   recordStat,
+  savePlayer,
   updateSettings,
 } from '../repo';
 import { clearAllData, exportAll, importAll } from '../transfer';
+import { createBackupApi } from './api';
 import { generateBackupCode, parseBackupCode } from './code';
 import { observeDatabase, type BackupObservation } from './engine';
 import { deriveBackupKeys } from './keys';
-import { decryptSnapshot } from './snapshot';
-import { createBackupState, loadBackupState } from './state';
+import { decryptSnapshot, encryptSnapshot } from './snapshot';
+import { loadBackupState, turnOnBackupState } from './state';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
-const TODAY = '2026-09-27';
+const HOUR = 60 * MINUTE;
 
-async function seedDemo(options: { liveGame?: boolean } = {}) {
-  await importAll(buildDemoData({ today: TODAY, ...options }), 'replace');
+/** Ten final games of the parent's own (and a live one, if asked). */
+async function seedReal(options: { liveGame?: boolean } = {}) {
+  await importAll(buildRealData(options), 'replace');
 }
 
 /** Any data change that keeps the games (flips a setting). */
 async function change(h: EngineHarness) {
   await updateSettings({ shotChart: !(await getSettings()).shotChart });
   await h.notify();
+}
+
+/** A finished game of the parent's own, with `stats` stats. */
+async function playGame(n: number, stats = 12) {
+  const game = await createGame({
+    opponent: `Opponent ${n}`,
+    date: '2026-10-01',
+    periodFormat: 'quarters',
+  });
+  for (let i = 0; i < stats; i += 1) await recordStat(game.id, i % 2 ? 'dreb' : 'fg2_made');
+  await endGame(game.id, { teamScore: 40, opponentScore: 30 });
+  return game;
 }
 
 /** Lets promise callbacks (e.g. after an online event) run. */
@@ -47,10 +72,20 @@ async function turnOn(h: EngineHarness): Promise<string> {
   return code;
 }
 
+/** Another phone with the same code uploads its own snapshot. */
+async function uploadFromAnotherPhone(h: EngineHarness, code: string) {
+  const keys = await deriveBackupKeys(parseBackupCode(code));
+  const api = createBackupApi({ baseUrl: 'https://backup.hoop-stats.test', fetch: h.server.fetch });
+  const snapshot = await encryptSnapshot(buildRealData({ today: '2026-10-05' }), keys);
+  const uploaded = await api.upload(keys, snapshot);
+  if (!uploaded.ok) throw new Error(uploaded.error.kind);
+  return uploaded.value;
+}
+
 describe('backup scheduler', () => {
   it('does nothing while backup is off', async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     h.engine.start();
     await h.notify();
     await change(h);
@@ -61,7 +96,7 @@ describe('backup scheduler', () => {
 
   it('uploads an encrypted snapshot as soon as backup is turned on', async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     const code = await turnOn(h);
 
     expect(h.server.uploads).toHaveLength(1);
@@ -77,8 +112,8 @@ describe('backup scheduler', () => {
       enabledAt: TEST_START,
       lastSuccessAt: TEST_START,
       lastUploadedChangeAt: await getLastChangeAt(),
-      lastUploadedGameCount: 10,
-      lastUploadedEventCount: current.events.length,
+      backedUpGameIds: current.games.map((game) => game.id),
+      backedUpEventCount: current.events.length,
       lastVersion: upload?.version,
     });
     expect(await h.engine.getStatus()).toEqual({
@@ -92,8 +127,8 @@ describe('backup scheduler', () => {
 
   it('backs up changes made while the app was closed, shortly after it starts', async () => {
     const h = createEngineHarness();
-    await seedDemo();
-    await createBackupState({ code: generateBackupCode(), enabledAt: 1 });
+    await seedReal();
+    await turnOnBackupState(generateBackupCode(), 1);
     h.engine.start();
     await h.notify();
     await h.advance(3 * SECOND - 1);
@@ -111,7 +146,7 @@ describe('backup scheduler', () => {
 
   it('waits for 20 quiet seconds, but never more than a minute', async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     await turnOn(h);
 
     await change(h);
@@ -132,30 +167,39 @@ describe('backup scheduler', () => {
     expect((await loadBackupState())?.lastUploadedChangeAt).toBe(await getLastChangeAt());
   });
 
-  it('uploads at most once a minute during a live game, and soon after it ends', async () => {
+  it('during a live game, uploads in a quiet spell between taps (or every 5 minutes)', async () => {
     const h = createEngineHarness();
-    await seedDemo({ liveGame: true });
+    await seedReal({ liveGame: true });
     await turnOn(h);
 
-    // A minute after the first upload (at TEST_START), not 20 s after the tap.
-    await recordStat(DEMO_LIVE_GAME_ID, 'ast');
-    await h.notify();
-    await h.advance(MINUTE - 10 * SECOND - 1);
+    // A burst of taps, then 20 s without one: the upload goes in that quiet spell
+    // (and no sooner than a minute after the last upload, at TEST_START).
+    for (let i = 0; i < 5; i += 1) {
+      await recordStat(REAL_LIVE_GAME_ID, 'ast');
+      await h.notify();
+      await h.advance(5 * SECOND);
+    }
+    // Now at 35 s: the last tap was at 30 s, so the quiet spell ends at 50 s, but the
+    // minute since the last upload runs to 60 s.
+    await h.advance(25 * SECOND - 1);
     expect(h.server.putCount).toBe(1);
     await h.advance(1);
     expect(h.server.putCount).toBe(2);
 
-    // The next tap, 5 s later, waits for a minute after that upload.
-    await h.advance(5 * SECOND);
-    await recordStat(DEMO_LIVE_GAME_ID, 'dreb');
-    await h.notify();
-    await h.advance(MINUTE - 5 * SECOND - 1);
+    // Steady tapping, never 20 s apart: nothing goes up for 5 minutes, then it does.
+    const burstStart = h.clock.now();
+    while (h.clock.now() < burstStart + 5 * MINUTE - 10 * SECOND) {
+      await recordStat(REAL_LIVE_GAME_ID, 'dreb');
+      await h.notify();
+      await h.advance(10 * SECOND);
+    }
     expect(h.server.putCount).toBe(2);
-    await h.advance(1);
+    await h.advance(10 * SECOND);
     expect(h.server.putCount).toBe(3);
 
+    // The game ends: backed up 2 s later.
     await h.advance(30 * SECOND);
-    await endGame(DEMO_LIVE_GAME_ID, { teamScore: 50, opponentScore: 40 });
+    await endGame(REAL_LIVE_GAME_ID, { teamScore: 50, opponentScore: 40 });
     await h.notify();
     await h.advance(2 * SECOND - 1);
     expect(h.server.putCount).toBe(3);
@@ -165,7 +209,7 @@ describe('backup scheduler', () => {
 
   it('skips the upload when nothing changed', async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     await turnOn(h);
     h.environment.emit('visible');
     await flush();
@@ -178,7 +222,7 @@ describe('backup scheduler', () => {
 
   it('runs one upload at a time, and uploads changes made meanwhile afterwards', async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     await turnOn(h);
 
     const release = h.server.hold();
@@ -189,10 +233,11 @@ describe('backup scheduler', () => {
 
     await change(h);
     await h.clock.advance(5 * MINUTE);
-    expect(h.server.putCount).toBe(2);
+    expect(h.server.inFlight).toBe(1);
 
     release();
     await h.settle();
+    expect(h.server.putCount).toBe(2);
     await h.advance(0);
     expect(h.server.putCount).toBe(3);
     expect(h.server.maxInFlight).toBe(1);
@@ -201,7 +246,7 @@ describe('backup scheduler', () => {
 
   it('waits for a connection, then uploads as soon as it is back', async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     await turnOn(h);
 
     h.environment.emit('offline');
@@ -222,7 +267,7 @@ describe('backup scheduler', () => {
 
   it('backs off 1, 2, 5, 15 and 30 minutes after failures, then recovers', async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     await turnOn(h);
     for (let i = 0; i < 7; i += 1) {
       h.server.failNext({ status: 500, error: 'internal_error', method: 'PUT' });
@@ -257,33 +302,42 @@ describe('backup scheduler', () => {
     expect(state).not.toHaveProperty('nextAttemptAt');
   });
 
-  it('waits as long as the server asks (Retry-After)', async () => {
+  it('waits as long as the server asks (Retry-After), and says how long', async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     await turnOn(h);
 
     h.server.failNext({ status: 503, error: 'server_busy', retryAfterSeconds: 300, method: 'PUT' });
     h.server.failNext({
       status: 429,
       error: 'rate_limited',
-      retryAfterSeconds: 3600,
+      retryAfterSeconds: 20 * 3600,
       method: 'PUT',
     });
     await change(h);
     await h.advance(20 * SECOND);
     expect(h.server.putCount).toBe(2);
+    expect((await h.engine.getStatus()).lastError?.message).toBe(
+      'The backup server is busy. Hoop Stats will try again in 5 minutes.',
+    );
     await h.advance(5 * MINUTE - 1);
     expect(h.server.putCount).toBe(2);
     await h.advance(1);
     expect(h.server.putCount).toBe(3);
-    expect((await h.engine.getStatus()).nextAttemptAt).toBe(h.clock.now() + 60 * MINUTE);
-    await h.advance(60 * MINUTE);
+    expect(await h.engine.getStatus()).toMatchObject({
+      nextAttemptAt: h.clock.now() + 20 * HOUR,
+      lastError: {
+        kind: 'rate-limited',
+        message: 'The backup server is busy. Hoop Stats will try again in 20 hours.',
+      },
+    });
+    await h.advance(20 * HOUR);
     expect(h.server.putCount).toBe(4);
   });
 
   it("retries a lost connection as soon as there's signal, not after the backoff", async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     await turnOn(h);
 
     h.server.networkDown = true;
@@ -301,8 +355,37 @@ describe('backup scheduler', () => {
     );
     await flush();
     await h.advance(10 * SECOND);
-    expect(h.server.putCount).toBe(3);
+    expect(h.server.putCount).toBe(2);
     expect((await h.engine.getStatus()).state).toBe('idle');
+  });
+
+  it('sends waiting changes when the app is hidden, even during a backoff', async () => {
+    const h = createEngineHarness();
+    await seedReal({ liveGame: true });
+    await turnOn(h);
+
+    // A spotty connection: three failures in a row, a 5-minute backoff.
+    h.server.networkDown = true;
+    await recordStat(REAL_LIVE_GAME_ID, 'stl');
+    await h.notify();
+    await h.advance(MINUTE);
+    await h.advance(MINUTE);
+    await h.advance(2 * MINUTE);
+    expect(await loadBackupState()).toMatchObject({ failures: 3 });
+    h.server.networkDown = false;
+
+    // Signal is back; the parent records one more stat and locks the phone.
+    await recordStat(REAL_LIVE_GAME_ID, 'ast');
+    await h.notify();
+    const puts = h.server.putCount;
+    h.environment.emit('hidden');
+    await vi.waitFor(async () =>
+      expect(await loadBackupState()).not.toHaveProperty('nextAttemptAt'),
+    );
+    await flush();
+    await h.advance(0);
+    expect(h.server.putCount).toBe(puts + 1);
+    expect((await loadBackupState())?.lastUploadedChangeAt).toBe(await getLastChangeAt());
   });
 
   it.each([
@@ -311,7 +394,7 @@ describe('backup scheduler', () => {
     [413, 'payload_too_large', 'too-large', 'too big for cloud backup'],
   ])('stops after a %i until the parent acts', async (status, error, paused, message) => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     await turnOn(h);
 
     h.server.failNext({ status, error, method: 'PUT' });
@@ -323,7 +406,7 @@ describe('backup scheduler', () => {
     expect(status_.lastError?.message).toContain(message);
 
     await change(h);
-    await h.advance(2 * 60 * MINUTE);
+    await h.advance(2 * HOUR);
     expect(h.server.putCount).toBe(2);
 
     // "Back up now" tries again, and a success resumes automatic backup.
@@ -334,7 +417,7 @@ describe('backup scheduler', () => {
 
   it("doesn't send a snapshot bigger than the server takes", async () => {
     const h = createEngineHarness({ maxUploadBytes: 100 });
-    await seedDemo();
+    await seedReal();
     await h.engine.enable();
     await h.settle();
     expect(h.server.putCount).toBe(0);
@@ -347,11 +430,33 @@ describe('backup scheduler', () => {
     });
   });
 
+  it("blames the phone, not the server, when it can't encrypt", async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const encrypt = vi.spyOn(crypto.subtle, 'encrypt').mockRejectedValue(new Error('No crypto'));
+    await h.engine.enable();
+    await h.settle();
+    encrypt.mockRestore();
+    expect(h.server.putCount).toBe(0);
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'error',
+      nextAttemptAt: TEST_START + MINUTE,
+      lastError: {
+        kind: 'unexpected',
+        message:
+          'Something went wrong on this phone while backing up. Your stats are safe, and Hoop Stats will try again soon.',
+      },
+    });
+  });
+
   it('keeps retrying, with a clear message, while the server is full', async () => {
     const h = createEngineHarness();
-    await seedDemo();
+    await seedReal();
     h.server.failNext({ status: 507, error: 'account_limit_reached', method: 'PUT' });
-    await turnOn(h);
+    await h.engine.enable();
+    await h.settle();
+    h.engine.start();
+    await h.notify();
     expect(await h.engine.getStatus()).toMatchObject({
       state: 'error',
       nextAttemptAt: TEST_START + MINUTE,
@@ -362,145 +467,9 @@ describe('backup scheduler', () => {
     expect((await h.engine.getStatus()).state).toBe('idle');
   });
 
-  it('never lets much less data replace the last backup without asking (shrink guard)', async () => {
-    const h = createEngineHarness();
-    await seedDemo();
-    await turnOn(h);
-
-    await clearAllData();
-    await h.notify();
-    await h.advance(MINUTE);
-    expect(h.server.putCount).toBe(1);
-    expect(await h.engine.getStatus()).toMatchObject({
-      state: 'paused-shrink',
-      shrink: { backedUpGames: 10, currentGames: 0 },
-      lastError: {
-        kind: 'shrink',
-        message:
-          'This phone has much less data than your last backup, so automatic backup is paused to keep that backup safe.',
-      },
-    });
-
-    // Still far too little: still nothing goes up, even when asked without force.
-    await change(h);
-    await h.advance(MINUTE);
-    expect(h.server.putCount).toBe(1);
-    const refused = await h.engine.backUpNow();
-    expect(!refused.ok && refused.error.kind).toBe('shrink');
-    expect(h.server.putCount).toBe(1);
-
-    // "Back up anyway": the smaller data becomes the new baseline.
-    const forced = await h.engine.backUpNow({ force: true });
-    expect(forced).toMatchObject({ ok: true, value: { games: 0 } });
-    expect(await loadBackupState()).toMatchObject({ lastUploadedGameCount: 0 });
-    expect(await loadBackupState()).not.toHaveProperty('paused');
-    expect((await h.engine.getStatus()).state).toBe('idle');
-  });
-
-  it('resumes by itself once the data is back (e.g. after a restore)', async () => {
-    const h = createEngineHarness();
-    await seedDemo();
-    await turnOn(h);
-    await clearAllData();
-    await h.notify();
-    await h.advance(MINUTE);
-    expect((await h.engine.getStatus()).state).toBe('paused-shrink');
-
-    await seedDemo();
-    await h.notify();
-    await h.advance(MINUTE);
-    expect(h.server.putCount).toBe(2);
-    expect((await h.engine.getStatus()).state).toBe('idle');
-  });
-
-  it('holds back a drop of half the games or more (3 or more games)', async () => {
-    const h = createEngineHarness();
-    await seedDemo();
-    await turnOn(h);
-
-    await deleteGame(demoGameId(1));
-    await deleteGame(demoGameId(2));
-    await h.notify();
-    await h.advance(MINUTE);
-    expect(h.server.putCount).toBe(2);
-
-    for (const n of [3, 4, 5, 6]) await deleteGame(demoGameId(n));
-    await h.notify();
-    await h.advance(MINUTE);
-    expect(h.server.putCount).toBe(2);
-    expect(await h.engine.getStatus()).toMatchObject({
-      state: 'paused-shrink',
-      shrink: { backedUpGames: 8, currentGames: 4 },
-    });
-  });
-
-  it('sends waiting changes right away when the app is hidden', async () => {
-    const h = createEngineHarness();
-    await seedDemo({ liveGame: true });
-    await turnOn(h);
-    await h.advance(5 * SECOND);
-    await recordStat(DEMO_LIVE_GAME_ID, 'stl');
-    await h.notify();
-    h.environment.emit('hidden');
-    await h.advance(0);
-    expect(h.server.putCount).toBe(2);
-  });
-
-  it('turning backup off stops everything, even an upload in flight', async () => {
-    const h = createEngineHarness();
-    await seedDemo();
-    await turnOn(h);
-
-    const release = h.server.hold();
-    await change(h);
-    await h.clock.advance(20 * SECOND);
-    await vi.waitFor(() => expect(h.server.inFlight).toBe(1));
-    expect(await h.engine.disable()).toEqual({ ok: true, value: undefined });
-    release();
-    await h.settle();
-    expect(await loadBackupState()).toBeUndefined();
-    expect(h.server.uploads).toHaveLength(1);
-
-    await change(h);
-    await h.advance(60 * MINUTE);
-    expect(h.server.putCount).toBe(2);
-    expect(await h.engine.getStatus()).toMatchObject({ enabled: false, state: 'idle' });
-  });
-
-  it('deletes the cloud copy when turned off, but only with signal', async () => {
-    const h = createEngineHarness();
-    await seedDemo();
-    const code = await turnOn(h);
-    expect(h.server.accounts.size).toBe(1);
-
-    h.environment.emit('offline');
-    expect(await h.engine.disable({ deleteCloudCopy: true })).toEqual({
-      ok: false,
-      error: {
-        kind: 'offline',
-        message:
-          "No internet connection, so your cloud backup wasn't deleted. Try again when you're online.",
-      },
-    });
-    expect(await h.engine.getCode()).toBe(code);
-
-    h.environment.emit('online');
-    expect(await h.engine.disable({ deleteCloudCopy: true })).toEqual({
-      ok: true,
-      value: undefined,
-    });
-    expect(h.server.accounts.size).toBe(0);
-    expect(await h.engine.getCode()).toBeUndefined();
-
-    // Nothing on the server under a code (401) counts as deleted too.
-    await h.engine.enable();
-    h.server.accounts.clear();
-    expect((await h.engine.disable({ deleteCloudCopy: true })).ok).toBe(true);
-  });
-
   it('starts once, and stops cleanly', async () => {
     const h = createEngineHarness();
-    await createBackupState({ code: generateBackupCode(), enabledAt: 1 });
+    await turnOnBackupState(generateBackupCode(), 1);
     h.engine.start();
     h.engine.start();
     await h.notify();
@@ -526,6 +495,464 @@ describe('backup scheduler', () => {
   });
 });
 
+describe('shrink guard', () => {
+  it('never lets an erased phone replace the backup without asking', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+
+    await clearAllData();
+    await h.notify();
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(1);
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'paused-shrink',
+      shrink: { backedUpGames: 10, missingGames: 10 },
+      lastError: {
+        kind: 'shrink',
+        message:
+          "Some games in your last backup aren't on this phone, so automatic backup is paused to keep that backup safe.",
+      },
+    });
+
+    // A change that doesn't bring the games back: still nothing goes up, even when
+    // asked without force, and nothing is sent to the server to check.
+    const requests = h.server.requests.length;
+    await change(h);
+    await h.advance(MINUTE);
+    expect(h.server.requests).toHaveLength(requests);
+    const refused = await h.engine.backUpNow();
+    expect(!refused.ok && refused.error.kind).toBe('shrink');
+    expect(h.server.putCount).toBe(1);
+
+    // "Back up anyway": the erased data becomes the new baseline.
+    const forced = await h.engine.backUpNow({ force: true });
+    expect(forced).toMatchObject({ ok: true, value: { games: 0 } });
+    expect(await loadBackupState()).toMatchObject({ backedUpGameIds: [] });
+    expect(await loadBackupState()).not.toHaveProperty('paused');
+    expect((await h.engine.getStatus()).state).toBe('idle');
+  });
+
+  it("doesn't count new games in place of erased ones", async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    await clearAllData();
+    await h.notify();
+    await h.advance(MINUTE);
+
+    await savePlayer({ name: 'Maya' });
+    for (let n = 1; n <= 12; n += 1) {
+      await playGame(n);
+      await h.notify();
+      await h.advance(HOUR);
+    }
+    expect(h.server.putCount).toBe(1);
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'paused-shrink',
+      shrink: { backedUpGames: 10, missingGames: 10 },
+    });
+  });
+
+  it('resumes by itself once the games are back (e.g. after a restore)', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    await clearAllData();
+    await h.notify();
+    await h.advance(MINUTE);
+    expect((await h.engine.getStatus()).state).toBe('paused-shrink');
+
+    await seedReal();
+    await h.notify();
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(2);
+    expect((await h.engine.getStatus()).state).toBe('idle');
+  });
+
+  it('holds back losing half the games (3 or more), not fewer', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+
+    await deleteGame(realGameId(1));
+    await deleteGame(realGameId(2));
+    await h.notify();
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(2);
+
+    for (const n of [3, 4, 5, 6]) await deleteGame(realGameId(n));
+    await h.notify();
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(2);
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'paused-shrink',
+      shrink: { backedUpGames: 8, missingGames: 4 },
+    });
+  });
+
+  it('lets a new season grow past the old one while its games are still there', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    for (let n = 1; n <= 12; n += 1) {
+      await playGame(n);
+      await h.notify();
+      await h.advance(HOUR);
+    }
+    expect(h.server.putCount).toBe(13);
+    expect((await loadBackupState())?.backedUpGameIds).toHaveLength(22);
+  });
+
+  it('ignores sample games: removing them never pauses the backup', async () => {
+    const h = createEngineHarness();
+    // "Try it with sample data", then cloud backup is turned on.
+    await seedDemoData({ force: true, keepSettings: true });
+    await turnOn(h);
+    expect(await loadBackupState()).toMatchObject({ backedUpGameIds: [], backedUpEventCount: 0 });
+
+    // "Remove sample games", then five games of the parent's own.
+    for (const game of await listGames()) if (isDemoGameId(game.id)) await deleteGame(game.id);
+    await h.notify();
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(2);
+    await savePlayer({ name: 'Maya', jerseyNumber: '4' });
+    for (let n = 1; n <= 5; n += 1) {
+      await playGame(n);
+      await h.notify();
+      await h.advance(HOUR);
+    }
+    expect(h.server.putCount).toBe(7);
+    expect(await h.engine.getStatus()).toMatchObject({ state: 'idle', pendingChanges: false });
+  });
+
+  it("won't let sample data replace the backup of an erased phone", async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    await clearAllData();
+    await h.notify();
+    await h.advance(MINUTE);
+    expect((await h.engine.getStatus()).state).toBe('paused-shrink');
+
+    // The phone looks new again, so Settings offers "Try it with sample data".
+    await seedDemoData({ force: true, keepSettings: true });
+    await h.notify();
+    await h.advance(HOUR);
+    expect(h.server.putCount).toBe(1);
+    expect((await h.engine.getStatus()).state).toBe('paused-shrink');
+    const keys = await deriveBackupKeys(parseBackupCode(code));
+    const latest = await decryptSnapshot(h.server.uploads.at(-1)!.bytes, keys);
+    expect(latest.games.some((game) => isDemoGameId(game.id))).toBe(false);
+  });
+});
+
+describe('another phone with the same code', () => {
+  it('pauses instead of replacing its newer backup, until forced', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    const theirs = await uploadFromAnotherPhone(h, code);
+
+    await change(h);
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(2);
+    expect(h.server.uploads.at(-1)?.version).toBe(theirs.version);
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'paused-other-device',
+      otherDevice: { backedUpAt: theirs.createdAt },
+      lastError: {
+        kind: 'other-device',
+        message:
+          'Another phone has backed up with this backup code since this phone did, so this phone stopped backing up to keep from replacing that backup.',
+      },
+    });
+
+    // Automatic backup stays paused; asking without force gets the same answer.
+    await change(h);
+    await h.advance(HOUR);
+    expect(h.server.putCount).toBe(2);
+    const refused = await h.engine.backUpNow();
+    expect(!refused.ok && refused.error.kind).toBe('other-device');
+
+    const forced = await h.engine.backUpNow({ force: true });
+    expect(forced.ok).toBe(true);
+    expect(h.server.putCount).toBe(3);
+    expect((await h.engine.getStatus()).state).toBe('idle');
+    // From then on, this phone's own uploads pass the check again.
+    await change(h);
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(4);
+  });
+
+  it('stops (and never re-creates it) when the cloud copy was deleted elsewhere', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    const keys = await deriveBackupKeys(parseBackupCode(code));
+    const api = createBackupApi({
+      baseUrl: 'https://backup.hoop-stats.test',
+      fetch: h.server.fetch,
+    });
+    expect((await api.deleteAll(keys)).ok).toBe(true);
+
+    await change(h);
+    await h.advance(MINUTE);
+    expect(h.server.accounts.size).toBe(0);
+    expect(h.server.putCount).toBe(1);
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'needs-attention',
+      lastError: {
+        kind: 'account-deleted',
+        message: expect.stringContaining('was deleted') as string,
+      },
+    });
+    await change(h);
+    await h.advance(HOUR);
+    expect(h.server.accounts.size).toBe(0);
+
+    // The parent can start a new cloud copy on purpose.
+    expect((await h.engine.backUpNow()).ok).toBe(true);
+    expect(h.server.accounts.size).toBe(1);
+  });
+
+  it("knows its own upload whose answer was lost from another phone's", async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+
+    h.server.loseNextAnswer = 'PUT';
+    await change(h);
+    await h.advance(MINUTE);
+    expect(h.server.uploads).toHaveLength(2);
+    expect(await loadBackupState()).toMatchObject({
+      lastError: { kind: 'network' },
+      pendingUploadSize: h.server.uploads[1]?.bytes.byteLength,
+    });
+
+    h.environment.emit('visible');
+    await vi.waitFor(async () =>
+      expect(await loadBackupState()).not.toHaveProperty('nextAttemptAt'),
+    );
+    await flush();
+    await h.advance(10 * SECOND);
+    expect(h.server.putCount).toBe(3);
+    expect(await h.engine.getStatus()).toMatchObject({ state: 'idle', pendingChanges: false });
+    expect(await loadBackupState()).not.toHaveProperty('pendingUploadSize');
+  });
+});
+
+describe('turning backup off and on', () => {
+  it('keeps the code, so turning on again reuses it and its account', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+
+    for (let cycle = 0; cycle < 4; cycle += 1) {
+      expect(await h.engine.disable()).toEqual({ ok: true, value: undefined });
+      expect(await h.engine.getStatus()).toMatchObject({ enabled: false });
+      expect(await h.engine.getCode()).toBe(code);
+      await change(h);
+      await h.advance(HOUR);
+      expect(await h.engine.enable()).toBe(code);
+      await h.settle();
+    }
+    // One account, and each "turn on" backed up the changes made while off.
+    expect(h.server.accounts.size).toBe(1);
+    expect(h.server.putCount).toBe(5);
+    expect(await h.engine.getStatus()).toMatchObject({ enabled: true, state: 'idle' });
+  });
+
+  it('forgets the code only after deleting the cloud copy, which needs signal', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+
+    h.environment.emit('offline');
+    expect(await h.engine.disable({ deleteCloudCopy: true })).toEqual({
+      ok: false,
+      error: {
+        kind: 'offline',
+        message:
+          "No internet connection, so your cloud backup wasn't deleted. Try again when you're online.",
+      },
+    });
+    expect(await h.engine.getStatus()).toMatchObject({ enabled: true });
+
+    h.environment.emit('online');
+    expect(await h.engine.disable({ deleteCloudCopy: true })).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(h.server.accounts.size).toBe(0);
+    expect(await h.engine.getCode()).toBeUndefined();
+    expect(await h.engine.enable()).not.toBe(code);
+
+    // A code kept while off can still have its cloud copy deleted.
+    await h.settle();
+    await h.engine.disable();
+    expect((await h.engine.disable({ deleteCloudCopy: true })).ok).toBe(true);
+    expect(h.server.accounts.size).toBe(0);
+    expect(await h.engine.getCode()).toBeUndefined();
+
+    // Nothing on the server under a code (401) counts as deleted too.
+    await h.engine.enable();
+    h.server.accounts.clear();
+    expect((await h.engine.disable({ deleteCloudCopy: true })).ok).toBe(true);
+  });
+
+  it('stops an upload in flight', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+
+    const release = h.server.hold();
+    await change(h);
+    await h.clock.advance(20 * SECOND);
+    await vi.waitFor(() => expect(h.server.inFlight).toBe(1));
+    expect(await h.engine.disable()).toEqual({ ok: true, value: undefined });
+    release();
+    await h.settle();
+    expect(await loadBackupState()).toMatchObject({ disabledAt: expect.any(Number) as number });
+    expect(h.server.uploads).toHaveLength(1);
+
+    await change(h);
+    await h.advance(HOUR);
+    expect(h.server.uploads).toHaveLength(1);
+    expect(await h.engine.getStatus()).toMatchObject({ enabled: false, state: 'idle' });
+  });
+
+  it("stops an upload that hasn't reached the network yet", async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+
+    // Hold the attempt while it derives its keys (a cold cache, as after a relaunch).
+    (h.engine as unknown as { keyCache: Map<string, unknown> }).keyCache.clear();
+    const importKey = crypto.subtle.importKey.bind(crypto.subtle) as (
+      ...args: unknown[]
+    ) => Promise<CryptoKey>;
+    let reached!: () => void;
+    const inKeys = new Promise<void>((resolve) => (reached = resolve));
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const spy = vi.spyOn(crypto.subtle, 'importKey').mockImplementation(async (...args) => {
+      if (args[2] === 'HKDF') {
+        reached();
+        await gate;
+      }
+      return importKey(...args);
+    });
+    try {
+      const upload = h.engine.backUpNow();
+      await inKeys;
+      expect((await h.engine.disable()).ok).toBe(true);
+      open();
+      expect(await upload).toMatchObject({ ok: false, error: { kind: 'aborted' } });
+      await h.settle();
+    } finally {
+      spy.mockRestore();
+    }
+    // Nothing went out after the first upload (its HEAD check and PUT).
+    expect(h.server.requests.map(({ method }) => method)).toEqual(['HEAD', 'PUT']);
+  });
+
+  it('keeps waiting changes when "turn off and delete" fails', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+
+    const release = h.server.hold();
+    await change(h);
+    await h.clock.advance(20 * SECOND);
+    await vi.waitFor(() => expect(h.server.inFlight).toBe(1));
+    const disabling = h.engine.disable({ deleteCloudCopy: true });
+    await vi.waitFor(() => expect(h.server.requests.at(-1)?.method).toBe('DELETE'));
+    h.server.networkDown = true;
+    release();
+    expect((await disabling).ok).toBe(false);
+    h.server.networkDown = false;
+    await h.settle();
+
+    // Backup is still on and still knows about the change: hiding the app sends it.
+    expect(await h.engine.getStatus()).toMatchObject({ enabled: true, pendingChanges: true });
+    h.environment.emit('hidden');
+    await flush();
+    await h.advance(0);
+    expect(h.server.putCount).toBe(2);
+    expect((await h.engine.getStatus()).pendingChanges).toBe(false);
+  });
+
+  it('answers "back up now" during a turn-off by what happened', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+
+    // The delete fails (no signal to the server), so backup stays on and it backs up.
+    h.server.failNext({ status: 503, error: 'server_busy', method: 'DELETE' });
+    const disabling = h.engine.disable({ deleteCloudCopy: true });
+    const upload = h.engine.backUpNow();
+    expect((await disabling).ok).toBe(false);
+    expect((await upload).ok).toBe(true);
+
+    // Turned off for real: backing up now says backup is off.
+    const turningOff = h.engine.disable();
+    const refused = h.engine.backUpNow();
+    expect((await turningOff).ok).toBe(true);
+    expect(await refused).toMatchObject({ ok: false, error: { kind: 'not-enabled' } });
+  });
+});
+
+describe('storage failures', () => {
+  it('resolve to a result instead of throwing', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    const state = await import('./state');
+
+    const turnOff = vi.spyOn(state, 'turnOffBackupState').mockRejectedValueOnce(new Error('disk'));
+    expect(await h.engine.disable()).toEqual({
+      ok: false,
+      error: {
+        kind: 'unexpected',
+        message: 'Something went wrong on this phone, so cloud backup is still on. Try again.',
+      },
+    });
+    turnOff.mockRestore();
+    expect(await h.engine.getStatus()).toMatchObject({ enabled: true });
+
+    const fetched = await h.engine.fetchBackup(code);
+    if (!fetched.ok) throw new Error(fetched.error.message);
+    await h.engine.disable();
+    const replace = vi.spyOn(state, 'replaceBackupState').mockRejectedValueOnce(new Error('disk'));
+    expect(await h.engine.enableWithCode(code, { backup: fetched.value })).toEqual({
+      ok: false,
+      error: { kind: 'unexpected', message: 'Something went wrong on this phone. Try again.' },
+    });
+    replace.mockRestore();
+    expect(await h.engine.getStatus()).toMatchObject({ enabled: false });
+  });
+
+  it('recover from a failed first read on the next visible or online event', async () => {
+    await seedReal();
+    await turnOnBackupState(generateBackupCode(), 1);
+    const liveGame = vi.spyOn(repo, 'getLiveGame').mockRejectedValueOnce(new Error('IDB hiccup'));
+    const h = createEngineHarness({ observe: observeDatabase });
+    try {
+      h.engine.start();
+      await vi.waitFor(() => expect(liveGame).toHaveBeenCalled());
+      await flush();
+      h.environment.emit('visible');
+      await flush();
+      await h.advance(HOUR);
+      expect(h.server.putCount).toBe(1);
+      expect((await h.engine.getStatus()).pendingChanges).toBe(false);
+    } finally {
+      h.engine.stop();
+    }
+  });
+});
+
 describe('observeDatabase', () => {
   it('reports data changes, the live game and the backup state, from any writer', async () => {
     const seen: BackupObservation[] = [];
@@ -534,14 +961,33 @@ describe('observeDatabase', () => {
       await vi.waitFor(() => expect(seen).toHaveLength(1));
       expect(seen[0]).toEqual({ lastChangeAt: undefined, liveGame: false, state: undefined });
 
-      await seedDemo({ liveGame: true });
-      await vi.waitFor(() => expect(seen.at(-1)?.liveGame).toBe(true));
       const code = generateBackupCode();
-      await createBackupState({ code, enabledAt: 1 });
+      await turnOnBackupState(code, 1);
       await vi.waitFor(() => expect(seen.at(-1)?.state).toEqual({ code, enabledAt: 1 }));
-      await endGame(DEMO_LIVE_GAME_ID);
+      await seedReal({ liveGame: true });
+      await vi.waitFor(() => expect(seen.at(-1)?.liveGame).toBe(true));
+      await endGame(REAL_LIVE_GAME_ID);
       await vi.waitFor(() => expect(seen.at(-1)?.liveGame).toBe(false));
       expect(seen.at(-1)?.lastChangeAt).toBe(await getLastChangeAt());
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('reads only the backup state after writes while backup is off', async () => {
+    const seen: BackupObservation[] = [];
+    const unsubscribe = observeDatabase((observation) => seen.push(observation));
+    try {
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      const lastChange = vi.spyOn(repo, 'getLastChangeAt');
+      const liveGame = vi.spyOn(repo, 'getLiveGame');
+      await seedReal({ liveGame: true });
+      await recordStat(REAL_LIVE_GAME_ID, 'ast');
+      await vi.waitFor(() => expect(seen.length).toBeGreaterThan(1));
+      await flush();
+      expect(lastChange).not.toHaveBeenCalled();
+      expect(liveGame).not.toHaveBeenCalled();
+      expect(seen.at(-1)).toEqual({ lastChangeAt: undefined, liveGame: false, state: undefined });
     } finally {
       unsubscribe();
     }

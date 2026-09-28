@@ -1,14 +1,16 @@
 /**
  * The cloud backup's state on this phone: one record in the `meta` table, under
- * `BACKUP_STATE_KEY`. No record means cloud backup is off.
+ * `BACKUP_STATE_KEY`. No record means this phone has no backup code; a record with
+ * `disabledAt` means backup is off but the code is kept, so turning it back on reuses
+ * it (and its account on the server) instead of making a new one.
  *
  * It is device-local on purpose:
  * - exportAll() never includes it, so the backup code (the secret) is never inside a
  *   backup file or a cloud snapshot;
  * - clearAllData() ("Erase all data") keeps it, so erasing the stats neither turns
- *   backup off nor loses the code. The next check then finds far less data than the
- *   last upload and pauses (the shrink guard), so an erased phone can't silently
- *   replace the good cloud copy;
+ *   backup off nor loses the code. The next check then finds the backed-up games gone
+ *   and pauses (the shrink guard), so an erased phone can't silently replace the good
+ *   cloud copy;
  * - writing it never bumps `meta.lastChangeAt`: it isn't stats data, and a bump would
  *   make every upload schedule another one.
  *
@@ -22,12 +24,20 @@ export const BACKUP_STATE_KEY = 'cloudBackup';
 
 /**
  * Why automatic backup stopped until the parent does something:
- * - 'shrink': this phone has far less data than the last upload (see isMuchSmaller);
+ * - 'shrink': the phone no longer has games the backup has (see shrinkCheck);
+ * - 'other-device': another phone uploaded under this code since this one did;
  * - 'code-rejected': the server refused the code's token (401);
- * - 'cloud-deleted': the cloud copy was deleted during an upload (409);
+ * - 'cloud-deleted': the cloud copy was deleted (409 on an upload, or 401 once this
+ *   phone had backed up);
  * - 'too-large': the snapshot is over the server's size limit (413).
  */
-export const PAUSE_REASONS = ['shrink', 'code-rejected', 'cloud-deleted', 'too-large'] as const;
+export const PAUSE_REASONS = [
+  'shrink',
+  'other-device',
+  'code-rejected',
+  'cloud-deleted',
+  'too-large',
+] as const;
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 
 export interface BackupErrorInfo {
@@ -40,28 +50,46 @@ export interface BackupErrorInfo {
 }
 
 export interface ShrinkInfo {
-  /** Games in the last upload. */
+  /** Real (not sample) games in the backup. */
   backedUpGames: number;
-  /** Games on the phone when the upload was held back. */
-  currentGames: number;
-  /** `meta.lastChangeAt` at that point, so unchanged data isn't checked again. */
+  /** How many of them the phone no longer has. */
+  missingGames: number;
+  /** `meta.lastChangeAt` when checked, so unchanged data isn't checked again. */
   changeAt?: number;
+}
+
+export interface OtherDeviceInfo {
+  /** The newest version on the server, uploaded by another phone. */
+  version: string;
+  /** When it was uploaded (epoch ms, server clock). */
+  createdAt?: number;
 }
 
 export interface StoredBackupState {
   /** The backup code, formatted ('7K3M-9QXA-…'). The secret: never log or export it. */
   code: string;
-  /** When backup was turned on (with this code) on this phone. */
+  /** When backup was (last) turned on with this code on this phone. */
   enabledAt: number;
+  /** Set while backup is off; the code is kept for when it's turned back on. */
+  disabledAt?: number;
   /** When the last upload succeeded. */
   lastSuccessAt?: number;
   /** `meta.lastChangeAt` read just before the last successful upload's export. */
   lastUploadedChangeAt?: number;
-  /** Games and stats in the last successful upload (or the restored cloud copy). */
-  lastUploadedGameCount?: number;
-  lastUploadedEventCount?: number;
-  /** The server's id for the last upload. */
+  /**
+   * Ids of the real (not sample) games in the last successful upload, or in the backup
+   * restored from: the shrink guard's baseline.
+   */
+  backedUpGameIds?: string[];
+  /** Stats of those games in it. */
+  backedUpEventCount?: number;
+  /** The server's id for the last version this phone uploaded (or restored from). */
   lastVersion?: string;
+  /**
+   * Size of an upload whose answer never came (lost connection, app suspended). If the
+   * server's newest version has exactly this size, it's ours, not another phone's.
+   */
+  pendingUploadSize?: number;
   /** The last failure; cleared by a successful upload. */
   lastError?: BackupErrorInfo;
   /** Failed attempts in a row, for the backoff. */
@@ -72,11 +100,14 @@ export interface StoredBackupState {
   paused?: PauseReason;
   /** Details for `paused: 'shrink'`. */
   shrink?: ShrinkInfo;
+  /** Details for `paused: 'other-device'`. */
+  otherDevice?: OtherDeviceInfo;
 }
 
-/** The fields a patch can change; `code` and `enabledAt` identify the backup. */
+/** The fields a patch can change; `code`, `enabledAt` and `disabledAt` identify the backup. */
 export type BackupStatePatch = {
-  [K in Exclude<keyof StoredBackupState, 'code' | 'enabledAt'>]?: StoredBackupState[K] | null;
+  [K in Exclude<keyof StoredBackupState, 'code' | 'enabledAt' | 'disabledAt'>]?:
+    StoredBackupState[K] | null;
 };
 
 /** Which backup a write belongs to: a write for a backup that was since turned off is dropped. */
@@ -84,6 +115,16 @@ export interface BackupGeneration {
   code: string;
   enabledAt: number;
 }
+
+/** Fields that only mean something while backup is on (cleared when it's turned off or on). */
+const TRANSIENT_FIELDS = [
+  'lastError',
+  'failures',
+  'nextAttemptAt',
+  'paused',
+  'shrink',
+  'otherDevice',
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -97,23 +138,6 @@ function isCount(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
-function readErrorInfo(value: unknown): BackupErrorInfo | undefined {
-  if (!isRecord(value)) return undefined;
-  const { kind, message, at } = value;
-  return typeof kind === 'string' && typeof message === 'string' && isTime(at)
-    ? { kind, message, at }
-    : undefined;
-}
-
-function readShrink(value: unknown): ShrinkInfo | undefined {
-  if (!isRecord(value)) return undefined;
-  const { backedUpGames, currentGames, changeAt } = value;
-  if (!isCount(backedUpGames) || !isCount(currentGames)) return undefined;
-  return isTime(changeAt)
-    ? { backedUpGames, currentGames, changeAt }
-    : { backedUpGames, currentGames };
-}
-
 function isBackupCode(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try {
@@ -124,10 +148,38 @@ function isBackupCode(value: unknown): value is string {
   }
 }
 
+function readErrorInfo(value: unknown): BackupErrorInfo | undefined {
+  if (!isRecord(value)) return undefined;
+  const { kind, message, at } = value;
+  return typeof kind === 'string' && typeof message === 'string' && isTime(at)
+    ? { kind, message, at }
+    : undefined;
+}
+
+function readShrink(value: unknown): ShrinkInfo | undefined {
+  if (!isRecord(value)) return undefined;
+  const { backedUpGames, missingGames, changeAt } = value;
+  if (!isCount(backedUpGames) || !isCount(missingGames)) return undefined;
+  return isTime(changeAt)
+    ? { backedUpGames, missingGames, changeAt }
+    : { backedUpGames, missingGames };
+}
+
+function readOtherDevice(value: unknown): OtherDeviceInfo | undefined {
+  if (!isRecord(value) || typeof value.version !== 'string') return undefined;
+  return isTime(value.createdAt)
+    ? { version: value.version, createdAt: value.createdAt }
+    : { version: value.version };
+}
+
+function readGameIds(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((id) => typeof id === 'string') ? value : undefined;
+}
+
 /**
  * The stored state, field by field: an optional field that isn't valid is dropped
- * rather than turning backup off, so one bad value can't lose the code. Without a
- * valid code there's no backup to run (nobody could reach it), so that reads as off.
+ * rather than losing the backup, so one bad value can't lose the code. Without a
+ * valid code there's no backup to run (nobody could reach it), so that reads as none.
  */
 function readState(value: unknown): StoredBackupState | undefined {
   if (!isRecord(value)) return undefined;
@@ -135,14 +187,14 @@ function readState(value: unknown): StoredBackupState | undefined {
   if (!isBackupCode(code) || !isTime(enabledAt)) return undefined;
 
   const state: StoredBackupState = { code, enabledAt };
+  if (isTime(value.disabledAt)) state.disabledAt = value.disabledAt;
   if (isTime(value.lastSuccessAt)) state.lastSuccessAt = value.lastSuccessAt;
   if (isTime(value.lastUploadedChangeAt)) state.lastUploadedChangeAt = value.lastUploadedChangeAt;
-  if (isCount(value.lastUploadedGameCount))
-    state.lastUploadedGameCount = value.lastUploadedGameCount;
-  if (isCount(value.lastUploadedEventCount)) {
-    state.lastUploadedEventCount = value.lastUploadedEventCount;
-  }
+  const gameIds = readGameIds(value.backedUpGameIds);
+  if (gameIds) state.backedUpGameIds = gameIds;
+  if (isCount(value.backedUpEventCount)) state.backedUpEventCount = value.backedUpEventCount;
   if (typeof value.lastVersion === 'string') state.lastVersion = value.lastVersion;
+  if (isCount(value.pendingUploadSize)) state.pendingUploadSize = value.pendingUploadSize;
   const lastError = readErrorInfo(value.lastError);
   if (lastError) state.lastError = lastError;
   if (isCount(value.failures)) state.failures = value.failures;
@@ -152,6 +204,8 @@ function readState(value: unknown): StoredBackupState | undefined {
   }
   const shrink = readShrink(value.shrink);
   if (shrink) state.shrink = shrink;
+  const otherDevice = readOtherDevice(value.otherDevice);
+  if (otherDevice) state.otherDevice = otherDevice;
   return state;
 }
 
@@ -160,6 +214,12 @@ function compact(state: StoredBackupState): StoredBackupState {
   return Object.fromEntries(
     Object.entries(state).filter(([, value]) => value !== undefined),
   ) as unknown as StoredBackupState;
+}
+
+function withoutTransient(state: StoredBackupState): StoredBackupState {
+  const next: Record<string, unknown> = { ...state };
+  for (const field of TRANSIENT_FIELDS) delete next[field];
+  return next as unknown as StoredBackupState;
 }
 
 async function getState(): Promise<StoredBackupState | undefined> {
@@ -174,20 +234,30 @@ function sameGeneration(state: StoredBackupState | undefined, generation: Backup
   return state?.code === generation.code && state.enabledAt === generation.enabledAt;
 }
 
-/** The backup's state, or undefined when cloud backup is off. */
+/** Whether cloud backup is on (a code, not turned off). */
+export function isBackupOn(state: StoredBackupState | undefined): state is StoredBackupState {
+  return state !== undefined && state.disabledAt === undefined;
+}
+
+/** The stored state (on, or off with its code kept), or undefined when there's no code. */
 export function loadBackupState(): Promise<StoredBackupState | undefined> {
   return getState();
 }
 
 /**
- * Turns backup on with `initial` unless it's already on. Resolves to what is stored:
- * `initial`, or the existing state (so two taps on "Turn on" can't make two codes).
+ * Turns backup on and resolves to what's stored: the state as it is if backup is on
+ * already (so two taps on "Turn on" can't make two codes), the kept code if it was
+ * turned off, or else a new state with `newCode`.
  */
-export function createBackupState(initial: StoredBackupState): Promise<StoredBackupState> {
+export function turnOnBackupState(newCode: string, now: number): Promise<StoredBackupState> {
   return db.transaction('rw', db.meta, async () => {
     const existing = await getState();
-    if (existing) return existing;
-    const state = compact(initial);
+    if (isBackupOn(existing)) return existing;
+    const state = compact(
+      existing
+        ? { ...withoutTransient(existing), enabledAt: now, disabledAt: undefined }
+        : { code: newCode, enabledAt: now },
+    );
     await putState(state);
     return state;
   });
@@ -203,9 +273,10 @@ export function replaceBackupState(state: StoredBackupState): Promise<StoredBack
 }
 
 /**
- * Applies `patch` (missing or undefined keeps a field, null clears it) if the stored
- * backup is still `generation`. Resolves to the new state, or undefined if backup was
- * turned off or switched to another code meanwhile (then nothing is written).
+ * Applies `patch` (missing or undefined keeps a field, null clears it) if backup is
+ * still on as `generation`. Resolves to the new state, or undefined if backup was
+ * turned off, turned on again or switched to another code meanwhile (then nothing is
+ * written).
  */
 export function updateBackupState(
   generation: BackupGeneration,
@@ -213,7 +284,7 @@ export function updateBackupState(
 ): Promise<StoredBackupState | undefined> {
   return db.transaction('rw', db.meta, async () => {
     const current = await getState();
-    if (!current || !sameGeneration(current, generation)) return undefined;
+    if (!isBackupOn(current) || !sameGeneration(current, generation)) return undefined;
     const next: Record<string, unknown> = { ...current };
     for (const [key, value] of Object.entries(patch)) {
       if (value === null) delete next[key];
@@ -226,7 +297,20 @@ export function updateBackupState(
 }
 
 /**
- * Turns backup off on this phone (forgets the code). With a generation, only if the
+ * Turns backup off but keeps the code (and what it knows about the backup), if backup
+ * is still on as `generation`. Resolves to whether it did.
+ */
+export function turnOffBackupState(generation: BackupGeneration, now: number): Promise<boolean> {
+  return db.transaction('rw', db.meta, async () => {
+    const current = await getState();
+    if (!isBackupOn(current) || !sameGeneration(current, generation)) return false;
+    await putState({ ...withoutTransient(current), disabledAt: now });
+    return true;
+  });
+}
+
+/**
+ * Forgets the code (after its cloud copy was deleted). With a generation, only if the
  * stored backup is still that one. Resolves to whether a record was removed.
  */
 export function clearBackupState(generation?: BackupGeneration): Promise<boolean> {

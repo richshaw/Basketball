@@ -1,7 +1,9 @@
 /**
  * The cloud backup's rules, as pure functions: when to upload, how long to wait
- * after a failure, and when a snapshot looks too small to upload on its own.
+ * after a failure, and when a snapshot looks like it would lose games from the backup.
  */
+import { isDemoGameId } from '../demo';
+import type { ExportFile } from '../transfer';
 import type { ApiErrorKind } from './api';
 import type { PauseReason, StoredBackupState } from './state';
 
@@ -12,9 +14,15 @@ export interface BackupTimings {
   debounceMs: number;
   /** ...but never more than this after the first change that isn't backed up yet. */
   maxWaitMs: number;
+  /**
+   * The same while a game is live. Taps keep coming, and an upload competes with them
+   * for the database, so a live game uploads in a quiet spell (after `debounceMs`
+   * without a tap), and only this long after a change when there's none.
+   */
+  liveGameMaxWaitMs: number;
   /** Least time between the starts of two automatic uploads. */
   minIntervalMs: number;
-  /** The same while a game is live (at most one upload a minute). */
+  /** The same while a game is live. */
   liveGameMinIntervalMs: number;
   /** Wait after a game ends before backing it up. */
   gameEndDelayMs: number;
@@ -29,6 +37,7 @@ export const DEFAULT_TIMINGS: Readonly<BackupTimings> = Object.freeze({
   startupDelayMs: 3 * SECOND,
   debounceMs: 20 * SECOND,
   maxWaitMs: 60 * SECOND,
+  liveGameMaxWaitMs: 5 * MINUTE,
   minIntervalMs: 10 * SECOND,
   liveGameMinIntervalMs: 60 * SECOND,
   gameEndDelayMs: 2 * SECOND,
@@ -49,26 +58,52 @@ export function retryDelayMs(
   return Math.max(step, retryAfterMs ?? 0);
 }
 
-/** What's on the phone, or in an upload. */
-export interface DataSize {
-  games: number;
+/**
+ * The parent's own data in an export: the games that aren't sample data, and their
+ * stats. Sample games come and go ("Try it with sample data", "Remove sample games"),
+ * so the shrink guard never counts them.
+ */
+export interface RealData {
+  gameIds: string[];
   events: number;
 }
 
+export function realData(file: Pick<ExportFile, 'games' | 'events'>): RealData {
+  const gameIds = file.games.map((game) => game.id).filter((id) => !isDemoGameId(id));
+  const real = new Set(gameIds);
+  return { gameIds, events: file.events.filter((event) => real.has(event.gameId)).length };
+}
+
+export interface ShrinkFinding {
+  /** Real games in the backup. */
+  backedUpGames: number;
+  /** How many of them this phone no longer has. */
+  missingGames: number;
+}
+
 /**
- * The shrink guard: whether uploading `current` would replace a backup of `backedUp`
- * with much less, which is far more likely an accident ("Erase all data", a broken
- * restore) than what the parent wants. True when:
- * - the backup had games and the phone has none;
- * - at least 3 games and at least half of them are gone; or
- * - the backup had stats and every one is gone while games remain.
+ * The shrink guard: whether uploading `current` would drop games (or stats) from the
+ * backup, which is far more likely an accident ("Erase all data", a phone that wasn't
+ * restored) than what the parent wants. It compares the games themselves, by id, so
+ * new games never make up for missing ones. Held back when:
+ * - at least 3 of the backup's games, and at least half of them, aren't on the phone;
+ * - none of them is (however few there were); or
+ * - the backup had stats and the phone has none.
+ * Resolves to what's missing, or undefined when the upload may go ahead.
  */
-export function isMuchSmaller(backedUp: Partial<DataSize>, current: DataSize): boolean {
-  const games = backedUp.games ?? 0;
-  const events = backedUp.events ?? 0;
-  if (games > 0 && current.games === 0) return true;
-  if (games - current.games >= 3 && current.games * 2 <= games) return true;
-  return events > 0 && current.events === 0 && current.games > 0;
+export function shrinkCheck(
+  backedUp: Pick<StoredBackupState, 'backedUpGameIds' | 'backedUpEventCount'>,
+  current: RealData,
+): ShrinkFinding | undefined {
+  const ids = backedUp.backedUpGameIds ?? [];
+  const onPhone = new Set(current.gameIds);
+  const missing = ids.filter((id) => !onPhone.has(id)).length;
+  const lostMany = missing >= 3 && missing * 2 >= ids.length;
+  const lostAll = ids.length > 0 && missing === ids.length;
+  const lostStats = (backedUp.backedUpEventCount ?? 0) > 0 && current.events === 0;
+  return lostMany || lostAll || lostStats
+    ? { backedUpGames: ids.length, missingGames: missing }
+    : undefined;
 }
 
 /**

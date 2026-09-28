@@ -3,7 +3,7 @@
  * the scheduler is doing right now (pure; see useCloudBackupStatus in hooks.ts).
  */
 import { hasUnsavedChanges, isConnectionProblem } from './policy';
-import type { BackupErrorInfo, StoredBackupState } from './state';
+import { isBackupOn, type BackupErrorInfo, type StoredBackupState } from './state';
 
 /**
  * - 'idle': nothing to report (off, all backed up, or waiting for its next turn);
@@ -11,17 +11,26 @@ import type { BackupErrorInfo, StoredBackupState } from './state';
  * - 'waiting-for-signal': there are changes to back up, but no connection;
  * - 'needs-attention': automatic backup stopped until the parent acts (see `lastError`:
  *   the code was rejected, the cloud copy was deleted, or the data is too big);
- * - 'paused-shrink': held back because the phone has much less data than the last
- *   backup (`shrink` says how much); `backUpNow({ force: true })` uploads anyway;
+ * - 'paused-shrink': held back because games in the last backup aren't on the phone
+ *   (`shrink` says how many); `backUpNow({ force: true })` uploads anyway, and it
+ *   resumes by itself once they're back (e.g. after a restore);
+ * - 'paused-other-device': another phone uploaded under this code since this one did
+ *   (`otherDevice` says when); restore its backup, or `backUpNow({ force: true })`;
  * - 'error': the last attempt failed; it's retried at `nextAttemptAt`.
  */
 export type CloudBackupStatusState =
-  'idle' | 'backing-up' | 'waiting-for-signal' | 'needs-attention' | 'paused-shrink' | 'error';
+  | 'idle'
+  | 'backing-up'
+  | 'waiting-for-signal'
+  | 'needs-attention'
+  | 'paused-shrink'
+  | 'paused-other-device'
+  | 'error';
 
 export interface CloudBackupStatus {
   /** This build can back up (a server is configured and the browser has WebCrypto). */
   available: boolean;
-  /** Cloud backup is on (this phone has a backup code). */
+  /** Cloud backup is on. (Off, the phone may still keep its code: see getBackupCode.) */
   enabled: boolean;
   state: CloudBackupStatusState;
   /** When the last upload from this phone succeeded (epoch ms). */
@@ -32,8 +41,10 @@ export interface CloudBackupStatus {
   nextAttemptAt?: number;
   /** The phone has changes that aren't in the cloud yet. */
   pendingChanges: boolean;
-  /** For 'paused-shrink': games in the last backup, and on the phone now. */
-  shrink?: { backedUpGames: number; currentGames: number };
+  /** For 'paused-shrink': real games in the last backup, and how many of them are missing. */
+  shrink?: { backedUpGames: number; missingGames: number };
+  /** For 'paused-other-device': when the other phone's backup was uploaded (epoch ms). */
+  otherDevice?: { backedUpAt?: number };
 }
 
 /** What the scheduler is doing in this window (not stored). */
@@ -57,6 +68,7 @@ function activity(
 ): CloudBackupStatusState {
   if (runtime.uploading) return 'backing-up';
   if (stored.paused === 'shrink') return 'paused-shrink';
+  if (stored.paused === 'other-device') return 'paused-other-device';
   if (stored.paused) return 'needs-attention';
   if (pendingChanges && !runtime.online) return 'waiting-for-signal';
   if (stored.lastError) {
@@ -71,7 +83,7 @@ export function deriveStatus({
   lastChangeAt,
   runtime,
 }: StatusInputs): CloudBackupStatus {
-  if (!available || !stored) {
+  if (!available || !isBackupOn(stored)) {
     return { available, enabled: false, state: 'idle', pendingChanges: false };
   }
   const pendingChanges = hasUnsavedChanges(stored, lastChangeAt);
@@ -87,8 +99,12 @@ export function deriveStatus({
   if (stored.paused === 'shrink' && stored.shrink) {
     status.shrink = {
       backedUpGames: stored.shrink.backedUpGames,
-      currentGames: stored.shrink.currentGames,
+      missingGames: stored.shrink.missingGames,
     };
+  }
+  if (stored.paused === 'other-device') {
+    const backedUpAt = stored.otherDevice?.createdAt;
+    status.otherDevice = backedUpAt === undefined ? {} : { backedUpAt };
   }
   return status;
 }

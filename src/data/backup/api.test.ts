@@ -59,6 +59,41 @@ describe('backup server API client', () => {
     );
   });
 
+  it("checks the newest version's id, time and size without downloading it", async () => {
+    const server = new FakeBackupServer({ now: () => NOW });
+    const api = createBackupApi({ baseUrl: BASE, fetch: server.fetch });
+    expect(await api.latest(CREDENTIALS)).toMatchObject({
+      ok: false,
+      error: { kind: 'unauthorized', status: 401 },
+    });
+    await api.upload(CREDENTIALS, Uint8Array.of(1, 2, 3, 4));
+    expect(await api.latest(CREDENTIALS)).toEqual({
+      ok: true,
+      value: { version: '0000000001-20260928T120000000Z', createdAt: NOW, size: 4 },
+    });
+    expect(server.requests.at(-1)).toEqual({
+      method: 'HEAD',
+      path: `/v1/backups/${CREDENTIALS.accountId}/latest`,
+    });
+  });
+
+  it('gets a 409 for an upload still arriving when its account is deleted (fake server)', async () => {
+    const server = new FakeBackupServer({ now: () => NOW });
+    const api = createBackupApi({ baseUrl: BASE, fetch: server.fetch });
+    await api.upload(CREDENTIALS, Uint8Array.of(1));
+    const release = server.hold();
+    const arriving = api.upload(CREDENTIALS, Uint8Array.of(2));
+    await vi.waitFor(() => expect(server.inFlight).toBe(1));
+    release();
+    const deleting = api.deleteAll(CREDENTIALS);
+    expect(await arriving).toMatchObject({
+      ok: false,
+      error: { kind: 'account-deleted', code: 'account_deleted' },
+    });
+    expect((await deleting).ok).toBe(true);
+    expect(server.accounts.size).toBe(0);
+  });
+
   it('sends the token, no cookies, and never uses the cache', async () => {
     const { api, fetch } = apiAnswering(() =>
       jsonResponse(201, { version: 'v', createdAt: new Date(NOW).toISOString(), size: 1 }),

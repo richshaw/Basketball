@@ -1,9 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDatabase } from '@/test/db';
-import { TEST_API_URL } from '@/test/backupHarness';
+import { buildRealData, TEST_API_URL } from '@/test/backupHarness';
 import { FakeBackupServer } from '@/test/fakeBackupServer';
-import { buildDemoData } from '../demo';
 import { createGame } from '../repo';
 import { exportAll, importAll } from '../transfer';
 import {
@@ -18,8 +17,10 @@ import {
   listCloudVersions,
   whenBackupIdle,
 } from './cloudBackup';
-import { generateBackupCode } from './code';
+import { createBackupApi } from './api';
+import { generateBackupCode, parseBackupCode } from './code';
 import { useCloudBackupStatus } from './hooks';
+import { deriveBackupKeys } from './keys';
 import { loadBackupState } from './state';
 
 let server: FakeBackupServer;
@@ -36,8 +37,9 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function seedDemo() {
-  await importAll(buildDemoData({ today: '2026-09-27' }), 'replace');
+/** Ten games of the parent's own. */
+async function seedReal() {
+  await importAll(buildRealData(), 'replace');
 }
 
 const withoutExportedAt = ({ exportedAt: _, ...rest }: { exportedAt: string }) => rest;
@@ -54,7 +56,7 @@ describe('cloud backup API', () => {
   });
 
   it('backs up, then restores on a new phone with the code', async () => {
-    await seedDemo();
+    await seedReal();
     const original = await exportAll();
     const code = await enableCloudBackup();
     await whenBackupIdle();
@@ -82,7 +84,11 @@ describe('cloud backup API', () => {
     // The fetched backup was reused, and this phone carries on backing up under the code.
     expect(server.requests.filter(({ method }) => method === 'GET')).toHaveLength(downloads);
     expect(server.uploads).toHaveLength(2);
-    expect(await loadBackupState()).toMatchObject({ code, lastUploadedGameCount: 10 });
+    expect((await loadBackupState())?.backedUpGameIds).toHaveLength(10);
+    expect(await loadBackupState()).toMatchObject({
+      code,
+      lastVersion: server.uploads[1]?.version,
+    });
 
     const versions = await listCloudVersions(code);
     expect(versions.ok && versions.value.map(({ version }) => version)).toEqual(
@@ -93,7 +99,7 @@ describe('cloud backup API', () => {
   });
 
   it("won't let a phone with little data replace the backup it switches to", async () => {
-    await seedDemo();
+    await seedReal();
     const code = await enableCloudBackup();
     await whenBackupIdle();
 
@@ -105,7 +111,7 @@ describe('cloud backup API', () => {
     expect(server.uploads).toHaveLength(1);
     expect(await getCloudBackupStatus()).toMatchObject({
       state: 'paused-shrink',
-      shrink: { backedUpGames: 10, currentGames: 1 },
+      shrink: { backedUpGames: 10, missingGames: 10 },
     });
     expect((await backUpNow({ force: true })).ok).toBe(true);
     expect(server.uploads).toHaveLength(2);
@@ -140,6 +146,17 @@ describe('cloud backup API', () => {
     expect(await getBackupCode()).toBeUndefined();
   });
 
+  it("calls a stored backup that won't decrypt damaged, since the code is right", async () => {
+    const code = generateBackupCode();
+    const keys = await deriveBackupKeys(parseBackupCode(code));
+    const api = createBackupApi({ baseUrl: TEST_API_URL, fetch: server.fetch });
+    await api.upload(keys, new Uint8Array(64).fill(7));
+    expect(await fetchCloudBackup(code)).toEqual({
+      ok: false,
+      error: { kind: 'damaged', message: "This backup is damaged, so it can't be restored." },
+    });
+  });
+
   it('says why nothing happened when backup is off or unavailable', async () => {
     expect(await backUpNow()).toEqual({
       ok: false,
@@ -155,7 +172,7 @@ describe('cloud backup API', () => {
   });
 
   it('turns off and deletes the cloud copy', async () => {
-    await seedDemo();
+    await seedReal();
     const code = await enableCloudBackup();
     await whenBackupIdle();
     expect(await disableCloudBackup({ deleteCloudCopy: true })).toEqual({
@@ -173,7 +190,7 @@ describe('cloud backup API', () => {
 
 describe('useCloudBackupStatus', () => {
   it('loads, then follows turning backup on and each upload', async () => {
-    await seedDemo();
+    await seedReal();
     const { result } = renderHook(() => useCloudBackupStatus());
     expect(result.current).toBeUndefined();
     await waitFor(() =>

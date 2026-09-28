@@ -12,9 +12,33 @@ import {
   type BackupEnvironmentEvent,
   type BackupObservation,
 } from '@/data/backup/engine';
+import { buildDemoData, DEMO_LIVE_GAME_ID, type DemoOptions } from '@/data/demo';
+import type { ExportFile } from '@/data/transfer';
 import { FakeBackupServer } from './fakeBackupServer';
 
 export const TEST_API_URL = 'https://backup.hoop-stats.test';
+
+/** Id of the nth game of `buildRealData`, 1 (oldest) to 10. */
+export function realGameId(n: number): string {
+  return `real-game-${String(n).padStart(2, '0')}`;
+}
+/** The live game of `buildRealData({ liveGame: true })`. */
+export const REAL_LIVE_GAME_ID = 'real-live';
+
+/**
+ * The demo season with ids that aren't sample-data ids, so the backup treats its
+ * games as the parent's own (the shrink guard ignores sample games).
+ */
+export function buildRealData(options: DemoOptions = {}): ExportFile {
+  const demo = buildDemoData({ today: '2026-09-27', ...options });
+  const rename = (id: string) =>
+    id === DEMO_LIVE_GAME_ID ? REAL_LIVE_GAME_ID : id.replace(/^demo-game-/, 'real-game-');
+  return {
+    ...demo,
+    games: demo.games.map((game) => ({ ...game, id: rename(game.id) })),
+    events: demo.events.map((event) => ({ ...event, gameId: rename(event.gameId) })),
+  };
+}
 /** Sep 28, 2026, 12:00 UTC. */
 export const TEST_START = Date.UTC(2026, 8, 28, 12);
 

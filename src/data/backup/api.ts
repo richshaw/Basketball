@@ -25,6 +25,16 @@ export interface BackupVersion {
   size: number;
 }
 
+/** The newest version's details, from a HEAD request (no bytes). */
+export interface LatestVersion {
+  /** From the X-Backup-Version header. */
+  version?: string;
+  /** From the X-Backup-Created-At header (epoch ms, server clock). */
+  createdAt?: number;
+  /** From Content-Length: the encrypted size in bytes. */
+  size?: number;
+}
+
 export interface DownloadedSnapshot {
   bytes: Uint8Array<ArrayBuffer>;
   /** From the X-Backup-Version header. */
@@ -105,6 +115,11 @@ export interface BackupApi {
     credentials: BackupCredentials,
     options?: RequestOptions,
   ): Promise<ApiResult<BackupVersion[]>>;
+  /** HEAD: the newest version's id, time and size, without downloading it. */
+  latest(
+    credentials: BackupCredentials,
+    options?: RequestOptions,
+  ): Promise<ApiResult<LatestVersion>>;
   /** GET: the newest snapshot, or the given version. */
   download(
     credentials: BackupCredentials,
@@ -294,6 +309,24 @@ export function createBackupApi(options: BackupApiOptions): BackupApi {
             return unexpectedResponse(response.status);
           }
           return { ok: true, value: versions as BackupVersion[] };
+        },
+        requestOptions.signal,
+      );
+    },
+
+    latest(credentials, requestOptions = {}) {
+      return send(
+        credentials,
+        { method: 'HEAD', path: '/latest' },
+        (response) => {
+          const latest: LatestVersion = {};
+          const version = response.headers.get('X-Backup-Version');
+          const createdAt = Date.parse(response.headers.get('X-Backup-Created-At') ?? '');
+          const length = response.headers.get('Content-Length') ?? '';
+          if (version) latest.version = version;
+          if (!Number.isNaN(createdAt)) latest.createdAt = createdAt;
+          if (/^\d+$/.test(length)) latest.size = Number(length);
+          return Promise.resolve({ ok: true, value: latest });
         },
         requestOptions.signal,
       );

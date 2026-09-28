@@ -2,11 +2,13 @@
 /**
  * The backup client against the REAL server app (server/src/app.ts via its test
  * harness): in process, no sockets, a temp data directory. The same contract runs
- * against the in-memory fake the other tests use (src/test/fakeBackupServer.ts), so
- * the fake can't drift from the server.
+ * against the in-memory fake the other tests use (src/test/fakeBackupServer.ts), which
+ * keeps the fake honest for what both implement. The fake doesn't model retention,
+ * rate limits or disk space; its 409 for an upload arriving during a delete is only
+ * tested on its own (api.test.ts).
  *
- * Needs the server's dependencies (`npm ci --prefix server`). Without them these
- * tests are skipped with a note, except in CI, where that's an error.
+ * Needs the server's dependencies (`npm ci --prefix server`). Without them the
+ * real-server tests show up as skipped, except in CI, where that's an error.
  */
 import { describe, expect, it } from 'vitest';
 import { createEngineHarness } from '@/test/backupHarness';
@@ -28,6 +30,15 @@ interface ServerHarness {
   cleanup(): Promise<void>;
 }
 
+/** The server's own dependencies aren't installed (`npm ci --prefix server`). */
+function isMissingServerDependency(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as { code?: unknown }).code === 'ERR_MODULE_NOT_FOUND' &&
+    /['"](hono|@hono\/node-server)['"]/.test(error.message)
+  );
+}
+
 async function loadServerHarness(): Promise<(() => Promise<ServerHarness>) | undefined> {
   // A runtime URL, so TypeScript doesn't type-check the server's code with the app's settings.
   const helpers = new URL('../../../server/test/helpers.ts', import.meta.url).href;
@@ -37,11 +48,8 @@ async function loadServerHarness(): Promise<(() => Promise<ServerHarness>) | und
     };
     return () => module.createHarness();
   } catch (error) {
-    if (import.meta.env.CI) throw error;
-    console.warn(
-      'Skipping the real backup server tests: run "npm ci --prefix server" first.',
-      error,
-    );
+    // Only a missing dependency skips; anything else (a broken import) fails the run.
+    if (import.meta.env.CI || !isMissingServerDependency(error)) throw error;
     return undefined;
   }
 }
@@ -82,6 +90,13 @@ const backends: [string, (() => Promise<Backend>) | undefined][] = [
       }),
   ],
 ];
+
+if (!createRealServer) {
+  // Says why in the default output, next to the real-server tests below being skipped.
+  describe('the real backup server', () => {
+    it.skip('is skipped: its dependencies are missing (run "npm ci --prefix server")', () => {});
+  });
+}
 
 describe.each(backends)('backup client against %s', (_name, createBackend) => {
   const test = it.skipIf(!createBackend);
@@ -153,6 +168,37 @@ describe.each(backends)('backup client against %s', (_name, createBackend) => {
       expect(await api.upload(keys, new Uint8Array(MAX_UPLOAD_BYTES + 1))).toMatchObject({
         ok: false,
         error: { kind: 'too-large', status: 413 },
+      });
+    }));
+
+  test("tells the newest version's id and size without the bytes (HEAD)", () =>
+    withBackend(async (backend) => {
+      const api = createBackupApi({ baseUrl: BASE, fetch: backend.fetch });
+      const keys = await deriveBackupKeys(generateBackupSecret());
+      expect(await api.latest(keys)).toMatchObject({
+        ok: false,
+        error: { kind: 'unauthorized', status: 401 },
+      });
+      await api.upload(keys, Uint8Array.of(1, 2, 3));
+      const uploaded = await api.upload(keys, Uint8Array.of(4, 5, 6, 7, 8));
+      if (!uploaded.ok) throw new Error(uploaded.error.kind);
+      expect(await api.latest(keys)).toEqual({
+        ok: true,
+        value: { version: uploaded.value.version, createdAt: uploaded.value.createdAt, size: 5 },
+      });
+    }));
+
+  test('allows 3 new accounts a day, then asks to wait', () =>
+    withBackend(async (backend) => {
+      const api = createBackupApi({ baseUrl: BASE, fetch: backend.fetch });
+      for (let i = 0; i < 3; i += 1) {
+        const keys = await deriveBackupKeys(generateBackupSecret());
+        expect((await api.upload(keys, Uint8Array.of(i + 1))).ok).toBe(true);
+      }
+      const keys = await deriveBackupKeys(generateBackupSecret());
+      expect(await api.upload(keys, Uint8Array.of(9))).toMatchObject({
+        ok: false,
+        error: { kind: 'rate-limited', status: 429, retryAfterMs: 24 * 60 * 60 * 1000 },
       });
     }));
 

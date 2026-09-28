@@ -1,9 +1,11 @@
 /**
  * An in-memory stand-in for the backup server (server/), for unit and e2e tests. It
- * follows server/README.md: the same routes, status codes, error bodies and headers
- * (CORS included), and trust-on-first-use accounts. It keeps every version (no
- * retention) and has no rate limits. src/data/backup/server.node.test.ts runs the
- * same contract tests against it and the real server, so the two can't drift apart.
+ * follows server/README.md: the same routes (HEAD included), status codes, error
+ * bodies and headers (CORS included), trust-on-first-use accounts, the account caps
+ * (5 in all, 3 new a day), and 409 for an upload still arriving when its account is
+ * deleted. It doesn't model retention (it keeps every version), per-IP or
+ * per-account rate limits, or disk space. src/data/backup/server.node.test.ts runs a
+ * shared contract against it and the real server for the parts both implement.
  *
  * No imports and no app aliases: e2e specs import it too.
  */
@@ -47,6 +49,8 @@ export interface FakeBackupServerOptions {
   maxBodyBytes?: number;
   /** Accounts the server holds at most. Default 5. */
   maxAccounts?: number;
+  /** New accounts per rolling 24 hours. Default 3. */
+  maxNewAccountsPerDay?: number;
 }
 
 interface Version {
@@ -62,6 +66,7 @@ interface Account {
 }
 
 const HEX_64 = /^[0-9a-f]{64}$/;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const VERSION_ID = /^\d{10}-\d{8}T\d{9}Z$/;
 const EXPOSED_HEADERS = 'X-Backup-Version, X-Backup-Created-At, Retry-After';
 const encoder = new TextEncoder();
@@ -123,11 +128,21 @@ export class FakeBackupServer {
   maxInFlight = 0;
   /** While true, every request fails like a dropped connection. */
   networkDown = false;
+  /**
+   * The next request of this method is handled (an upload is stored), but its answer
+   * is lost, like a connection that drops just before the response.
+   */
+  loseNextAnswer: string | undefined;
 
   private readonly now: () => number;
   private readonly allowedOrigins: readonly string[];
   private readonly maxBodyBytes: number;
   private readonly maxAccounts: number;
+  private readonly maxNewAccountsPerDay: number;
+  /** When each account was created (for the daily cap). */
+  private readonly creations: number[] = [];
+  /** Deletes per account id, so an upload that was arriving meanwhile gets a 409. */
+  private readonly deletions = new Map<string, number>();
   private readonly failures: FakeFailure[] = [];
   private gate: Promise<void> | undefined;
 
@@ -136,6 +151,7 @@ export class FakeBackupServer {
     this.allowedOrigins = options.allowedOrigins ?? [];
     this.maxBodyBytes = options.maxBodyBytes ?? 5 * 1024 * 1024;
     this.maxAccounts = options.maxAccounts ?? 5;
+    this.maxNewAccountsPerDay = options.maxNewAccountsPerDay ?? 3;
   }
 
   /** Answers the next matching request with this error instead. Queue several in order. */
@@ -173,7 +189,14 @@ export class FakeBackupServer {
     });
   }
 
-  private respond(request: FakeRequest): FakeResponse {
+  /** Deletes so far for the account a request is about (see `respond`). */
+  private deletionsFor(url: string): number {
+    const accountId = /^\/v1\/backups\/([^/]+)/.exec(new URL(url).pathname)?.[1] ?? '';
+    return this.deletions.get(accountId) ?? 0;
+  }
+
+  /** `arrivedAfter`: deletes of the account when the request arrived (default: now). */
+  private respond(request: FakeRequest, arrivedAfter?: number): FakeResponse {
     const { pathname } = new URL(request.url);
     const method = request.method.toUpperCase();
 
@@ -199,7 +222,14 @@ export class FakeBackupServer {
       };
     }
 
-    const response = this.route(method, pathname, request);
+    // Like the real server (Hono), HEAD is GET without the body.
+    const response = this.route(
+      method === 'HEAD' ? 'GET' : method,
+      pathname,
+      request,
+      arrivedAfter,
+    );
+    if (method === 'HEAD') response.body = null;
     response.headers['Cache-Control'] = 'no-store';
     response.headers.Vary = 'Origin';
     if (originAllowed) {
@@ -222,6 +252,7 @@ export class FakeBackupServer {
     };
     // Counted on arrival, so held and abandoned requests count too.
     this.record(request);
+    const arrivedAfter = this.deletionsFor(url);
     this.inFlight += 1;
     this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
     try {
@@ -233,7 +264,11 @@ export class FakeBackupServer {
         });
       }
       if (this.networkDown) throw new TypeError('Failed to fetch');
-      const response = this.respond(request);
+      const response = this.respond(request, arrivedAfter);
+      if (this.loseNextAnswer === request.method.toUpperCase()) {
+        this.loseNextAnswer = undefined;
+        throw new TypeError('Failed to fetch');
+      }
       return new Response(response.body, { status: response.status, headers: response.headers });
     } finally {
       this.inFlight -= 1;
@@ -247,7 +282,12 @@ export class FakeBackupServer {
     return index === -1 ? undefined : this.failures.splice(index, 1)[0];
   }
 
-  private route(method: string, pathname: string, request: FakeRequest): FakeResponse {
+  private route(
+    method: string,
+    pathname: string,
+    request: FakeRequest,
+    arrivedAfter: number | undefined,
+  ): FakeResponse {
     if (pathname === '/health' && method === 'GET') return json(200, { ok: true });
     const match = /^\/v1\/backups\/([^/]+)(?:\/([^/]+))?$/.exec(pathname);
     const accountId = match?.[1];
@@ -272,16 +312,27 @@ export class FakeBackupServer {
         return fail(413, 'payload_too_large');
       }
       if (account && !authorized) return fail(401, 'unauthorized');
-      if (!account && this.accounts.size >= this.maxAccounts) {
-        return fail(507, 'account_limit_reached');
+      const now = this.now();
+      if (!account) {
+        if (this.accounts.size >= this.maxAccounts) return fail(507, 'account_limit_reached');
+        const recent = this.creations.filter((at) => at > now - DAY_MS);
+        const oldest = recent[recent.length - this.maxNewAccountsPerDay];
+        if (oldest !== undefined) {
+          return fail(429, 'rate_limited', Math.max(1, Math.ceil((oldest + DAY_MS - now) / 1000)));
+        }
       }
       const body = request.body ?? new Uint8Array(0);
       if (body.byteLength === 0) return fail(400, 'empty_body');
       if (body.byteLength > this.maxBodyBytes) return fail(413, 'payload_too_large');
+      // Deleted while this upload was arriving: never bring the account back.
+      if (arrivedAfter !== undefined && (this.deletions.get(accountId) ?? 0) !== arrivedAfter) {
+        return fail(409, 'account_deleted');
+      }
+      if (!account) this.creations.push(now);
       const stored = account ?? { token, sequence: 0, versions: [] };
       this.accounts.set(accountId, stored);
       stored.sequence += 1;
-      const createdAt = Math.floor(this.now());
+      const createdAt = Math.floor(now);
       const version = versionId(stored.sequence, createdAt);
       const bytes = new Uint8Array(body);
       stored.versions.push({ version, createdAt, bytes });
@@ -298,12 +349,15 @@ export class FakeBackupServer {
     }
     if (method !== 'GET' && method !== 'DELETE') return fail(404, 'not_found');
     if (method === 'DELETE' && sub !== undefined) return fail(404, 'not_found');
-    if (!account || !authorized) return fail(401, 'unauthorized');
-
     if (method === 'DELETE') {
+      // Uploads still arriving must not land afterwards, even the account's first one.
+      if (authorized || !account)
+        this.deletions.set(accountId, (this.deletions.get(accountId) ?? 0) + 1);
+      if (!account || !authorized) return fail(401, 'unauthorized');
       this.accounts.delete(accountId);
       return { status: 204, headers: {}, body: null };
     }
+    if (!account || !authorized) return fail(401, 'unauthorized');
     const newestFirst = [...account.versions].sort((a, b) => (a.version < b.version ? 1 : -1));
     if (sub === undefined) {
       return json(200, {
