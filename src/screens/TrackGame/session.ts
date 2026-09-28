@@ -190,6 +190,8 @@ export class TrackingSession implements UnsavedTapHolder {
   private savedIds = new Set<string>();
   /** Saved stats removed (or being removed) through this session, until they're gone. */
   private readonly removing = new Set<string>();
+  /** The removals under way, by stat id. */
+  private readonly removals = new Map<string, Promise<Removal>>();
   /** The latest tap time given out or seen, so the next tap sorts after it. */
   private lastAt: number | undefined;
   private readonly listeners = new Set<() => void>();
@@ -457,19 +459,29 @@ export class TrackingSession implements UnsavedTapHolder {
     return { count: notSaved.length, kept: notSaved.every((record) => record.kept) };
   }
 
-  /** Removes a saved stat by id: 'removed', 'gone' if it wasn't there, or 'failed'. */
+  /**
+   * Removes a saved stat by id: 'removed', 'gone' if it wasn't there, or 'failed'.
+   * Asked again while its removal is under way (e.g. the log's delete of a stat Undo is
+   * removing), it's that same removal: one delete, and one outcome.
+   */
   private removeStat(id: string): Promise<Removal> {
+    const underWay = this.removals.get(id);
+    if (underWay) return underWay;
     this.removing.add(id);
     // It stops counting at once, before the saved stats on screen catch up.
     this.emit();
-    return attempt(() => this.deps.deleteStat(id)).then(
-      (event): Removal => (event ? 'removed' : 'gone'),
-      (): Removal => {
-        this.removing.delete(id);
-        this.emit();
-        return 'failed';
-      },
-    );
+    const removal = attempt(() => this.deps.deleteStat(id))
+      .then(
+        (event): Removal => (event ? 'removed' : 'gone'),
+        (): Removal => {
+          this.removing.delete(id);
+          this.emit();
+          return 'failed';
+        },
+      )
+      .finally(() => this.removals.delete(id));
+    this.removals.set(id, removal);
+    return removal;
   }
 
   private removeOrphan(record: TapRecord): Promise<Removal> {

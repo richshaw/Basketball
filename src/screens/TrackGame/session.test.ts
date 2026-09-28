@@ -523,6 +523,25 @@ describe('TrackingSession', () => {
       expect(taking.immediate).toBe(false);
       expect(await taking.removal).toBe('gone');
     });
+
+    it('removes a saved stat once when it is taken back again while its removal runs', async () => {
+      const { session, store, sync, holdDeletes, releaseDeletes, deletes } = setUp();
+      const steal = event('steal', 'stl', 10);
+      store(steal);
+      sync();
+      holdDeletes();
+      const first = session.undoLatest();
+      // E.g. the log's delete of the same stat, before the Undo's removal lands.
+      const second = session.undo(steal);
+      expect(deletes).toEqual(['steal']);
+      releaseDeletes();
+      expect(await outcome(first)).toEqual(['stl', 'removed']);
+      expect(await second.removal).toBe('removed');
+
+      // Once it's done, it's gone: asked again, that's what it says.
+      expect(await session.undo(steal).removal).toBe('gone');
+      expect(deletes).toEqual(['steal', 'steal']);
+    });
   });
 
   describe('counting', () => {
