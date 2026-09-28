@@ -1,6 +1,9 @@
 # Agent worktrees and settings (other checkouts of this repo)
 .claude
 
+# The backup server has its own package, formatting config and CI
+server
+
 # Generated / vendored output
 dist
 dev-dist

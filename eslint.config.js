@@ -9,6 +9,7 @@ import tseslint from 'typescript-eslint';
 export default defineConfig([
   globalIgnores([
     '.claude', // agent worktrees and settings
+    'server', // the backup server has its own package, lint config and CI
     'dist',
     'dev-dist',
     'coverage',
