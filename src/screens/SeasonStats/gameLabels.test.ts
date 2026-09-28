@@ -5,7 +5,6 @@ import {
   formatRecord,
   formatResult,
   formatScore,
-  opponentLabel,
   spansYears,
 } from './gameLabels';
 
@@ -38,15 +37,6 @@ describe('formatDateRange', () => {
   it('shows one date for a single day', () => {
     expect(formatDateRange('2026-09-24', '2026-09-24')).toBe('Sep 24');
     expect(formatDateRange('2026-09-24', '2026-09-24', { withYear: true })).toBe('Sep 24, 2026');
-  });
-});
-
-describe('opponentLabel', () => {
-  it('says "at" for away games and "vs" otherwise', () => {
-    expect(opponentLabel({ opponent: 'Lincoln', homeAway: 'away' })).toBe('at Lincoln');
-    expect(opponentLabel({ opponent: 'Lincoln', homeAway: 'home' })).toBe('vs Lincoln');
-    expect(opponentLabel({ opponent: 'Lincoln', homeAway: 'neutral' })).toBe('vs Lincoln');
-    expect(opponentLabel({ opponent: 'Lincoln' })).toBe('vs Lincoln');
   });
 });
 

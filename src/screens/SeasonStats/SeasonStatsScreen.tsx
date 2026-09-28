@@ -13,7 +13,7 @@ import { formatAvg, formatMadeAttempted, formatPct, formatPlayerName } from '@/l
 import { shareText } from '@/lib/share';
 import { paths } from '@/routes';
 import { GameLog } from './GameLog';
-import { formatGameCount, formatRecord, opponentLabel, spansYears } from './gameLabels';
+import { formatGameCount, formatRecord, spansYears } from './gameLabels';
 import { SeasonHighs } from './SeasonHighs';
 import { SeasonPicker } from './SeasonPicker';
 import { ALL_GAMES_LABEL, buildSeasonRecap } from './seasonRecap';
@@ -112,7 +112,7 @@ function liveGamesNote(liveGames: readonly Game[]): string | null {
   const [only] = liveGames;
   if (!only) return null;
   if (liveGames.length === 1) {
-    return `The game ${opponentLabel(only)} is still in progress. It counts once it’s final.`;
+    return `The game against ${only.opponent} is still in progress. It counts once it’s final.`;
   }
   return `${liveGames.length} games still in progress aren’t counted until they’re final.`;
 }
@@ -122,7 +122,7 @@ function NoGamesYet({ liveGame }: { liveGame: Game | undefined }) {
     <EmptyState
       icon="📊"
       title="No finished games yet"
-      message={`The game ${opponentLabel(liveGame)} is still going. Its stats show up here once it’s final.`}
+      message={`The game against ${liveGame.opponent} is still going. Its stats show up here once it’s final.`}
       action={
         <ButtonLink to={paths.trackGame(liveGame.id)} size="lg">
           Back to the game

@@ -50,7 +50,7 @@ describe('describePoint', () => {
   it('reads the date, the opponent and the value with its unit', () => {
     const [first, second] = trendPoints(entries, 'reb') as [TrendPoint, TrendPoint];
     expect(describePoint(first, 'reb')).toBe('Sat, Aug 1, vs Lincoln: 1 rebound');
-    expect(describePoint(second, 'reb')).toBe('Sat, Aug 22, at Westview: 0 rebounds');
+    expect(describePoint(second, 'reb')).toBe('Sat, Aug 22, @ Westview: 0 rebounds');
   });
 
   it('adds the year when asked', () => {
@@ -66,7 +66,7 @@ describe('describeTrend', () => {
     const averages = { ...emptyStatLine(), pts: 13 };
     expect(describeTrend(trendPoints(entries, 'pts'), 'pts', averages)).toBe(
       'Points in 4 games, Aug 1 – Sep 24. Average 13.0 a game. ' +
-        'High 18 vs Oak Ridge on Sat, Sep 12. Low 6 at Westview on Sat, Aug 22.',
+        'High 18 vs Oak Ridge on Sat, Sep 12. Low 6 @ Westview on Sat, Aug 22.',
     );
   });
 
@@ -74,7 +74,7 @@ describe('describeTrend', () => {
     const averages = { ...emptyStatLine(), pts: 13 };
     expect(describeTrend(trendPoints(entries, 'pts'), 'pts', averages, { withYear: true })).toBe(
       'Points in 4 games, Aug 1, 2026 – Sep 24, 2026. Average 13.0 a game. ' +
-        'High 18 vs Oak Ridge on Sat, Sep 12, 2026. Low 6 at Westview on Sat, Aug 22, 2026.',
+        'High 18 vs Oak Ridge on Sat, Sep 12, 2026. Low 6 @ Westview on Sat, Aug 22, 2026.',
     );
   });
 

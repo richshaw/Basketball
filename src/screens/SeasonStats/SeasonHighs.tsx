@@ -4,7 +4,7 @@ import { HIGH_STATS, type GamesSummary, type HighStat } from '@/data/stats';
 import type { Game } from '@/data/types';
 import { formatGameDate } from '@/lib/format';
 import { paths } from '@/routes';
-import { opponentLabel } from './gameLabels';
+import { gameTitle } from '@/lib/gameTitle';
 import styles from './SeasonStatsScreen.module.css';
 
 const HIGH_LABELS: Record<HighStat, string> = {
@@ -47,7 +47,7 @@ export function SeasonHighs({ title, highs, games, withYear }: SeasonHighsProps)
                 <span className="visually-hidden">: {high.value},</span>
               </>
             }
-            subtitle={`${opponentLabel(game)} · ${formatGameDate(game.date, { withYear })}`}
+            subtitle={`${gameTitle(game)} · ${formatGameDate(game.date, { withYear })}`}
             value={
               <span className={styles.highValue} aria-hidden="true">
                 {high.value}

@@ -20,7 +20,8 @@ import { cx } from '@/lib/cx';
 import { formatAvg, formatGameDate } from '@/lib/format';
 import { paths } from '@/routes';
 import { barLayout, columnPath, niceAxis, scaleY, slotIndexAt } from './chartScale';
-import { formatDateRange, formatGameCount, formatResult, opponentLabel } from './gameLabels';
+import { gameTitle } from '@/lib/gameTitle';
+import { formatDateRange, formatGameCount, formatResult } from './gameLabels';
 import { readSessionValue, writeSessionValue } from './seasonFilter';
 import {
   describePoint,
@@ -327,7 +328,7 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
           </p>
           <p className={styles.readoutMeta}>
             {selected
-              ? [opponentLabel(selected.game), result].filter(Boolean).join(' · ')
+              ? [gameTitle(selected.game), result].filter(Boolean).join(' · ')
               : first && last
                 ? `${formatGameCount(points.length)} · ${formatDateRange(first.game.date, last.game.date, { withYear })}`
                 : formatGameCount(0)}
@@ -337,7 +338,7 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
           <Link
             to={paths.gameReport(selected.game.id)}
             className={styles.readoutLink}
-            aria-label={`Game report, ${opponentLabel(selected.game)}, ${formatGameDate(selected.game.date, { withYear })}`}
+            aria-label={`Game report, ${gameTitle(selected.game)}, ${formatGameDate(selected.game.date, { withYear })}`}
           >
             Game report
             <ChevronRightIcon className={styles.readoutChevron} />

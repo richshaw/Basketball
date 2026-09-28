@@ -21,11 +21,6 @@ export function formatDateRange(first: string, last: string, { withYear = false 
   return first === last ? day(first) : `${day(first)} – ${day(last)}`;
 }
 
-/** 'vs Lincoln' for home and neutral games, 'at Lincoln' for away games. */
-export function opponentLabel(game: Pick<Game, 'opponent' | 'homeAway'>): string {
-  return `${game.homeAway === 'away' ? 'at' : 'vs'} ${game.opponent}`;
-}
-
 /** The final score as '45–38' (ours first), or null when it wasn't entered. */
 export function formatScore(game: Pick<Game, 'teamScore' | 'opponentScore'>): string | null {
   const { teamScore, opponentScore } = game;

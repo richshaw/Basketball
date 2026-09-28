@@ -14,7 +14,7 @@ import type { Game, StatType } from '@/data/types';
 import { formatAvg, formatGameDate, formatMadeAttempted, formatPct } from '@/lib/format';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
-import { opponentLabel } from './gameLabels';
+import { gameTitle } from '@/lib/gameTitle';
 import { clearSessionValues } from './seasonFilter';
 import { buildSeasonRecap } from './seasonRecap';
 
@@ -149,7 +149,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
           name: new RegExp(`^${labels[stat]}: ${high.value},`),
         });
         expect(link).toHaveAttribute('href', paths.gameReport(game.id));
-        expect(link).toHaveTextContent(`${opponentLabel(game)} · ${formatGameDate(game.date)}`);
+        expect(link).toHaveTextContent(`${gameTitle(game)} · ${formatGameDate(game.date)}`);
       }
 
       await user.click(within(highs).getByRole('link', { name: /^Points:/ }));
@@ -241,7 +241,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       const [first] = rows;
       if (!first || !line) throw new Error('Missing the first row');
       expect(within(first).getByRole('rowheader')).toHaveTextContent(
-        `${opponentLabel(newest)}, ${formatGameDate(newest.date)}`,
+        `${gameTitle(newest)}, ${formatGameDate(newest.date)}`,
       );
       expect(
         within(first)
@@ -279,7 +279,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       if (!oldest || !oldestLine) throw new Error('Missing the oldest demo game');
       // Oldest on the left.
       expect(bars[0]).toHaveAccessibleName(
-        `${formatGameDate(oldest.date)}, ${opponentLabel(oldest)}: ${oldestLine.line.pts} points`,
+        `${formatGameDate(oldest.date)}, ${gameTitle(oldest)}: ${oldestLine.line.pts} points`,
       );
       expect(screen.getByText('points per game')).toBeInTheDocument();
       expect(
@@ -314,7 +314,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       await user.click(bar);
       expect(bar).toHaveAttribute('aria-pressed', 'true');
       expect(
-        screen.getByText(`${opponentLabel(game)} · L ${game.teamScore}–${game.opponentScore}`),
+        screen.getByText(`${gameTitle(game)} · L ${game.teamScore}–${game.opponentScore}`),
       ).toBeInTheDocument();
       const report = screen.getByRole('link', { name: /^Game report, / });
       expect(report).toHaveAttribute('href', paths.gameReport(game.id));
@@ -492,7 +492,9 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       );
       expect(screen.queryByRole('link', { name: /Westfield/ })).not.toBeInTheDocument();
       expect(
-        screen.getByText('The game vs Westfield is still in progress. It counts once it’s final.'),
+        screen.getByText(
+          'The game against Westfield is still in progress. It counts once it’s final.',
+        ),
       ).toBeInTheDocument();
     });
   });
@@ -664,7 +666,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       expect(
         await screen.findByRole('heading', { name: 'No finished games yet' }),
       ).toBeInTheDocument();
-      expect(screen.getByText(/The game vs Westfield is still going/)).toBeInTheDocument();
+      expect(screen.getByText(/The game against Westfield is still going/)).toBeInTheDocument();
       expect(screen.getByRole('link', { name: 'Back to the game' })).toHaveAttribute(
         'href',
         paths.trackGame(live.id),

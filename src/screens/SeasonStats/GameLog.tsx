@@ -9,7 +9,8 @@ import type { Game } from '@/data/types';
 import { cx } from '@/lib/cx';
 import { formatGameDate, formatMadeAttempted } from '@/lib/format';
 import { paths } from '@/routes';
-import { formatScore, opponentLabel } from './gameLabels';
+import { gameTitle } from '@/lib/gameTitle';
+import { formatScore } from './gameLabels';
 import styles from './SeasonStatsScreen.module.css';
 
 type LogKey =
@@ -55,7 +56,7 @@ export function GameLog({ entries, withYear }: GameLogProps) {
   const rows: StatTableRow<LogKey>[] = entries.map(({ game, line }) => ({
     game: (
       <Link to={paths.gameReport(game.id)} className={styles.gameLink}>
-        <span className={styles.gameOpponent}>{opponentLabel(game)}</span>
+        <span className={styles.gameOpponent}>{gameTitle(game)}</span>
         <span className="visually-hidden">, </span>
         <span className={styles.gameDate}>{formatGameDate(game.date, { withYear })}</span>
       </Link>

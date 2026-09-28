@@ -41,7 +41,7 @@ test('shows the season, switches the chart and opens a game from the log', async
   await expect(pointsTile.getByRole('definition').first()).toHaveText(
     (points / finalGames.size).toFixed(1),
   );
-  await expect(page.getByText(/The game vs Westfield is still in progress/)).toBeVisible();
+  await expect(page.getByText(/The game against Westfield is still in progress/)).toBeVisible();
   // Nothing on the screen makes the page scroll sideways.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     IPHONE_VIEWPORT.width,
