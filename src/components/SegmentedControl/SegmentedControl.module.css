@@ -25,6 +25,8 @@
   bottom: var(--thumb-inset);
   left: var(--thumb-inset);
   width: calc((100% - 2 * var(--thumb-inset)) / var(--segment-count));
+  /* The outline, not the fill, marks the selection: 3:1 against the track (WCAG 1.4.11). */
+  border: 1px solid var(--color-border-strong);
   border-radius: calc(var(--track-radius) - var(--thumb-inset));
   background-color: var(--color-thumb);
   box-shadow: var(--shadow-thumb);
