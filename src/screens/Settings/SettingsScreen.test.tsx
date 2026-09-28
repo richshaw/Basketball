@@ -94,6 +94,17 @@ describe('Settings: player', () => {
     );
   });
 
+  it("shows the name's first letter, or the whole of a first emoji, without a number", async () => {
+    await savePlayer({ name: 'élodie' });
+    const { unmount } = await renderSettings();
+    expect(await within(list('Player')).findByText('É')).toBeInTheDocument();
+    unmount();
+
+    await savePlayer({ name: '🏀 Ava' });
+    await renderSettings();
+    expect(await within(list('Player')).findByText('🏀')).toBeInTheDocument();
+  });
+
   it('asks for a name instead of saving an empty one', async () => {
     await savePlayer({ name: 'Ava', jerseyNumber: '12' });
     const { user } = await renderSettings();

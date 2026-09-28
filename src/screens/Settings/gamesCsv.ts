@@ -6,7 +6,7 @@ import { gameResult, statLinesForGames, type GameStatLine, type StatLine } from 
 import type { Game, HomeAway, StatEvent } from '@/data/types';
 
 /** Byte order mark: tells Excel the file is UTF-8, so names like "Zoë" survive. */
-export const CSV_BOM = '﻿';
+export const CSV_BOM = '\uFEFF';
 
 /** RFC 4180 line ending, which every spreadsheet app reads. */
 const CRLF = '\r\n';

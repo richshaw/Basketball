@@ -9,7 +9,9 @@ import styles from './PlayerSection.module.css';
 function avatarText(player: Player | null): string {
   const jersey = player?.jerseyNumber?.trim();
   if (jersey && jersey.length <= 3) return jersey;
-  return player?.name.trim().charAt(0).toUpperCase() || '+';
+  // By code point, not UTF-16 unit, so a name starting with an emoji keeps it whole.
+  const [initial] = Array.from(player?.name.trim() ?? '');
+  return initial?.toUpperCase() ?? '+';
 }
 
 /** The player's name and jersey number; tap to edit them. */

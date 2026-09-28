@@ -6,16 +6,20 @@ const UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
 
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '–';
-  if (bytes < 1000) return bytes === 1 ? '1 byte' : `${Math.round(bytes)} bytes`;
+  const whole = Math.round(bytes);
+  if (whole < 1000) return whole === 1 ? '1 byte' : `${whole} bytes`;
   let value = bytes / 1000;
   let unit = 0;
-  // Move up a unit when the rounded value would read 1000 or more (999.96 KB is 1.0 MB).
-  while (unit < UNITS.length - 1 && Number(value.toFixed(value < 10 ? 1 : 0)) >= 1000) {
+  // Move up a unit when the value would read 1000 or more (999.96 KB is 1.0 MB).
+  while (unit < UNITS.length - 1 && Math.round(value) >= 1000) {
     value /= 1000;
     unit += 1;
   }
-  const digits = value < 10 ? 1 : 0;
-  return `${value.toFixed(digits)} ${UNITS[unit]}`;
+  // One decimal below 10, none from 10 up, judged after rounding: 9.96 KB reads
+  // '10 KB', like 10 KB itself, not '10.0 KB'.
+  const tenths = value.toFixed(1);
+  const text = Number(tenths) < 10 ? tenths : String(Math.round(value));
+  return `${text} ${UNITS[unit]}`;
 }
 
 /** The "Protected from automatic clearing" value. */

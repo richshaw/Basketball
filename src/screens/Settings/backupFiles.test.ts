@@ -47,7 +47,7 @@ describe('createBackupFile', () => {
 
 describe('createSpreadsheetFile', () => {
   it('is a UTF-8 CSV file that keeps its byte order mark', async () => {
-    const file = createSpreadsheetFile('﻿Date,Opponent\r\n', EVENING);
+    const file = createSpreadsheetFile('\uFEFFDate,Opponent\r\n', EVENING);
     expect(file.name).toBe('hoop-stats-games-2026-09-28.csv');
     expect(file.type).toBe('text/csv');
     const bytes = new Uint8Array(await file.arrayBuffer());
