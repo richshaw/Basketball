@@ -71,6 +71,19 @@ describe('number formatting', () => {
     expect(formatAvg(Number.NaN)).toBe('–');
   });
 
+  it('rounds a true .x5 up, even from a raw quotient', () => {
+    // 17 / 20 is 0.85, stored as 0.8499…, which toFixed(1) alone shows as '0.8'.
+    const cases = [
+      [17, '0.9'],
+      [19, '1.0'],
+      [7, '0.4'],
+      [3, '0.2'],
+      [41, '2.1'],
+      [29, '1.5'],
+    ] as const;
+    for (const [total, shown] of cases) expect(formatAvg(total / 20), `${total}/20`).toBe(shown);
+  });
+
   it('formats makes and attempts', () => {
     expect(formatMadeAttempted(5, 9)).toBe('5/9');
     expect(formatMadeAttempted(0, 0)).toBe('0/0');
