@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { listPendingStats, savePendingStat, type PendingStat } from '@/data/pendingStats';
+import { savePendingStat } from '@/data/pendingSaves';
+import { listPendingStats, type PendingStat } from '@/data/pendingStats';
 import { createGame, deleteStat, getGameEvents, setCurrentPeriod } from '@/data/repo';
 import type { StatEvent, StatType } from '@/data/types';
 import { AUTO_RETRY_MS, TrackingSession, type SessionDeps, type TakingBack } from './session';

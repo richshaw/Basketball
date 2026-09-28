@@ -6,21 +6,21 @@
  * removed once that save is confirmed or the tap is undone. If the page reloads or
  * closes first (an iOS relaunch, the Update button), or IndexedDB keeps failing (WebKit
  * can lose its connection while the app is in the background, and every write fails
- * until it's back or the page reloads), what's left is saved later: by
- * replayPendingStats() at app start, and by the game's tracking session when it starts.
+ * until it's back or the page reloads), what's left is saved later (pendingSaves.ts):
+ * at app start, and by the game's tracking session when it starts.
  *
- * One key per tap, so keeping or removing one never rewrites the others. Saving an
- * entry is idempotent (recordStat with the tap's id), so an entry saved twice is still
- * one stat. localStorage may be missing, full or blocked: every access is guarded,
- * nothing here throws, and without it taps are still saved, just not kept across a
- * reload.
+ * One key per tap, so keeping or removing one never rewrites the others. localStorage
+ * may be missing, full or blocked: every access is guarded, nothing here throws, and
+ * without it taps are still saved, just not kept across a reload.
+ *
+ * This module never touches the database (pendingSaves.ts saves the kept taps), so the
+ * repository can use it too.
  */
 import { isRealPoint } from '@/lib/court';
 import { compareIds, newId } from '@/lib/id';
 import { nextTimestamp } from './db';
-import { getGame, recordStat } from './repo';
 import { isFieldGoalType } from './stats';
-import type { CourtPoint, StatEvent, StatType } from './types';
+import type { CourtPoint, StatType } from './types';
 import { statEventSchema } from './validation';
 
 /** A stat tap that isn't confirmed saved yet: everything needed to save it. */
@@ -135,57 +135,4 @@ export function listPendingStats(gameId?: string): PendingStat[] {
     // Blocked storage: nothing could have been kept there.
   }
   return stats.sort((a, b) => a.at - b.at || compareIds(a.id, b.id));
-}
-
-/** Saves a tap as its stat. Idempotent: a tap saved already resolves to its stat. */
-export function savePendingStat(stat: PendingStat): Promise<StatEvent> {
-  return recordStat(stat.gameId, stat.type, stat.location, {
-    id: stat.id,
-    at: stat.at,
-    period: stat.period,
-  });
-}
-
-export interface ReplayResult {
-  /** Saved (or found saved already) and forgotten. */
-  saved: number;
-  /** Their game no longer exists: forgotten without saving. */
-  dropped: number;
-  /** Couldn't be saved: still kept, for next time. */
-  failed: number;
-}
-
-/**
- * Saves the taps kept by a page that closed (or couldn't reach the database) before
- * they were saved. Called at app start, in the background. Each is saved at most once
- * and then forgotten; one that can't be saved stays kept for next time, and one whose
- * game no longer exists is dropped. Stats can be added to finished games, so their
- * taps are saved too. Never rejects.
- */
-export async function replayPendingStats(): Promise<ReplayResult> {
-  const result: ReplayResult = { saved: 0, dropped: 0, failed: 0 };
-  const gameExists = new Map<string, Promise<boolean>>();
-  for (const stat of listPendingStats()) {
-    let exists = gameExists.get(stat.gameId);
-    if (!exists) {
-      exists = getGame(stat.gameId).then((game) => game !== undefined);
-      gameExists.set(stat.gameId, exists);
-    }
-    try {
-      if (!(await exists)) {
-        removePendingStat(stat.id);
-        result.dropped += 1;
-        continue;
-      }
-      // Undone (or saved) meanwhile, e.g. on the live game screen: leave it be. The
-      // save starts right after this check, so an Undo can't slip in between.
-      if (!isPendingStat(stat.id)) continue;
-      await savePendingStat(stat);
-      removePendingStat(stat.id);
-      result.saved += 1;
-    } catch {
-      result.failed += 1;
-    }
-  }
-  return result;
 }

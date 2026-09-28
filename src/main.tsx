@@ -5,7 +5,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { cloudBackupConsole, startBackupScheduler } from '@/data/backup/cloudBackup';
 import { seedDemoData } from '@/data/demo';
-import { replayPendingStats } from '@/data/pendingStats';
+import { replayPendingStats } from '@/data/pendingSaves';
 import { requestPersistentStorage } from '@/data/persistence';
 import { clearAllData, exportAll } from '@/data/transfer';
 import { App } from './App';

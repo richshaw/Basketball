@@ -18,12 +18,12 @@
  * - The period moves on screen at once and is then saved; the saved period takes
  *   over again once no move is being saved (or a move couldn't be saved).
  */
+import { savePendingStat } from '@/data/pendingSaves';
 import {
   addPendingStat,
   listPendingStats,
   newPendingStat,
   removePendingStat,
-  savePendingStat,
   type PendingStat,
 } from '@/data/pendingStats';
 import { deleteStat, setCurrentPeriod } from '@/data/repo';

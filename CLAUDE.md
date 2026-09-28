@@ -130,12 +130,12 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - `getLastChangeAt()`: when the data last changed (for the backup; read it before exporting).
 - `subscribeToChanges(listener)`: calls `listener` the moment any write commits (this tab or another), before the hooks re-read; returns a function that stops it. For code that keeps its own copy of the data, like the backup file Settings prepares so the share sheet can open straight from a tap.
 
-### Taps not saved yet (`data/pendingStats.ts`)
+### Taps not saved yet (`data/pendingStats.ts`, `data/pendingSaves.ts`)
 
-The live game screen keeps every stat tap that isn't confirmed saved in a small journal in localStorage, so no tap depends on the page staying open or on IndexedDB answering (WebKit can lose its IndexedDB connection while the app is in the background, and then every write fails until it's back or the page reloads).
+The live game screen keeps every stat tap that isn't confirmed saved in a small journal in localStorage, so no tap depends on the page staying open or on IndexedDB answering (WebKit can lose its IndexedDB connection while the app is in the background, and then every write fails until it's back or the page reloads). `pendingStats.ts` is the journal itself and never touches the database; `pendingSaves.ts` saves what it holds.
 
 - One key per tap, `hoop-stats.pendingStat.<id>`, holding `{ id, gameId, type, period, at, location? }`: no write ever rewrites the others. It's written synchronously at the tap, before the IndexedDB write starts, and removed once the save is confirmed or the tap is undone.
-- `newPendingStat({ gameId, type, period, location? }, after?)` makes a tap: its stat's `id` and its tap time `at` (`nextTimestamp` after the latest stat or tap, so taps keep their order). `savePendingStat(stat)` saves it through `recordStat` with that `id` and `at`: idempotent, so saving a tap twice is still one stat.
+- `newPendingStat({ gameId, type, period, location? }, after?)` makes a tap: its stat's `id` and its tap time `at` (`nextTimestamp` after the latest stat or tap, so taps keep their order). `savePendingStat(stat)` (`pendingSaves.ts`) saves it through `recordStat` with that `id` and `at`: idempotent, so saving a tap twice is still one stat.
 - `addPendingStat(stat)` (false if it couldn't be kept), `removePendingStat(id)`, `isPendingStat(id)` and `listPendingStats(gameId?)` (in tap order; an entry this version can't read is skipped and left alone). They never throw: without localStorage (full, blocked), taps are still saved, just not kept across a reload, and the screen says so.
 - `replayPendingStats()` runs from `main.tsx` after the first render, in the background, never blocking or showing anything: it saves each kept tap once and forgets it, keeps one it can't save for next time, drops the taps of games that no longer exist, and saves taps of finished games too. A tracking session also starts with its game's kept taps, listed as not saved (counted, and undoable) until they are.
 

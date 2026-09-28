@@ -1,7 +1,8 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
-import { listPendingStats, replayPendingStats } from '@/data/pendingStats';
+import { replayPendingStats } from '@/data/pendingSaves';
+import { listPendingStats } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
 import {
   createGame,
