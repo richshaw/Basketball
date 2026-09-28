@@ -60,15 +60,24 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
 
-  /* Layers */
+  /*
+   * How far floating UI (toasts) stays above the bottom edge: the home indicator,
+   * plus the tab bar while it's on screen (TabBar.module.css raises it).
+   */
+  --overlay-inset-bottom: var(--safe-bottom);
+
+  /* Layers (sheets and dialogs use the browser's top layer, above all of these) */
   --z-header: 10;
   --z-tab-bar: 20;
   --z-banner: 30;
+  --z-toast: 40;
 
   /* Motion */
   --duration-fast: 120ms;
   --duration-normal: 200ms;
+  --duration-slow: 320ms;
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
 
   /* Brand and stat fills (same in both themes) */
   --color-accent: #f97316;
@@ -89,14 +98,25 @@
   --color-text: #15171c;
   --color-text-muted: #5c5f68;
   --color-border: #d1d1d6;
+  /* Outline of form fields: 3:1 against bg and surface, so the field is findable. */
+  --color-border-strong: #838389;
   --color-accent-text: #b83c0a;
   --color-made-text: #166534;
   --color-miss-text: #b91c1c;
   --color-stat-text: #1d4ed8;
   --color-danger-text: #b91c1c;
   --color-focus: #2563eb;
+  /* Selected segment of a SegmentedControl (text on it: --color-text). */
+  --color-thumb: #ffffff;
+  /* Inverted fill for toasts: dark in the light theme, light in the dark theme. */
+  --color-inverse: #26292f;
+  --color-on-inverse: #f4f5f7;
+  --color-on-inverse-accent: #fb923c;
+  /* Dims the page behind a sheet. */
+  --color-scrim: rgba(0, 0, 0, 0.4);
   --color-tab-bar-bg: rgba(250, 250, 252, 0.9);
   --shadow-overlay: 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.14);
+  --shadow-thumb: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.06);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -107,13 +127,20 @@
     --color-text: #f4f5f7;
     --color-text-muted: #a3a9b4;
     --color-border: #2f343c;
+    --color-border-strong: #6b7280;
     --color-accent-text: #fb923c;
     --color-made-text: #4ade80;
     --color-miss-text: #f87171;
     --color-stat-text: #60a5fa;
     --color-danger-text: #f87171;
     --color-focus: #60a5fa;
+    --color-thumb: #454b55;
+    --color-inverse: #e8eaed;
+    --color-on-inverse: #15171c;
+    --color-on-inverse-accent: #b83c0a;
+    --color-scrim: rgba(0, 0, 0, 0.6);
     --color-tab-bar-bg: rgba(22, 25, 30, 0.9);
     --shadow-overlay: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.55);
+    --shadow-thumb: 0 1px 3px rgba(0, 0, 0, 0.5);
   }
 }
