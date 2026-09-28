@@ -1,0 +1,55 @@
+.markers {
+  pointer-events: none;
+}
+
+/* Context behind something else, e.g. a game's earlier shots behind a new spot. */
+.faint {
+  opacity: 0.4;
+}
+
+/*
+ * A make: a see-through filled circle, so piles of shots read darker. A ring of floor
+ * color under it (paint-order) keeps overlapping makes apart.
+ */
+.made {
+  fill: var(--color-court-made);
+  fill-opacity: 0.8;
+  stroke: var(--color-court);
+  paint-order: stroke;
+}
+
+/* A miss: an ×, on a halo of floor color so it stays readable over lines and makes. */
+.missHalo {
+  fill: none;
+  stroke: var(--color-court);
+  stroke-linecap: round;
+}
+
+.missMark {
+  fill: none;
+  stroke: var(--color-court-miss);
+  stroke-linecap: round;
+}
+
+/* In the lane the ring and halo match the lane, so they only show where markers overlap. */
+.made.onPaint,
+.miss.onPaint .missHalo {
+  stroke: var(--color-court-paint);
+}
+
+.glyph {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  overflow: visible;
+}
+
+/* On the page, a glyph needs no floor-colored ring or halo. */
+.glyph .made {
+  fill-opacity: 1;
+  stroke: none;
+}
+
+.glyph .missHalo {
+  display: none;
+}
