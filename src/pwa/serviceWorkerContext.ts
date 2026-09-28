@@ -4,7 +4,7 @@ import { createContext, useContext } from 'react';
 export interface ServiceWorkerUpdate {
   /** A new version has been downloaded and is waiting to take over. */
   needRefresh: boolean;
-  /** Switches to the waiting version; the page reloads once it takes control. */
+  /** Switches this window to the new version: it reloads once the new version takes control. */
   update: () => Promise<void>;
   /** Hides the prompt for now; it comes back on the next launch. */
   dismiss: () => void;

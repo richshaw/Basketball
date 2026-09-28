@@ -25,14 +25,16 @@ describe('UpdateBanner', () => {
   });
 
   it('offers the new version and updates when tapped', async () => {
-    const update = vi.fn(() => new Promise<void>(() => {})); // the page reloads before this settles
+    const update = vi.fn(() => Promise.resolve());
     const { user } = renderBanner({ needRefresh: true, update });
 
     expect(screen.getByRole('status')).toHaveTextContent('New version available');
     await user.click(screen.getByRole('button', { name: 'Update' }));
 
     expect(update).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: 'Updating…' })).toBeDisabled();
+    // update() resolves once the switch has started; the page reloads right after
+    // (see applyUpdate), so the banner keeps showing progress instead of re-arming.
+    expect(await screen.findByRole('button', { name: 'Updating…' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Later' })).toBeDisabled();
   });
 

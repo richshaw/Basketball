@@ -35,8 +35,8 @@
 }
 
 .backIcon {
-  width: 26px;
-  height: 26px;
+  width: var(--icon-size-nav);
+  height: var(--icon-size-nav);
   stroke-width: 2.5;
 }
 

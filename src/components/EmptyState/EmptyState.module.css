@@ -9,12 +9,12 @@
 .icon {
   display: grid;
   place-items: center;
-  width: 80px;
-  height: 80px;
+  width: var(--illustration-size);
+  height: var(--illustration-size);
   margin-bottom: var(--space-4);
   border-radius: var(--radius-full);
   background-color: var(--color-surface-2);
-  font-size: 2.5rem;
+  font-size: var(--font-size-4xl);
   line-height: 1;
 }
 

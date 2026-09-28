@@ -1,7 +1,12 @@
 name: Deploy to GitHub Pages
 
+# Deploy only what CI has tested: this runs after the CI workflow finishes on main.
+# A CI run cancelled by a newer push (or a failed one) deploys nothing; the newest
+# run to pass deploys its own commit.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -17,9 +22,18 @@ concurrency:
 
 jobs:
   build:
+    # Manual runs deploy the chosen branch; automatic ones only a successful CI run
+    # for a push to main (not a pull request whose branch happens to be named main).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The exact commit CI tested, even if main has moved on since.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc

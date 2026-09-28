@@ -1,15 +1,15 @@
 import { ButtonLink } from '@/components/Button/ButtonLink';
 import { EmptyState } from '@/components/EmptyState/EmptyState';
+import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { paths } from '@/routes';
-import styles from './HomeScreen.module.css';
 
 /** Placeholder: the game list arrives in a later PR. */
 export function HomeScreen() {
   return (
     <main>
       <ScreenHeader title="Games" />
-      <div className={styles.body}>
+      <ScreenBody>
         <EmptyState
           icon="🏀"
           title="Your games will live here"
@@ -20,7 +20,7 @@ export function HomeScreen() {
             </ButtonLink>
           }
         />
-      </div>
+      </ScreenBody>
     </main>
   );
 }

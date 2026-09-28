@@ -50,9 +50,10 @@ export default defineConfig({
       // The icons are already matched by the png glob below.
       includeManifestIcons: false,
       workbox: {
-        // Precache everything the app needs so it works with no signal after the first load.
-        // (manifest.webmanifest is always added by the plugin, so it isn't globbed again.)
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // Precache everything the app needs so it works with no signal after the first load:
+        // the build output and public/ files of these types. manifest.webmanifest is always
+        // added by the plugin (so it isn't globbed again), and sw.js / workbox-*.js never are.
+        globPatterns: ['**/*.{js,css,html,json,txt,svg,png,jpg,jpeg,webp,ico,woff,woff2}'],
         cleanupOutdatedCaches: true,
         // Let the first-installed worker control the already-open page right away.
         clientsClaim: true,

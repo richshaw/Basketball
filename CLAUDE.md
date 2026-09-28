@@ -5,10 +5,12 @@ Offline-first iPhone web app (PWA). A parent records their daughter's basketball
 ## Product principles
 
 - **Fast one-tap entry during games.** Recording a stat is one tap on a big button: no confirm dialogs, no typing, no scrolling on the live game screen. Offer undo instead of asking "are you sure?".
-- **Fully offline.** Everything works with no signal after the first load. No network calls, CDNs, web fonts or analytics.
-- **Data lives only on the device** (IndexedDB). No accounts, no servers, no sync.
+- **Fully offline-first.** After the first load, everything works completely with no network. No CDNs, web fonts, analytics or other third-party requests.
+- **Data lives on the device** (IndexedDB), with no accounts. The only network use allowed is the optional, end-to-end-encrypted, best-effort backup to the project's own backup server (`server/`, added in PR #2). Nothing else may call the network, and the app never waits on it.
 - **Never lose data.** Save every tap immediately. Never rely on a later "save" step, on the page staying open, or on in-memory state.
 - **Never interrupt a live game.** Nothing may pop up, navigate away or reload on the tracking screen. That's why the update banner lives only in the tab-screen shell.
+- **No zooming on the game screen.** Its root element sets `touch-action: manipulation` (not just its buttons), so fast taps between buttons can't double-tap-zoom.
+- **Resume after a relaunch.** iOS may relaunch the app at `start_url` in the middle of a game, so the Games screen must offer to resume the live game.
 
 ## Stack
 
@@ -54,7 +56,7 @@ Keep changes inside your own screen folder where you can. Code used by more than
 - Colors: `--color-x` is a fill, `--color-on-x` is text on that fill, `--color-x-text` is that hue as text on `bg` / `surface` / `surface-2`. Both themes follow the system light/dark setting. `src/styles/tokens.test.ts` checks every text/background pair for WCAG AA contrast; add new pairs there.
 - One CSS Module per component, camelCase class names (`styles.titleRow`). Combine classes with `cx()` from `src/lib/cx.ts`.
 - Every tappable element is at least 44x44px (`--tap-target`); main actions use 56px (`--tap-target-lg`). Game-screen buttons should be much bigger, with big, bold type (`--font-size-xl` and up, `--font-size-display` for scores). Put `.tabular-nums` on numbers that change.
-- The status bar is translucent, so content draws under it. `ScreenHeader` pads the top safe area and `TabBar` the bottom one. A full-screen route pads `var(--safe-bottom)` itself; `body` handles the left and right insets.
+- The status bar is black (`black` style), and the page starts below it. `ScreenHeader` pads the top safe-area inset (0 there), `TabBar` the bottom one (home indicator) and `body` the sides. Put screen content in `ScreenBody`: it adds the page padding and, on full-screen routes, clears the home indicator.
 - Reach for the shared components before writing new basics: `Button` / `ButtonLink` (variants `primary`, `secondary`, `danger`, `ghost`; sizes `md`, `lg`; `block`), `Card`, `EmptyState`, `ScreenHeader`. Add icons as inline SVG components in `src/components/Icons/Icons.tsx`.
 
 ## Data layer
@@ -156,6 +158,7 @@ npm run lint && npm run format:check && npm run typecheck && npm test && npm run
 ## Gotchas
 
 - The service worker runs only in the production build (`npm run build && npm run preview`), never in `npm run dev`.
-- Outside CI, `npm run e2e` reuses any server already listening on port 4173. Stop old preview servers or you'll test a stale build.
-- Files in `public/` and the build output are precached automatically (`workbox.globPatterns` in `vite.config.ts`).
+- `npm run e2e` builds and serves this checkout on `E2E_PORT` (default 4173) and fails if the port is taken: parallel worktrees must use distinct `E2E_PORT` values.
+- Build output and `public/` files are precached only if their extension is in `workbox.globPatterns` (`vite.config.ts`). Add new file types there.
+- An app update reloads only the window where the user tapped Update (`src/pwa/updates.ts`). Nothing else may reload the page.
 - In Vitest, `react-router/dom` is aliased to `react-router` (see `vite.config.ts`) so tests never load two copies of the router.

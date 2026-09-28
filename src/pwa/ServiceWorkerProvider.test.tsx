@@ -1,45 +1,76 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { RegisterSWOptions } from 'vite-plugin-pwa/types';
 import { describe, expect, it, vi } from 'vitest';
 import { UpdateBanner } from '@/components/UpdateBanner/UpdateBanner';
+import { applyUpdate, watchForTakeover } from './updates';
 import { ServiceWorkerProvider } from './ServiceWorkerProvider';
 
 const sw = vi.hoisted(() => ({
-  needRefresh: true,
+  options: undefined as RegisterSWOptions | undefined,
   setNeedRefresh: vi.fn(),
   updateServiceWorker: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('virtual:pwa-register/react', () => ({
-  useRegisterSW: () => ({
-    needRefresh: [sw.needRefresh, sw.setNeedRefresh],
-    offlineReady: [false, vi.fn()],
-    updateServiceWorker: sw.updateServiceWorker,
-  }),
+  useRegisterSW: (options: RegisterSWOptions) => {
+    sw.options = options;
+    return {
+      needRefresh: [true, sw.setNeedRefresh],
+      offlineReady: [false, vi.fn()],
+      updateServiceWorker: sw.updateServiceWorker,
+    };
+  },
 }));
 
+vi.mock('./updates', () => ({
+  applyUpdate: vi.fn(() => Promise.resolve()),
+  watchForTakeover: vi.fn(() => () => {}),
+}));
+
+function renderProvider() {
+  const user = userEvent.setup();
+  render(
+    <ServiceWorkerProvider>
+      <UpdateBanner />
+    </ServiceWorkerProvider>,
+  );
+  return { user };
+}
+
 describe('ServiceWorkerProvider', () => {
-  it('shares the waiting update and activates it on request', async () => {
-    const user = userEvent.setup();
-    render(
-      <ServiceWorkerProvider>
-        <UpdateBanner />
-      </ServiceWorkerProvider>,
-    );
+  it('never lets the plugin reload windows on its own', () => {
+    renderProvider();
+    // With onNeedReload set, vite-plugin-pwa calls it instead of reloading every window.
+    expect(sw.options?.onNeedReload).toBeTypeOf('function');
+    expect(() => sw.options?.onNeedReload?.()).not.toThrow();
+  });
+
+  it('applies the waiting update when asked', async () => {
+    const { user } = renderProvider();
 
     await user.click(screen.getByRole('button', { name: 'Update' }));
-    expect(sw.updateServiceWorker).toHaveBeenCalledWith(true);
+
+    expect(applyUpdate).toHaveBeenCalledTimes(1);
+    const [options] = vi.mocked(applyUpdate).mock.calls[0] ?? [];
+    await options?.activateWaitingWorker();
+    expect(sw.updateServiceWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers the update when another window already switched to it', () => {
+    renderProvider();
+    const [, onTakeover] = vi.mocked(watchForTakeover).mock.calls[0] ?? [];
+
+    act(() => onTakeover?.());
+
+    expect(sw.setNeedRefresh).toHaveBeenCalledWith(true);
   });
 
   it('hides the prompt when dismissed', async () => {
-    const user = userEvent.setup();
-    render(
-      <ServiceWorkerProvider>
-        <UpdateBanner />
-      </ServiceWorkerProvider>,
-    );
+    const { user } = renderProvider();
 
     await user.click(screen.getByRole('button', { name: 'Later' }));
+
     expect(sw.setNeedRefresh).toHaveBeenCalledWith(false);
   });
 });
