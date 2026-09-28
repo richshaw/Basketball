@@ -41,7 +41,7 @@ const BACKUP_PROBLEMS: ReadonlySet<CloudBackupErrorKind> = new Set([
 interface Found {
   code: string;
   backup: CloudBackup;
-  /** When `backup` is an older backup: the newest one's version (see `turnOnBackup`). */
+  /** When `backup` is an older backup: the newest one's version, as listed (see `turnOnBackup`). */
   newestVersion?: string;
 }
 
@@ -162,8 +162,9 @@ export function CloudRestoreScreen() {
   /** After the import: this phone carries on backing up with the code. Never rejects. */
   const turnOnBackup = async (): Promise<string | undefined> => {
     if (!found) return undefined;
-    // An older backup was chosen over the newest one, which this phone has seen: it
-    // carries on from the newest, so the newest isn't taken for another phone's.
+    // The engine carries on from the server's newest version, so an older backup isn't
+    // taken for another phone's later. If it can't ask the server just then, it falls
+    // back to the backup's own version: give it the newest this screen listed instead.
     const backup = found.newestVersion
       ? { ...found.backup, version: found.newestVersion }
       : found.backup;

@@ -4,13 +4,16 @@ import { restoreStubs, stubProperties } from '@/test/browser';
 import {
   backUpNow,
   disableCloudBackup,
+  fetchCloudBackup,
   getBackupCode,
   getCloudBackupStatus,
 } from '@/data/backup/cloudBackup';
 import { errorMessage } from '@/data/backup/errors';
 import { listGames } from '@/data/repo';
 import { paths } from '@/routes';
+import { buildRealData } from '@/test/backupHarness';
 import {
+  backUpFromAnotherPhone,
   pauseForAnotherPhone,
   pauseForMissingGames,
   seedOwnGames,
@@ -374,6 +377,63 @@ describe('Settings: cloud backup paused or stopped', () => {
 
     await expectToast('Backed up');
     // This phone's, the other phone's, and this phone's again.
+    expect(cloud.server.uploads).toHaveLength(3);
+    expect(await settledStatus()).toMatchObject({ state: 'idle' });
+  });
+
+  it("settles the pause by restoring the other phone's backup", async () => {
+    // The other phone has the ten games too, plus a live one.
+    const code = await pauseForAnotherPhone(cloud.server, buildRealData({ liveGame: true }));
+    const { user, router } = await renderSettings();
+
+    await user.click(within(cloudList()).getByRole('link', { name: /^Restore from backup/ }));
+    const field = await screen.findByLabelText('Backup code');
+    await waitFor(() => {
+      expect(field).toHaveValue(code);
+    });
+    await user.click(screen.getByRole('button', { name: 'Find backup' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).toHaveAccessibleDescription(/ · 11 games · /);
+    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+
+    await expectToast(
+      'Restored 1 game · 10 already up to date. This phone now backs up with this code.',
+    );
+    expect(router.state.location.pathname).toBe(paths.home);
+    expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
+    // This phone's, the other phone's, then both phones' games together.
+    expect(cloud.server.uploads).toHaveLength(3);
+    const latest = await fetchCloudBackup(code);
+    expect(latest.ok && latest.value.games).toBe(11);
+  });
+
+  it('asks again when backing up anyway turns up another phone', async () => {
+    const code = await pauseForMissingGames();
+    await backUpFromAnotherPhone(cloud.server, code, buildRealData());
+    const { user } = await renderSettings();
+
+    await user.click(cloudButton(/^Back up anyway/));
+    await user.click(
+      within(await screen.findByRole('alertdialog', { name: 'Back up anyway?' })).getByRole(
+        'button',
+        { name: 'Back up anyway' },
+      ),
+    );
+
+    // Not backed up: the other phone's backup is the newest, so it asks about that.
+    await expectToast(errorMessage('other-device', 'backup'));
+    await waitFor(() => {
+      expect(cloudList()).toHaveTextContent('Another phone backed up with this backup code');
+    });
+    expect(cloud.server.uploads).toHaveLength(2);
+
+    await user.click(cloudButton(/^Use this phone for backups/));
+    await user.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Use this phone for backups?' }),
+      ).getByRole('button', { name: 'Use this phone' }),
+    );
+    await expectToast('Backed up');
     expect(cloud.server.uploads).toHaveLength(3);
     expect(await settledStatus()).toMatchObject({ state: 'idle' });
   });
