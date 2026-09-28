@@ -8,7 +8,7 @@ Offline-first iPhone web app (PWA). A parent records their daughter's basketball
 - **Fully offline-first.** After the first load, everything works completely with no network. No CDNs, web fonts, analytics or other third-party requests.
 - **Data lives on the device** (IndexedDB), with no accounts. The only network use allowed is the optional, end-to-end-encrypted, best-effort backup to the project's own backup server (`server/`, added in PR #2). Nothing else may call the network, and the app never waits on it.
 - **Never lose data.** Save every tap immediately. Never rely on a later "save" step, on the page staying open, or on in-memory state.
-- **Never interrupt a live game.** Nothing may pop up, navigate away or reload on the tracking screen. That's why the update banner lives only in the tab-screen shell.
+- **Never interrupt a live game.** Nothing may pop up, navigate away or reload on the tracking screen. That's why the update and cloud backup banners live only in the tab-screen shell.
 - **No zooming on the game screen.** Its root element sets `touch-action: manipulation` (not just its buttons), so fast taps between buttons can't double-tap-zoom.
 - **Resume after a relaunch.** iOS may relaunch the app at `start_url` in the middle of a game, so the Games screen must offer to resume the live game.
 
@@ -49,7 +49,8 @@ Keep changes inside your own screen folder where you can. Code used by more than
 
 - Build every URL with `paths.*` from `src/routes.ts`, e.g. `paths.trackGame(game.id)`. Never hand-build a URL string.
 - To add a route, add it to `routePatterns` and `paths`, then to `appRoutes` in `src/router.tsx`.
-- Tab screens (Games `/`, Stats `/stats`, Settings `/settings`) render inside `AppShell` (content, update banner, tab bar). Full-screen routes (new game, game report, live tracking) render without it.
+- Tab screens (Games `/`, Stats `/stats`, Settings `/settings`) render inside `AppShell` (the install and cloud backup banners, content, update banner, tab bar). Full-screen routes (new game, game report, live tracking, restore from a backup code) render without it.
+- A few paths carry a query, built by `paths.*` like any other: `paths.settingsSection('cloud-backup')` opens Settings at that section (focused and scrolled into view), and `paths.restoreBackup('games')` makes the restore screen's back link return to Games (Settings otherwise).
 - Navigate with `<Link>`, `<ButtonLink>` or `useNavigate()`. Unknown paths redirect to Games.
 
 ## Styling
@@ -77,6 +78,7 @@ Each lives in `src/components/<Name>/`. See them all, in their main states, at `
 - `StatTileGrid` + `StatTile`: big-number tiles (`value`, `label`, `fullLabel`, `detail`, `highlight`), four across on most iPhones (`columns` fixes the count).
 - `Badge`: small pill label; `tone` is `neutral`, `accent`, `made`, `miss` or `stat`.
 - `InstallBanner` / `InstallSheet`: the "Add to Home Screen" nudge. `AppShell` renders the banner, which shows only in iPhone Safari (not in the installed app) and stays away 14 days once dismissed; the sheet has the steps (Settings opens it too). `InstallBannerView` is the banner alone, always shown.
+- `BackupBanner`: one line at the top of the tab screens (`AppShell` renders it) while cloud backup needs the parent: paused (`paused-shrink`, `paused-other-device`) or stopped (`needs-attention`), never for waiting for signal or a retry. It links to `paths.settingsSection('cloud-backup')`. `BackupBannerView` is the banner alone, always shown.
 - `shareText({ title, text })` in `src/lib/share.ts`: the share sheet, else the clipboard. Resolves to `'shared' | 'cancelled' | 'copied' | 'failed'` and never throws; call it straight from a tap. `shareFile(file)` shares just a file, resolving to `'shared' | 'cancelled' | 'unavailable'` (then offer it another way, e.g. a download).
 
 `App` mounts `UiProviders` (toasts and confirmations) once at the root, and the test render helpers include it. A toast shown while a sheet is open appears inside the sheet, under its header. `TabBar` and the update banner raise `--overlay-inset-bottom` so toasts clear them; a screen with its own bottom controls can set it on `:root` too.
@@ -188,6 +190,18 @@ Network calls resolve to `CloudResult<T>`: `{ ok: true, value }` or `{ ok: false
 - `useCloudBackupStatus()` (`hooks.ts`): `undefined` while loading, then `{ available, enabled, state, lastSuccessAt?, lastError?, nextAttemptAt?, pendingChanges, shrink?, otherDevice? }`. `state` is `idle`, `backing-up`, `waiting-for-signal` (changes wait for a connection), `needs-attention` (automatic backup stopped: the server refused the code (401), the cloud copy was deleted (409, or gone from the server once this phone had backed up) or the data is too big (413); `lastError.message` says which, and `backUpNow()` retries, starting a new cloud copy if it was deleted), `paused-shrink` (`shrink: { backedUpGames, missingGames }`), `paused-other-device` (`otherDevice: { backedUpAt? }`) or `error` (retried at `nextAttemptAt`; a busy server's message says when).
 - `parseBackupCode` / `normalizeBackupCode` (`code.ts`) check a typed code offline and throw `BackupCodeError` with a message; the functions above already do it.
 
+### Screens
+
+Screens use only `cloudBackup.ts` and `hooks.ts` (plus their types). They live in `screens/Settings/`, and what they say is in `cloudBackupText.ts` (pure, tested on its own). Its dates and times use no-break spaces so they never split across lines: build expected text with the same helpers, and for `toHaveTextContent` (which reads them as plain spaces) turn `\u00a0` into a space in the expected text too.
+
+- **Settings > Cloud backup** (`CloudBackupSection`, above the backup files, only when `isCloudBackupAvailable()`), driven by `useCloudBackupStatus()` and `useBackupCode()` (the code while on or kept while off; null without one).
+  - Off: what it does, "Turn on cloud backup" (saying when it reuses the kept code), "Restore from a backup code" and, with a kept code, "Delete online backup".
+  - Turning on shows `BackupCodeSheet`: the code large and monospaced in the engine's groups, Copy and Share (`shareText`: one line, "Hoop Stats backup code: …", which the restore field reads back), why it matters, and only "I've saved it" closes it. "Show backup code" opens it again.
+  - On: a status row in plain words (`describeStatus`; relative times kept fresh by `useNow`), "Back up now" (disabled while backing up; a toast "Backed up" or the engine's message), "Show backup code" and "Turn off" (`TurnOffSheet`: keep the online backup, or delete it after asking; a delete that fails leaves backup on and says why in the sheet).
+  - Paused or stopped, the row gives the reason (with the real counts, or when the other phone backed up) and the ways out: `paused-shrink` offers "Restore from backup" and "Back up anyway"; `paused-other-device` "Restore from backup", "Use this phone for backups" and "Turn off on this phone"; `needs-attention` "Back up now"; `error` says when it tries again. Forcing an upload always asks first, and the section follows whatever state comes back (a forced upload can pause for a different reason).
+- **Restore from a backup code** (`CloudRestoreScreen`, full screen at `paths.restoreBackup()`): from Settings (off, or "Restore from backup" in a pause) and from the first-run card on Games. The field takes the code however it's typed and fills in this phone's own code when it has one; the engine's parser catches typos before anything is sent. "Find backup" previews the newest backup in `RestoreSheet` (the phone's own date for it, its games and the player) with the file restore's choices; afterwards `enableCloudBackupWithCode` runs and Games shows the games. "Older backups" lists earlier versions, also when the newest one can't be restored.
+- **Erase all data**, with a code on the phone, says the online backup stays, that the phone keeps its code and won't replace the backup with an empty phone, and which row deletes the online backup too.
+
 ### How it works
 
 - **Code** (`code.ts`): 128 random bits as 28 Crockford base32 characters in groups of four; the last two are a Reed-Solomon check, so any one or two typos (or a swap) are caught before a network call. Case, spaces and dashes don't matter; O reads as 0 and I or L as 1.
@@ -207,6 +221,7 @@ Network calls resolve to `CloudResult<T>`: `{ ok: true, value }` or `{ ok: false
 - The toast area is `getByRole('status', { name: 'Notifications' })` and is always on screen, so give your own status messages a name or query them by text.
 - End-to-end tests cover key flows. They build the app and serve it under `/Basketball/`, like GitHub Pages. For data, use `e2e/support/data.ts`: `await seedDemoData(page)` after `page.goto('./')`, then navigate (e.g. to `paths.gameReport(demoGameId(10))`).
 - Cloud backup tests use `src/test/fakeBackupServer.ts` (an in-memory copy of the server's API, which e2e specs route into the page with `routeFakeBackupServer` from `e2e/support/backup.ts`; it has no retention, rate limits or disk space) and `src/test/backupHarness.ts` (`createEngineHarness()`: an engine with a manual clock, a fake connection and visibility, and `notify()` for data changes; `buildRealData()` is the demo season under ids that aren't sample ids, since the shrink guard ignores sample games). `src/data/backup/server.node.test.ts` runs the client against the real `server/` app in process, and the same contract against the fake; it needs `npm ci --prefix server` (without it those tests show as skipped, with a test named for the reason, except in CI, where it's an error).
+- Screen tests of cloud backup use `src/test/cloudBackupApp.ts`: `setUpFakeCloudBackup()` (once per file) points the app's own engine at a fresh fake server for each test, and `seedOwnGames`, `turnOnCloudBackup`, `pauseForMissingGames`, `pauseForAnotherPhone`, `stopForDeletedCloudCopy` and `backUpFromAnotherPhone` put it in each state. The scheduler isn't started there, so only turning backup on and `backUpNow` upload; `settledStatus()` waits for them. In e2e, `seedOwnGames(page)` (`e2e/support/ownGames.ts`) restores the parent's own games through Settings, `routeFakeBackupServer(page, server)` puts a second phone on the same server, and `backUpFromAnotherPhone(server)` adds another phone's backup; `e2e/backup.screenshots.spec.ts` captures every cloud backup state.
 - Add each new screen to `e2e/screenshots.spec.ts` (one line), run `npm run screenshots`, and look at the PNGs in light and dark mode.
 - @playwright/test is pinned to exactly 1.56.1 to match the preinstalled Chromium. Don't run `playwright install` in the agent environment; CI installs its own browser.
 
