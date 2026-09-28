@@ -45,6 +45,14 @@ export function ChartIcon(props: IconProps) {
   );
 }
 
+export function CheckmarkIcon(props: IconProps) {
+  return (
+    <Icon strokeWidth={2.75} {...props}>
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </Icon>
+  );
+}
+
 export function GearIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -82,6 +90,27 @@ export function PlusIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="M12 5v14M5 12h14" />
+    </Icon>
+  );
+}
+
+/** Safari's Share button: a box with an arrow coming out of the top. */
+export function ShareIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3v11.5" />
+      <path d="M8 6.75 12 3l4 3.75" />
+      <path d="M8.5 10H7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1.5" />
+    </Icon>
+  );
+}
+
+/** The share sheet's "Add to Home Screen" action: a plus in a rounded square. */
+export function AddToHomeScreenIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="4" y="4" width="16" height="16" rx="4" />
+      <path d="M12 8.5v7M8.5 12h7" />
     </Icon>
   );
 }

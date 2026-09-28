@@ -28,11 +28,20 @@ describe('DevUiScreen', () => {
       'Badge',
       'Sheet and ConfirmDialog',
       'Toast and shareText',
+      'InstallBanner and InstallSheet',
       'Button',
       'Court',
     ]) {
       expect(screen.getByRole('heading', { level: 2, name: title })).toBeInTheDocument();
     }
+  });
+
+  it('opens a game from a tap anywhere on a game log row (linkedRows)', async () => {
+    const { user, router } = await openGallery();
+    const log = screen.getByRole('table', { name: 'Game log' });
+    const row = within(log).getByRole('row', { name: /Hawks/ });
+    await user.click(within(row).getByRole('cell', { name: '9' }));
+    expect(router.state.location.pathname).toBe(paths.gameReport('demo'));
   });
 
   it('opens a sheet whose Save closes it and shows a toast', async () => {
@@ -76,6 +85,18 @@ describe('DevUiScreen', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
     expect(notifications()).toHaveTextContent('Game deleted');
+  });
+
+  it('shows the install banner, whose How opens the steps', async () => {
+    const { user } = await openGallery();
+    const banner = screen.getByRole('complementary', { name: 'Add to Home Screen' });
+
+    await user.click(within(banner).getByRole('button', { name: 'How' }));
+    expect(
+      within(screen.getByRole('dialog', { name: 'Add to Home Screen' })).getByRole('list', {
+        name: 'In Safari',
+      }),
+    ).toHaveTextContent('Tap the Share button');
   });
 
   it('shows an undo toast whose action runs once', async () => {

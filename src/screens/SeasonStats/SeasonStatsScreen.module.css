@@ -1,0 +1,194 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding-top: var(--space-1);
+}
+
+/* The season picker, the player summary and the in-progress note sit close together. */
+.top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Same look as a GroupedList header, so every section reads alike. */
+.sectionTitle {
+  margin-inline: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Summary card */
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+}
+
+.avatar {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: var(--space-12);
+  height: var(--space-12);
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-heavy);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.identity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.playerName {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  overflow-wrap: anywhere;
+}
+
+.summaryCaption {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+}
+
+.record {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: flex-end;
+}
+
+/* The number comes first on screen; in the markup the label (<dt>) comes first. */
+.recordValue {
+  order: -1;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-heavy);
+  line-height: var(--line-height-tight);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.recordLabel {
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.footnote {
+  margin-inline: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+}
+
+/* Season highs */
+
+.highValue {
+  color: var(--color-text);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+/* Totals and game log: a long first-column label ends in "…" so the stats stay in view. */
+
+.totalsLabel {
+  display: block;
+  max-width: var(--stat-row-label-max-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gameLink {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  max-width: var(--stat-row-label-max-width);
+  color: var(--color-text);
+}
+
+.gameLink:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+.gameOpponent {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gameDate {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+}
+
+.result {
+  white-space: nowrap;
+}
+
+.resultLetter {
+  font-weight: var(--font-weight-bold);
+}
+
+.win {
+  color: var(--color-made-text);
+}
+
+.loss {
+  color: var(--color-miss-text);
+}
+
+.tie,
+.noResult {
+  color: var(--color-text-muted);
+}
+
+/* Shot chart placeholder (a later PR adds the season ShotMap) */
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-6) var(--space-4);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.placeholderTitle {
+  color: var(--color-text);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}

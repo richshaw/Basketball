@@ -58,6 +58,13 @@
   --list-icon-size: 28px; /* emoji or icon at the start of a list row */
   --illustration-size: 80px; /* the round icon of an empty state */
   --stat-tile-min-width: 76px; /* fits four stat tiles across a 390px iPhone */
+  --stat-row-label-max-width: 144px; /* a StatTable row label that leaves the stats in view */
+  --avatar-size: 52px; /* the player's round avatar at the top of Settings */
+  --app-icon-size: 40px; /* the app icon in the "Add to Home Screen" banner */
+  --switch-track-width: 51px; /* an iOS-style on/off switch */
+  --switch-track-height: 31px;
+  --switch-thumb-inset: 2px;
+  --row-control-width: 220px; /* a segmented control beside its label in a list row */
   --focus-ring-width: 3px;
   --border-width-emphasis: 2px; /* accent outline of a card that must stand out (a live game) */
   --header-bar-height: 44px;

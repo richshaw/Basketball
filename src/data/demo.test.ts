@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { isOnHalfCourt, isThreePoint } from '@/lib/court';
 import { todayLocalISO } from '@/lib/format';
-import { buildDemoData, DEMO_LIVE_GAME_ID, DEMO_SEASON, demoGameId, seedDemoData } from './demo';
-import { createGame, getGame, getLiveGame, getPlayer, listGames, savePlayer } from './repo';
+import {
+  buildDemoData,
+  DEMO_LIVE_GAME_ID,
+  DEMO_SEASON,
+  demoGameId,
+  isDemoGameId,
+  seedDemoData,
+} from './demo';
+import {
+  createGame,
+  getGame,
+  getLiveGame,
+  getPlayer,
+  getSettings,
+  listGames,
+  savePlayer,
+  updateSettings,
+} from './repo';
 import { computeStatLine, gameResult, groupEventsByGame, isFieldGoalType } from './stats';
 import { exportAll, parseExportFile } from './transfer';
 
@@ -163,5 +179,25 @@ describe('seedDemoData', () => {
     await savePlayer({ name: 'Someone else' });
     await expect(seedDemoData({ today: TODAY })).rejects.toThrow(/own data/);
     expect((await getPlayer())?.name).toBe('Someone else');
+  });
+
+  it("can keep the device's own settings", async () => {
+    const settings = await updateSettings({ shotChart: false, defaultPeriodFormat: 'halves' });
+    await seedDemoData({ today: TODAY, keepSettings: true });
+    expect(await listGames()).toHaveLength(10);
+    expect(await getSettings()).toEqual(settings);
+
+    await seedDemoData({ today: TODAY });
+    expect(await getSettings()).toEqual(demo.settings);
+  });
+});
+
+describe('isDemoGameId', () => {
+  it('tells demo games from the rest', () => {
+    expect(isDemoGameId(demoGameId(1))).toBe(true);
+    expect(isDemoGameId(demoGameId(10))).toBe(true);
+    expect(isDemoGameId(DEMO_LIVE_GAME_ID)).toBe(true);
+    expect(isDemoGameId('3f9c2ab0-demo-game-01')).toBe(false);
+    expect(isDemoGameId('demo-game-1')).toBe(false);
   });
 });

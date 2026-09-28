@@ -30,6 +30,19 @@ describe('local dates', () => {
     expect(formatGameDate('2026-09-27', { withYear: true })).toBe('Sun, Sep 27, 2026');
   });
 
+  it('leaves out the weekday when asked', () => {
+    expect(formatGameDate('2026-09-27', { weekday: false })).toBe('Sep 27');
+    expect(formatGameDate('2025-12-31', { weekday: false, withYear: true })).toBe('Dec 31, 2025');
+  });
+
+  it('keeps showing the right day after the phone changes time zone', () => {
+    expect(formatGameDate('2026-09-27')).toBe('Sun, Sep 27');
+    vi.stubEnv('TZ', 'Asia/Tokyo');
+    expect(formatGameDate('2026-09-27')).toBe('Sun, Sep 27');
+    vi.stubEnv('TZ', 'Pacific/Honolulu');
+    expect(formatGameDate('2026-01-01', { withYear: true })).toBe('Thu, Jan 1, 2026');
+  });
+
   it('parses to local midnight', () => {
     const date = parseLocalDate('2026-09-27');
     expect(date?.getFullYear()).toBe(2026);

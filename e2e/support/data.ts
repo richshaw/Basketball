@@ -69,3 +69,44 @@ export async function exportAll(page: Page): Promise<ExportedData> {
   await waitForApi(page);
   return page.evaluate(() => (window as unknown as HoopStatsWindow).hoopStats.exportAll());
 }
+
+/** The fields of a stored game that `patchGames` can change. */
+export interface GamePatch {
+  season?: string;
+  date?: string;
+  opponent?: string;
+}
+
+/**
+ * Changes stored games straight in IndexedDB, for states the demo data can't make
+ * (a long season name, games in another year). Call it after `seedDemoData`, then
+ * load the page afresh (e.g. `page.goto('about:blank')` and back) so the app reads
+ * the change. Test data only: the app itself always writes through src/data/repo.ts.
+ */
+export async function patchGames(page: Page, patches: Record<string, GamePatch>): Promise<void> {
+  await page.evaluate(async (byId) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('hoop-stats');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('Could not open the database'));
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction('games', 'readwrite');
+        const games = transaction.objectStore('games');
+        for (const [id, patch] of Object.entries(byId)) {
+          const read = games.get(id);
+          read.onsuccess = () => {
+            if (!read.result) throw new Error(`No game ${id}`);
+            games.put({ ...(read.result as object), ...patch });
+          };
+        }
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error('Patch failed'));
+        transaction.onabort = () => reject(transaction.error ?? new Error('Patch aborted'));
+      });
+    } finally {
+      db.close();
+    }
+  }, patches);
+}

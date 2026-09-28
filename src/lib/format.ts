@@ -34,19 +34,46 @@ export function isLocalISODate(value: string): boolean {
   return parseLocalDate(value) !== null;
 }
 
+export interface GameDateOptions {
+  /** Add the year: 'Sun, Sep 27, 2026'. */
+  withYear?: boolean;
+  /** Start with the weekday (the default). `false` gives 'Sep 27', e.g. for a chart axis. */
+  weekday?: boolean;
+}
+
+// Creating a date formatter is slow, and lists format many dates, so each style is made
+// once. They format in UTC (the dates they get are UTC midnight), so a formatter made
+// before the phone changed time zone still shows the right day.
+const gameDateFormats = new Map<string, Intl.DateTimeFormat>();
+
+function gameDateFormat(withYear: boolean, weekday: boolean): Intl.DateTimeFormat {
+  const key = `${String(withYear)}:${String(weekday)}`;
+  let format = gameDateFormats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC',
+      ...(weekday ? { weekday: 'short' } : {}),
+      month: 'short',
+      day: 'numeric',
+      ...(withYear ? { year: 'numeric' } : {}),
+    });
+    gameDateFormats.set(key, format);
+  }
+  return format;
+}
+
 /**
- * 'Sun, Sep 27' (or 'Sun, Sep 27, 2026' with `withYear`). Anything that isn't a
- * valid 'YYYY-MM-DD' date is returned unchanged.
+ * 'Sun, Sep 27' ('Sun, Sep 27, 2026' with `withYear`, 'Sep 27' with `weekday: false`).
+ * Anything that isn't a valid 'YYYY-MM-DD' date is returned unchanged.
  */
-export function formatGameDate(isoDate: string, { withYear = false } = {}): string {
+export function formatGameDate(
+  isoDate: string,
+  { withYear = false, weekday = true }: GameDateOptions = {},
+): string {
   const date = parseLocalDate(isoDate);
   if (!date) return isoDate;
-  return date.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    ...(withYear ? { year: 'numeric' } : {}),
-  });
+  const day = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  return gameDateFormat(withYear, weekday).format(day);
 }
 
 /** A 0-100 percentage as '45%', or '–' when there's nothing to divide (null). */

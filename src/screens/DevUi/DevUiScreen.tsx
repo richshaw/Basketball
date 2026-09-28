@@ -1,10 +1,13 @@
 import { useId, useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import { Badge } from '@/components/Badge/Badge';
 import { Button } from '@/components/Button/Button';
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
+import { InstallBannerView } from '@/components/InstallBanner/InstallBanner';
+import { InstallSheet } from '@/components/InstallBanner/InstallSheet';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { SegmentedControl } from '@/components/SegmentedControl/SegmentedControl';
@@ -35,7 +38,7 @@ const shareMessages: Record<Exclude<ShareResult, 'cancelled'>, string> = {
   failed: "Couldn't share or copy",
 };
 
-type OpenSheet = 'editGame' | 'endGame' | 'opponents' | null;
+type OpenSheet = 'editGame' | 'endGame' | 'opponents' | 'install' | null;
 
 /**
  * Hidden gallery of the shared components in their main states, for reviews and
@@ -195,7 +198,10 @@ export function DevUiScreen() {
           </GroupedList>
         </Section>
 
-        <Section title="StatTable" note="Wide tables scroll sideways under a sticky first column.">
+        <Section
+          title="StatTable"
+          note="Wide tables scroll sideways under a sticky first column. The game log has linkedRows: a tap anywhere on a row opens its game."
+        >
           <StatTable
             caption="Box score by quarter"
             columns={demo.boxScoreColumns}
@@ -206,8 +212,16 @@ export function DevUiScreen() {
           <StatTable
             caption="Game log"
             columns={demo.gameLogColumns}
-            rows={demo.gameLogRows}
+            rows={demo.gameLogRows.map((row) => ({
+              ...row,
+              game: (
+                <Link to={paths.gameReport('demo')} className={styles.tableLink}>
+                  {row.game}
+                </Link>
+              ),
+            }))}
             totalRow={demo.gameLogAverage}
+            linkedRows
           />
         </Section>
 
@@ -288,6 +302,16 @@ export function DevUiScreen() {
             </Button>
           </div>
           <p className={styles.note}>Undos: {undos}</p>
+        </Section>
+
+        <Section
+          title="InstallBanner and InstallSheet"
+          note="Only in iPhone Safari, at the top of the tab screens; dismissed for 14 days."
+        >
+          <InstallBannerView
+            onHow={() => setOpenSheet('install')}
+            onDismiss={() => toast.show({ message: 'Banner dismissed' })}
+          />
         </Section>
 
         <Section title="Button">
@@ -405,6 +429,8 @@ export function DevUiScreen() {
           ))}
         </GroupedList>
       </Sheet>
+
+      <InstallSheet open={openSheet === 'install'} onClose={closeSheet} />
     </main>
   );
 }
