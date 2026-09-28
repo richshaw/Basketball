@@ -111,7 +111,13 @@ test('explains a file that is not a backup', async ({ page }) => {
 test('erase all data empties the Games list', async ({ page }) => {
   await page.goto('./');
   await seedDemoData(page);
-  await openSettings(page);
+  // The Games tab lists the demo season before...
+  const season = page.getByRole('list', { name: 'Fall 2026' });
+  await expect(season.getByRole('link')).toHaveCount(10);
+  await expect(season).toContainText('Eastlake');
+
+  await tabBar(page).getByRole('link', { name: 'Settings' }).tap();
+  await expect(screenHeading(page, 'Settings')).toBeVisible();
   await expect(page.getByRole('button', { name: /Try it with sample data/ })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Erase all data' }).tap();
@@ -124,8 +130,11 @@ test('erase all data empties the Games list', async ({ page }) => {
   // An empty phone offers the sample season again.
   await expect(page.getByRole('button', { name: /Try it with sample data/ })).toBeVisible();
 
+  // ...and nothing after.
   await tabBar(page).getByRole('link', { name: 'Games' }).tap();
   await expect(screenHeading(page, 'Games')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'New game' })).toBeVisible();
+  await expect(season).toHaveCount(0);
   // "Eastlake" is the newest demo game's opponent.
   await expect(page.getByText('Eastlake')).toHaveCount(0);
 });
