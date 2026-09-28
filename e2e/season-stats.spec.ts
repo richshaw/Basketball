@@ -1,13 +1,14 @@
 import { expect, test } from '@playwright/test';
 import { paths } from '../src/routes';
 import {
+  appUrl,
   emulateIPhoneSafeArea,
   expectRoute,
   IPHONE_VIEWPORT,
   screenHeading,
   tabBar,
 } from './support/app';
-import { demoGameId, exportAll, seedDemoData } from './support/data';
+import { demoGameId, exportAll, patchGames, seedDemoData } from './support/data';
 
 /** Points per made shot, to check the screen's math against the stored events. */
 const POINTS: Record<string, number> = { fg2_made: 2, fg3_made: 3, ft_made: 1 };
@@ -63,6 +64,31 @@ test('shows the season, switches the chart and opens a game from the log', async
   await expect(newest.getByRole('rowheader')).toContainText('Eastlake');
   await newest.getByRole('cell').nth(1).tap();
   await expectRoute(page, paths.gameReport(demoGameId(10)));
+});
+
+test('a long season name leaves the totals in view', async ({ page }) => {
+  const season = 'Westside Warriors 12U Spring 2026';
+  await seedDemoData(page);
+  await patchGames(
+    page,
+    Object.fromEntries(
+      Array.from({ length: 10 }, (_, index) => [demoGameId(index + 1), { season }]),
+    ),
+  );
+  await page.goto('about:blank');
+  await page.goto(appUrl(paths.stats));
+  await expect(page.getByText(`${season} · 10 games`)).toBeVisible();
+
+  const totals = page.getByRole('table', { name: 'Totals' });
+  await totals.scrollIntoViewIfNeeded();
+  // The label is capped (it ends in "…"), and the first stats sit beside it on screen.
+  const label = await totals.getByRole('rowheader', { name: season }).boundingBox();
+  const points = await totals.getByRole('columnheader', { name: 'Points' }).boundingBox();
+  expect(label?.width).toBeLessThan(IPHONE_VIEWPORT.width / 2);
+  expect((points?.x ?? Infinity) + (points?.width ?? 0)).toBeLessThanOrEqual(IPHONE_VIEWPORT.width);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    IPHONE_VIEWPORT.width,
+  );
 });
 
 test('with no finished games, the Stats tab leads to a new game', async ({ page }) => {
