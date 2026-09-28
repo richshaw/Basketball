@@ -1,6 +1,5 @@
 .group {
   --row-inset: var(--space-4);
-  --icon-size: 28px;
 
   min-width: 0;
 }
@@ -52,7 +51,7 @@
 }
 
 .item.withIcon::before {
-  left: calc(var(--row-inset) + var(--icon-size) + var(--space-3));
+  left: calc(var(--row-inset) + var(--list-icon-size) + var(--space-3));
 }
 
 .row {
@@ -90,7 +89,7 @@
 
 /* The list clips its rounded corners, so draw the focus ring inside the row. */
 .interactive:focus-visible {
-  outline-offset: -3px;
+  outline-offset: calc(-1 * var(--focus-ring-width));
 }
 
 .interactive:disabled {
@@ -102,8 +101,8 @@
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  width: var(--icon-size);
-  height: var(--icon-size);
+  width: var(--list-icon-size);
+  height: var(--list-icon-size);
   font-size: var(--font-size-lg);
   line-height: 1;
 }
@@ -140,8 +139,8 @@
 
 .chevron {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   margin-inline-end: calc(-1 * var(--space-1));
   color: var(--color-text-muted);
   stroke-width: 2.5;

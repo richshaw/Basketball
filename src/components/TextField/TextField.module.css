@@ -37,8 +37,7 @@
   border-radius: var(--radius-md);
   background-color: var(--color-surface);
   color: var(--color-text);
-  /* 16px or more, or iOS zooms the page when the field is focused. */
-  font-size: max(16px, var(--font-size-md));
+  /* Font size: global.css keeps input and textarea text at 16px or more (no iOS zoom). */
   line-height: var(--line-height-normal);
   -webkit-appearance: none;
   appearance: none;
