@@ -656,6 +656,67 @@ describe('TrackGameScreen', () => {
     expect(router.state.location.pathname).toBe(paths.trackGame(game.id));
   });
 
+  /** Makes the next save wait until the returned function is called. */
+  function slowNextSave() {
+    let land = () => {};
+    const { recordStat: save } = repo;
+    vi.spyOn(repo, 'recordStat').mockImplementationOnce(
+      (...args) =>
+        new Promise((resolve) => {
+          land = () => resolve(save(...args));
+        }),
+    );
+    return () => act(() => land());
+  }
+
+  it('never ends the game for an End game taken back, even with End game open again', async () => {
+    const game = await newGame();
+    const { user, router } = await renderTracking(game);
+    const land = slowNextSave();
+    fireEvent.click(statButton('Steal'));
+
+    await user.click(screen.getByRole('button', { name: 'End game' }));
+    let sheet = screen.getByRole('dialog', { name: 'Final score' });
+    await user.type(within(sheet).getByRole('textbox', { name: 'Our team' }), '40');
+    await user.click(within(sheet).getByRole('button', { name: 'End game' }));
+    await user.click(within(sheet).getByRole('button', { name: 'Keep tracking' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    // Opened again (to fix the score), and typed into, while the first one still waits.
+    await user.click(screen.getByRole('button', { name: 'End game' }));
+    sheet = screen.getByRole('dialog', { name: 'Final score' });
+    const ours = within(sheet).getByRole('textbox', { name: 'Our team' });
+    await user.type(ours, '42');
+
+    land(); // within SAVE_ALL_WAIT_MS
+    await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
+    await afterDoubleTapWindow();
+    expect(router.state.location.pathname).toBe(paths.trackGame(game.id));
+    expect((await getGame(game.id))?.status).toBe('live');
+    expect(screen.getByRole('dialog', { name: 'Final score' })).toBe(sheet);
+    expect(ours).toHaveValue('42');
+
+    // The sheet on screen ends it, with its own score.
+    await user.click(within(sheet).getByRole('button', { name: 'End game' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(paths.gameReport(game.id)));
+    expect(await getGame(game.id)).toMatchObject({ status: 'final', teamScore: 42 });
+  });
+
+  it('never takes the parent to the report for a Done left behind for Games', async () => {
+    const game = await newGame();
+    await endGame(game.id, { teamScore: 40, opponentScore: 31 });
+    const { user, router } = await renderTracking(game);
+    const land = slowNextSave();
+    fireEvent.click(statButton('Steal'));
+
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await user.click(screen.getByRole('link', { name: 'Games' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(paths.home));
+    land();
+    await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
+    await afterDoubleTapWindow();
+    expect(router.state.location.pathname).toBe(paths.home);
+  });
+
   it('edits a finished game: a banner, Done instead of End game, and stats still record', async () => {
     const game = await newGame();
     await endGame(game.id, { teamScore: 40, opponentScore: 31 });

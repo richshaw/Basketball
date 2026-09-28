@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Button } from '@/components/Button/Button';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
@@ -53,11 +53,20 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   const confirm = useConfirm();
   const navigate = useNavigate();
   const [openSheet, setOpenSheetState] = useState<OpenSheet>(null);
-  // Read after a wait (e.g. saving before the game ends): was the sheet closed meanwhile?
-  const openSheetRef = useRef<OpenSheet>(null);
+  // Moves on whenever a sheet opens or closes, and when the screen closes. A wait (e.g.
+  // saving before the game ends) goes on only if it hasn't moved since the wait began:
+  // a request taken back ("Keep tracking", the Games link) never comes back, not even
+  // under a sheet opened again meanwhile.
+  const sheetTurn = useRef(0);
   const setOpenSheet = useCallback((sheet: OpenSheet) => {
-    openSheetRef.current = sheet;
+    sheetTurn.current += 1;
     setOpenSheetState(sheet);
+  }, []);
+  useEffect(() => {
+    const turn = sheetTurn;
+    return () => {
+      turn.current += 1;
+    };
   }, []);
   // Bumped each time the end-game sheet opens, so its form starts fresh.
   const [endSheetKey, setEndSheetKey] = useState(0);
@@ -211,10 +220,12 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   // saved later on their own).
   const finishGame = useCallback(
     async (score: FinalScore, anyway: boolean): Promise<NotSaved | null> => {
+      const turn = sheetTurn.current;
       if (!anyway) {
         const left = await session.saveAll();
-        // "Keep tracking" was tapped while it saved: the game goes on.
-        if (openSheetRef.current !== 'end') return null;
+        // "Keep tracking" was tapped while it saved (even if End game was opened again
+        // since): the game goes on.
+        if (sheetTurn.current !== turn) return null;
         if (left.count > 0) return left;
       }
       try {
@@ -223,7 +234,8 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
         toast.show({ message: "Couldn't end the game. Try again." });
         throw error;
       }
-      await navigate(paths.gameReport(gameId), { replace: true });
+      // Ended, but "Keep tracking" was tapped meanwhile: stay, on the finished game.
+      if (sheetTurn.current === turn) await navigate(paths.gameReport(gameId), { replace: true });
       return null;
     },
     [gameId, navigate, session, toast],
@@ -232,13 +244,14 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   // Done, on a finished game: the same, with its own "not saved yet" sheet.
   const leave = async (anyway: boolean) => {
     if (leaving) return;
-    const sheet = openSheetRef.current;
+    const turn = sheetTurn.current;
     setLeaving(true);
     try {
       if (!anyway) {
         const left = await session.saveAll();
-        // Its sheet was closed (or another opened) while it saved: stay.
-        if (openSheetRef.current !== sheet) return;
+        // A sheet was opened or closed while it saved, or the screen was left (e.g. for
+        // Games): stay where the parent went.
+        if (sheetTurn.current !== turn) return;
         if (left.count > 0) {
           setNotSaved(left);
           setOpenSheet('notSaved');
