@@ -137,7 +137,7 @@ export function EditGameSheet({ game, open, onClose, focusScore }: EditGameSheet
           maxLength={TEXT_LIMITS.opponent}
           autoComplete="off"
           autoCapitalize="words"
-          enterKeyHint="next"
+          enterKeyHint="done"
           required
         />
         <TextField
@@ -160,7 +160,7 @@ export function EditGameSheet({ game, open, onClose, focusScore }: EditGameSheet
           maxLength={TEXT_LIMITS.season}
           autoComplete="off"
           autoCapitalize="words"
-          enterKeyHint="next"
+          enterKeyHint="done"
         />
         <div className={styles.field}>
           <span id={venueLabelId} className={styles.label}>
@@ -185,7 +185,7 @@ export function EditGameSheet({ game, open, onClose, focusScore }: EditGameSheet
             pattern="[0-9]*"
             maxLength={3}
             autoComplete="off"
-            enterKeyHint="next"
+            enterKeyHint="done"
           />
           <TextField
             ref={opponentScoreRef}
@@ -198,7 +198,7 @@ export function EditGameSheet({ game, open, onClose, focusScore }: EditGameSheet
             pattern="[0-9]*"
             maxLength={3}
             autoComplete="off"
-            enterKeyHint="next"
+            enterKeyHint="done"
           />
         </div>
         <TextArea
