@@ -4,9 +4,11 @@ import {
   createEngineHarness,
   realGameId,
   REAL_LIVE_GAME_ID,
+  TEST_API_URL,
   TEST_START,
   type EngineHarness,
 } from '@/test/backupHarness';
+import { resetDatabase } from '@/test/db';
 import { isDemoGameId, seedDemoData } from '../demo';
 import * as repo from '../repo';
 import {
@@ -23,7 +25,7 @@ import {
 import { clearAllData, exportAll, importAll } from '../transfer';
 import { createBackupApi } from './api';
 import { generateBackupCode, parseBackupCode } from './code';
-import { observeDatabase, type BackupObservation } from './engine';
+import { BackupEngine, observeDatabase, readObservation, type BackupObservation } from './engine';
 import { deriveBackupKeys } from './keys';
 import { decryptSnapshot, encryptSnapshot } from './snapshot';
 import { loadBackupState, turnOnBackupState } from './state';
@@ -915,7 +917,7 @@ describe('storage failures', () => {
       ok: false,
       error: {
         kind: 'unexpected',
-        message: 'Something went wrong on this phone, so cloud backup is still on. Try again.',
+        message: 'Something went wrong on this phone, so nothing changed. Try again.',
       },
     });
     turnOff.mockRestore();
@@ -991,5 +993,344 @@ describe('observeDatabase', () => {
     } finally {
       unsubscribe();
     }
+  });
+});
+
+describe('restoring a backup under the same code', () => {
+  it.each(['merge', 'replace'] as const)(
+    'settles an "another phone" pause by restoring that phone\'s backup (%s)',
+    async (mode) => {
+      const h = createEngineHarness();
+      await seedReal();
+      const code = await turnOn(h);
+      const theirs = await uploadFromAnotherPhone(h, code);
+      await change(h);
+      await h.advance(MINUTE);
+      expect((await h.engine.getStatus()).state).toBe('paused-other-device');
+
+      const fetched = await h.engine.fetchBackup(code);
+      if (!fetched.ok) throw new Error(fetched.error.message);
+      await importAll(fetched.value.file, mode);
+      expect(await h.engine.enableWithCode(code, { backup: fetched.value })).toEqual({
+        ok: true,
+        value: undefined,
+      });
+      await h.settle();
+      // Carried on from their backup: its games are the baseline, nothing is paused,
+      // and this phone's upload went on top of theirs.
+      const state = await loadBackupState();
+      for (const field of ['paused', 'otherDevice', 'shrink', 'lastError', 'pendingUploadSize']) {
+        expect(state).not.toHaveProperty(field);
+      }
+      expect(h.server.uploads.at(-2)?.version).toBe(theirs.version);
+      expect(h.server.putCount).toBe(3);
+      await change(h);
+      await h.advance(MINUTE);
+      expect(h.server.putCount).toBe(4);
+      expect((await h.engine.getStatus()).state).toBe('idle');
+    },
+  );
+
+  it('carries on from the newest backup after restoring an earlier one', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    await change(h);
+    await h.advance(MINUTE);
+    await change(h);
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(3);
+
+    // A new phone (nothing stored on it) restores the second-newest backup.
+    h.engine.stop();
+    await resetDatabase();
+    const phone = createEngineHarness({ fetch: h.server.fetch });
+    const versions = await phone.engine.listVersions(code);
+    if (!versions.ok) throw new Error(versions.error.message);
+    const fetched = await phone.engine.fetchBackup(code, { version: versions.value[1]?.version });
+    if (!fetched.ok) throw new Error(fetched.error.message);
+    await importAll(fetched.value.file, 'replace');
+    expect((await phone.engine.enableWithCode(code, { backup: fetched.value })).ok).toBe(true);
+    await phone.settle();
+    expect(await phone.engine.getStatus()).toMatchObject({ state: 'idle', pendingChanges: false });
+    expect(h.server.putCount).toBe(4);
+  });
+});
+
+describe('an upload stored on the server but answered badly', () => {
+  /** A harness whose next upload is stored, then answered with `answer` instead. */
+  function harnessWithBrokenAnswer(answer: () => Response) {
+    let breakNext = false;
+    const h = createEngineHarness({
+      fetch: async (input, init) => {
+        const response = await h.server.fetch(input, init);
+        if (init?.method === 'PUT' && breakNext) {
+          breakNext = false;
+          return answer();
+        }
+        return response;
+      },
+    });
+    return { h, breakNextAnswer: () => (breakNext = true) };
+  }
+
+  it.each([
+    ['an unreadable 201', () => new Response('{"version":"00000', { status: 201 })],
+    ['a proxy 502', () => new Response('<html>502 Bad Gateway</html>', { status: 502 })],
+  ])("isn't later taken for another phone's (%s)", async (_name, answer) => {
+    const { h, breakNextAnswer } = harnessWithBrokenAnswer(answer);
+    await seedReal();
+    await turnOn(h);
+    breakNextAnswer();
+    await change(h);
+    await h.advance(MINUTE);
+    expect(h.server.uploads).toHaveLength(2);
+    expect(await loadBackupState()).toMatchObject({
+      lastError: { kind: 'server-error' },
+      pendingUploadSize: h.server.uploads[1]?.bytes.byteLength,
+    });
+
+    await h.advance(HOUR);
+    expect(await h.engine.getStatus()).toMatchObject({ state: 'idle', pendingChanges: false });
+    expect(h.server.putCount).toBe(3);
+  });
+
+  it('forgets the pending upload when the answer proves nothing was stored', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    h.server.failNext({ status: 400, error: 'body_read_failed', method: 'PUT' });
+    await change(h);
+    await h.advance(MINUTE);
+    expect(await loadBackupState()).toMatchObject({ lastError: { kind: 'bad-request' } });
+    expect(await loadBackupState()).not.toHaveProperty('pendingUploadSize');
+  });
+});
+
+describe('scheduler corner cases', () => {
+  it("doesn't spin when the connection drops without an offline event", async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    // navigator.onLine turned false while the app was suspended, so no event came.
+    h.environment.online = false;
+    await change(h);
+    let runs = 0;
+    await h.clock.advance(2 * MINUTE, async () => {
+      runs += 1;
+      if (runs > 20) h.engine.stop();
+      await h.engine.whenIdle();
+    });
+    expect(runs).toBe(1);
+    expect(h.server.putCount).toBe(1);
+    expect((await h.engine.getStatus()).state).toBe('waiting-for-signal');
+
+    h.environment.emit('online');
+    await flush();
+    await h.advance(0);
+    expect(h.server.putCount).toBe(2);
+  });
+
+  it('during a live game, checks on online and visible also wait for a quiet spell', async () => {
+    const h = createEngineHarness();
+    await seedReal({ liveGame: true });
+    await turnOn(h);
+    await h.advance(2 * MINUTE);
+    const puts = h.server.putCount;
+
+    // A tap every 5 s (never a quiet spell), with the app coming back online and into
+    // view every 70 s: nothing goes up mid-burst, then the 5-minute maximum.
+    for (let i = 0; i < 59; i += 1) {
+      await recordStat(REAL_LIVE_GAME_ID, 'fg2_made');
+      await h.notify();
+      if (i % 14 === 13) {
+        h.environment.emit('offline');
+        h.environment.emit('online');
+        h.environment.emit('visible');
+        await flush();
+      }
+      await h.advance(5 * SECOND);
+    }
+    expect(h.server.putCount).toBe(puts);
+    await h.advance(5 * SECOND);
+    expect(h.server.putCount).toBe(puts + 1);
+  });
+
+  it('turning on during "turn off and delete" waits for it, then makes a new code', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    const release = h.server.hold();
+    const turningOff = h.engine.disable({ deleteCloudCopy: true });
+    await vi.waitFor(() => expect(h.server.requests.at(-1)?.method).toBe('DELETE'));
+    const turningOn = h.engine.enable();
+    release();
+    expect((await turningOff).ok).toBe(true);
+    const newCode = await turningOn;
+    expect(newCode).not.toBe(code);
+    expect(await h.engine.getCode()).toBe(newCode);
+    await h.settle();
+    expect(await h.engine.getStatus()).toMatchObject({ enabled: true, state: 'idle' });
+  });
+
+  it("two windows on one phone don't take each other's uploads for another phone's", async () => {
+    // One lock for both, as the Web Locks API gives the windows of one app.
+    let chain: Promise<unknown> = Promise.resolve();
+    const lock = <T>(task: () => Promise<T>): Promise<T> => {
+      const run = chain.then(task);
+      chain = run.catch(() => undefined);
+      return run;
+    };
+    let holdPut: Promise<void> | undefined;
+    const h = createEngineHarness({
+      lock,
+      fetch: async (input, init) => {
+        const response = await h.server.fetch(input, init);
+        if (init?.method === 'PUT' && holdPut) await holdPut;
+        return response;
+      },
+    });
+    await seedReal();
+    await turnOn(h);
+
+    let listener2: ((observation: BackupObservation) => void) | undefined;
+    const window2 = new BackupEngine({
+      apiUrl: () => TEST_API_URL,
+      fetch: h.server.fetch,
+      clock: h.clock,
+      environment: h.environment,
+      lock,
+      observe: (next) => {
+        listener2 = next;
+        void readObservation().then(next);
+        return () => (listener2 = undefined);
+      },
+    });
+    window2.start();
+    await flush();
+    const notifyBoth = async () => {
+      await h.notify();
+      listener2?.(await readObservation());
+    };
+    const settleBoth = async () => {
+      await h.engine.whenIdle();
+      await window2.whenIdle();
+    };
+    try {
+      await h.clock.advance(5 * SECOND, settleBoth);
+      // Both windows see a change and their timers fire together; the first one's
+      // answer is slow to arrive.
+      let release!: () => void;
+      holdPut = new Promise<void>((resolve) => (release = resolve));
+      await change(h);
+      await notifyBoth();
+      await h.clock.advance(20 * SECOND);
+      await vi.waitFor(() => expect(h.server.putCount).toBe(2));
+      release();
+      holdPut = undefined;
+      await settleBoth();
+
+      await change(h);
+      await notifyBoth();
+      await h.clock.advance(MINUTE, settleBoth);
+      expect(await h.engine.getStatus()).toMatchObject({ state: 'idle', pendingChanges: false });
+      expect(h.server.putCount).toBe(3);
+    } finally {
+      window2.stop();
+    }
+  });
+});
+
+describe('"Back up anyway" (force)', () => {
+  it('overrides only the pause shown, and asks about another problem instead', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    const theirs = await uploadFromAnotherPhone(h, code);
+    await clearAllData();
+    await h.notify();
+    await h.advance(MINUTE);
+    expect((await h.engine.getStatus()).state).toBe('paused-shrink');
+
+    // For the shrink pause: another phone's newer backup turns up, so it asks about
+    // that instead of replacing it.
+    expect(await h.engine.backUpNow({ force: true })).toMatchObject({
+      ok: false,
+      error: { kind: 'other-device' },
+    });
+    expect(h.server.uploads.at(-1)?.version).toBe(theirs.version);
+    expect(await h.engine.getStatus()).toMatchObject({ state: 'paused-other-device' });
+
+    // Confirmed for that too: both answers stand, and it uploads.
+    expect((await h.engine.backUpNow({ force: true })).ok).toBe(true);
+    expect(h.server.uploads.at(-1)?.version).not.toBe(theirs.version);
+    expect(await loadBackupState()).not.toHaveProperty('confirmedPauses');
+    expect((await h.engine.getStatus()).state).toBe('idle');
+  });
+
+  it('with nothing paused, still checks for another phone', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    await uploadFromAnotherPhone(h, code);
+    expect(await h.engine.backUpNow({ force: true })).toMatchObject({
+      ok: false,
+      error: { kind: 'other-device' },
+    });
+    expect(h.server.putCount).toBe(2);
+  });
+
+  it('"Back up now" goes ahead when the check for another phone fails', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    h.server.failNext({ status: 503, error: 'server_busy', method: 'HEAD' });
+    expect((await h.engine.backUpNow()).ok).toBe(true);
+    expect(h.server.putCount).toBe(2);
+
+    // An automatic upload waits instead.
+    h.server.failNext({ status: 503, error: 'server_busy', method: 'HEAD' });
+    await change(h);
+    await h.advance(20 * SECOND);
+    expect(h.server.putCount).toBe(2);
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'error',
+      lastError: { kind: 'server-busy' },
+    });
+  });
+});
+
+describe('messages', () => {
+  it("says the server can't take a new backup, not that it's busy, for a first upload", async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    h.server.failNext({
+      status: 429,
+      error: 'rate_limited',
+      retryAfterSeconds: 20 * 3600,
+      method: 'PUT',
+    });
+    await h.engine.enable();
+    await h.settle();
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'error',
+      lastError: {
+        kind: 'rate-limited',
+        message:
+          "The backup server can't take a new backup right now. Hoop Stats will try again in 20 hours.",
+      },
+    });
+  });
+
+  it('says a rejected code needs its online copy deleted to start over', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    h.server.failNext({ status: 401, error: 'unauthorized', method: 'PUT' });
+    await change(h);
+    await h.advance(MINUTE);
+    expect((await h.engine.getStatus()).lastError?.message).toBe(
+      "The backup server doesn't accept this backup code anymore. To start over with a new code, turn cloud backup off and delete its online copy, then turn it back on.",
+    );
   });
 });

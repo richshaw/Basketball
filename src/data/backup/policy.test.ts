@@ -97,7 +97,10 @@ describe('backup messages', () => {
     expect(errorMessage('unauthorized', 'restore')).toBe(
       "There's no backup for this code. Check the code and try again.",
     );
-    expect(errorMessage('unauthorized', 'backup')).toContain('Turn cloud backup off and on');
+    expect(errorMessage('unauthorized', 'backup')).toContain(
+      'turn cloud backup off and delete its online copy, then turn it back on',
+    );
+    expect(errorMessage('unauthorized', 'backup')).not.toContain('off and on again');
     expect(errorMessage('offline', 'delete')).toContain("your cloud backup wasn't deleted");
     expect(errorMessage('wrong-code', 'restore')).toContain("doesn't match");
     expect(errorMessage('internal' as never, 'backup')).toContain('will try again');

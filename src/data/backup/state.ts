@@ -102,6 +102,12 @@ export interface StoredBackupState {
   shrink?: ShrinkInfo;
   /** Details for `paused: 'other-device'`. */
   otherDevice?: OtherDeviceInfo;
+  /**
+   * Pauses the parent already chose to override ("Back up anyway") while another one
+   * turned up, so the next "Back up anyway" overrides them too. Cleared by a
+   * successful upload.
+   */
+  confirmedPauses?: PauseReason[];
 }
 
 /** The fields a patch can change; `code`, `enabledAt` and `disabledAt` identify the backup. */
@@ -124,6 +130,7 @@ const TRANSIENT_FIELDS = [
   'paused',
   'shrink',
   'otherDevice',
+  'confirmedPauses',
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -206,6 +213,12 @@ function readState(value: unknown): StoredBackupState | undefined {
   if (shrink) state.shrink = shrink;
   const otherDevice = readOtherDevice(value.otherDevice);
   if (otherDevice) state.otherDevice = otherDevice;
+  if (
+    Array.isArray(value.confirmedPauses) &&
+    value.confirmedPauses.every((reason) => (PAUSE_REASONS as readonly unknown[]).includes(reason))
+  ) {
+    state.confirmedPauses = value.confirmedPauses as PauseReason[];
+  }
   return state;
 }
 

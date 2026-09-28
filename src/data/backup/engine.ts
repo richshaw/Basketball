@@ -29,13 +29,16 @@ import {
   DEFAULT_TIMEOUT_MS,
   MAX_UPLOAD_BYTES,
   type ApiError,
+  type ApiResult,
   type BackupApi,
   type BackupVersion,
+  type LatestVersion,
 } from './api';
 import { BackupCodeError, generateBackupCode, normalizeBackupCode, parseBackupCode } from './code';
 import {
   cloudError,
   cloudFailure,
+  newBackupLimitMessage,
   type CloudBackupError,
   type CloudBackupErrorKind,
   type CloudResult,
@@ -62,6 +65,7 @@ import {
   updateBackupState,
   type BackupGeneration,
   type BackupStatePatch,
+  type PauseReason,
   type StoredBackupState,
 } from './state';
 import { deriveStatus, type BackupRuntime, type CloudBackupStatus } from './status';
@@ -109,6 +113,11 @@ export interface BackupEngineOptions {
   requestTimeoutMs?: number;
   /** Largest snapshot to upload (default: the server's 5 MiB limit). */
   maxUploadBytes?: number;
+  /**
+   * Runs a task while no other window of the app on this device runs one (default: the
+   * Web Locks API where there is one), so two tabs can't race over the last version.
+   */
+  lock?: <T>(task: () => Promise<T>) => Promise<T>;
 }
 
 /** A successful upload. */
@@ -153,6 +162,36 @@ type AttemptOutcome =
   | { kind: 'failed'; error: CloudBackupError };
 
 const skipped = (reason: SkipReason): AttemptOutcome => ({ kind: 'skipped', reason });
+
+/**
+ * How an explicit check runs. 'normal' (startup, online, visible, a retry) waits for a
+ * quiet spell while a game is live, like a change; 'prompt' (a game just ended) doesn't;
+ * 'urgent' (the app is being hidden) doesn't wait for the minimum interval either.
+ */
+type CheckMode = 'normal' | 'prompt' | 'urgent';
+const CHECK_MODE_RANK: Record<CheckMode, number> = { normal: 0, prompt: 1, urgent: 2 };
+
+/** Upload answers that prove nothing was stored (so it can't become the newest version). */
+function provesNothingStored(error: ApiError): boolean {
+  const status = error.status;
+  if (status === undefined) return false;
+  return (status >= 400 && status < 500) || status === 503 || status === 507;
+}
+
+/** The pauses "Back up anyway" overrides: the one shown, and those confirmed before. */
+function overridablePauses(state: StoredBackupState | undefined): PauseReason[] {
+  const reasons = new Set<PauseReason>(state?.confirmedPauses);
+  if (state?.paused) reasons.add(state.paused);
+  return [...reasons].filter((reason) => reason === 'shrink' || reason === 'other-device');
+}
+
+const BACKUP_LOCK = 'hoop-stats-cloud-backup';
+
+/** The Web Locks API where there is one, so two tabs never upload at once. */
+function deviceLock<T>(task: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  return typeof locks?.request === 'function' ? locks.request(BACKUP_LOCK, task) : task();
+}
 
 const systemClock: BackupClock = {
   now: () => Date.now(),
@@ -233,6 +272,7 @@ export class BackupEngine {
   private readonly environment: BackupEnvironment;
   private readonly observe: (listener: (observation: BackupObservation) => void) => () => void;
   private readonly read: () => Promise<BackupObservation>;
+  private readonly lock: <T>(task: () => Promise<T>) => Promise<T>;
   private timings: BackupTimings;
 
   private started = false;
@@ -252,8 +292,7 @@ export class BackupEngine {
   private lastChangeAt: number | undefined;
   /** An explicit check (startup, online, visible, game end, hidden), and when. */
   private checkAt: number | undefined;
-  /** The check may skip the minimum interval (the app is being hidden). */
-  private checkIsUrgent = false;
+  private checkMode: CheckMode = 'normal';
   private lastAttemptAt: number | undefined;
 
   // Work in progress.
@@ -273,6 +312,7 @@ export class BackupEngine {
     this.environment = options.environment ?? browserEnvironment;
     this.observe = options.observe ?? observeDatabase;
     this.read = options.read ?? readObservation;
+    this.lock = options.lock ?? deviceLock;
     this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
     this.runtime = { uploading: false, online: this.environment.isOnline() };
   }
@@ -370,7 +410,7 @@ export class BackupEngine {
       }
       // Back a game up right after it ends, not a debounce later.
       if (this.liveGame && !observation.liveGame) {
-        this.requestCheck(now + this.timings.gameEndDelayMs);
+        this.requestCheck(now + this.timings.gameEndDelayMs, 'prompt');
       }
     }
     this.observed = true;
@@ -404,6 +444,8 @@ export class BackupEngine {
         this.reschedule();
         break;
       case 'visible':
+        // An online or offline event may have been missed while the app was suspended.
+        this.setRuntime({ online: this.environment.isOnline() });
         this.refreshObservation();
         void this.retrySoonAfterConnectionProblem().then(() => this.requestCheck(now));
         break;
@@ -411,9 +453,7 @@ export class BackupEngine {
         // iOS may suspend the app any moment now: send waiting changes right away,
         // even in a backoff after a lost connection.
         if (this.hasWaitingChanges()) {
-          void this.retrySoonAfterConnectionProblem().then(() =>
-            this.requestCheck(now, { urgent: true }),
-          );
+          void this.retrySoonAfterConnectionProblem().then(() => this.requestCheck(now, 'urgent'));
         }
         break;
     }
@@ -442,9 +482,9 @@ export class BackupEngine {
     }
   }
 
-  private requestCheck(at: number, { urgent = false } = {}): void {
+  private requestCheck(at: number, mode: CheckMode = 'normal'): void {
     this.checkAt = this.checkAt === undefined ? at : Math.min(this.checkAt, at);
-    if (urgent) this.checkIsUrgent = true;
+    if (CHECK_MODE_RANK[mode] > CHECK_MODE_RANK[this.checkMode]) this.checkMode = mode;
     this.reschedule();
   }
 
@@ -459,16 +499,25 @@ export class BackupEngine {
     if (this.observed && !isBackupOn(state)) return undefined;
     if (state?.paused && state.paused !== 'shrink') return undefined;
 
-    let due: number | undefined;
-    if (this.firstChangeAt !== undefined && this.lastChangeAt !== undefined) {
-      const maxWait = this.liveGame ? this.timings.liveGameMaxWaitMs : this.timings.maxWaitMs;
-      due = Math.min(this.lastChangeAt + this.timings.debounceMs, this.firstChangeAt + maxWait);
+    let first = this.firstChangeAt;
+    let last = this.lastChangeAt;
+    let check = this.checkAt;
+    // During a live game an ordinary check waits for a quiet spell between taps, like a
+    // change does, so it can't upload in the middle of a burst.
+    if (this.liveGame && check !== undefined && this.checkMode === 'normal') {
+      first = Math.min(first ?? check, check);
+      last = Math.max(last ?? check, check);
+      check = undefined;
     }
-    if (this.checkAt !== undefined)
-      due = due === undefined ? this.checkAt : Math.min(due, this.checkAt);
+    let due: number | undefined;
+    if (first !== undefined && last !== undefined) {
+      const maxWait = this.liveGame ? this.timings.liveGameMaxWaitMs : this.timings.maxWaitMs;
+      due = Math.min(last + this.timings.debounceMs, first + maxWait);
+    }
+    if (check !== undefined) due = due === undefined ? check : Math.min(due, check);
     if (due === undefined) return undefined;
 
-    const urgent = this.checkIsUrgent && due === this.checkAt;
+    const urgent = this.checkMode === 'urgent' && due === check;
     if (this.lastAttemptAt !== undefined && !urgent) {
       const interval = this.liveGame
         ? this.timings.liveGameMinIntervalMs
@@ -503,10 +552,10 @@ export class BackupEngine {
     // This run covers every change and check asked for so far.
     const waiting = { first: this.firstChangeAt, last: this.lastChangeAt };
     this.firstChangeAt = this.lastChangeAt = this.checkAt = undefined;
-    this.checkIsUrgent = false;
+    this.checkMode = 'normal';
     this.refreshObservation();
     try {
-      const outcome = await this.exclusive(() => this.attempt({ manual: false, force: false }));
+      const outcome = await this.exclusive(() => this.attempt({ manual: false }));
       // A failure with a retry scheduled: try again once the stored backoff allows.
       if (outcome.kind === 'failed' && this.state?.nextAttemptAt !== undefined) {
         this.checkAt = this.clock.now();
@@ -578,24 +627,30 @@ export class BackupEngine {
   }
 
   /**
-   * One upload attempt, run through `exclusive`. `manual` (backUpNow) also runs when
-   * nothing changed, during a backoff or while paused; `force` skips the shrink guard
-   * and the other-phone check.
+   * One upload attempt, run through `exclusive` and under the device lock. `manual`
+   * (backUpNow) also runs when nothing changed, during a backoff or while paused;
+   * `overrides` are the pauses the parent chose to override ("Back up anyway"): those
+   * checks are skipped, every other one still runs.
    */
-  private async attempt(options: { manual: boolean; force: boolean }): Promise<AttemptOutcome> {
-    // Before the first await, so turning off can stop this attempt at any step.
-    const abort = new AbortController();
-    this.uploadAbort = abort;
-    try {
-      return await this.tryUpload(options, abort.signal);
-    } finally {
-      if (this.uploadAbort === abort) this.uploadAbort = undefined;
-      this.setRuntime({ uploading: false });
-    }
+  private attempt(options: {
+    manual: boolean;
+    overrides?: readonly PauseReason[];
+  }): Promise<AttemptOutcome> {
+    return this.lock(async () => {
+      // Before the first await, so turning off can stop this attempt at any step.
+      const abort = new AbortController();
+      this.uploadAbort = abort;
+      try {
+        return await this.tryUpload(options, abort.signal);
+      } finally {
+        if (this.uploadAbort === abort) this.uploadAbort = undefined;
+        this.setRuntime({ uploading: false });
+      }
+    });
   }
 
   private async tryUpload(
-    { manual, force }: { manual: boolean; force: boolean },
+    { manual, overrides = [] }: { manual: boolean; overrides?: readonly PauseReason[] },
     signal: AbortSignal,
   ): Promise<AttemptOutcome> {
     const stopped = () => signal.aborted || this.suspended > 0;
@@ -613,9 +668,11 @@ export class BackupEngine {
       return { kind: 'failed', error: cloudError('unavailable', 'backup') };
     }
     if (!this.environment.isOnline()) {
-      return manual
-        ? { kind: 'failed', error: cloudError('offline', 'backup') }
-        : skipped('offline');
+      if (manual) return { kind: 'failed', error: cloudError('offline', 'backup') };
+      // The offline event never came (missed while the app was suspended, say): wait for
+      // `online` rather than trying again straight away.
+      this.setRuntime({ online: false });
+      return skipped('offline');
     }
 
     // Stored codes are always well formed (see readState in state.ts).
@@ -631,27 +688,32 @@ export class BackupEngine {
 
     this.lastAttemptAt = now;
     this.setRuntime({ uploading: true });
+    const checkOtherDevice = !overrides.includes('other-device');
+    // Held back for a problem other than the ones overridden: the parent is asked
+    // about that one, and the overridden ones stay confirmed for the next time.
+    const confirmedPauses = overrides.length > 0 ? [...overrides] : undefined;
+    // The other-phone check's round trip runs while the snapshot is exported and
+    // encrypted, so an upload as the app is hidden doesn't wait for it first; not while
+    // the shrink guard holds uploads back, when a paused phone sends nothing.
+    let latest =
+      checkOtherDevice && state.paused !== 'shrink' ? api.latest(keys, { signal }) : undefined;
     const file = await exportAll();
     const data = realData(file);
-    // The shrink guard first: it needs no network, so a paused phone sends nothing.
-    const finding = force ? undefined : shrinkCheck(state, data);
+    const finding = overrides.includes('shrink') ? undefined : shrinkCheck(state, data);
     if (finding) {
       const shrink = changeAt === undefined ? finding : { ...finding, changeAt };
       const error = cloudError('shrink', 'backup');
       await this.update(state, {
         paused: 'shrink',
         shrink,
+        confirmedPauses,
         lastError: { kind: error.kind, message: error.message, at: now },
         failures: null,
         nextAttemptAt: null,
       });
       return { kind: 'held', error };
     }
-    if (!force) {
-      const verdict = await this.checkOtherDevice(api, keys, state, { manual, signal });
-      if (verdict) return verdict;
-    }
-    if (stopped()) return skipped('suspended');
+    if (checkOtherDevice) latest ??= api.latest(keys, { signal });
 
     let snapshot: Uint8Array<ArrayBuffer>;
     try {
@@ -659,6 +721,10 @@ export class BackupEngine {
     } catch {
       // WebCrypto or CompressionStream failed: nothing the server did. Retry later.
       return this.recordFailure(state, { kind: 'server-error' }, { kind: 'unexpected' });
+    }
+    if (latest) {
+      const verdict = await this.judgeLatest(await latest, state, { manual, confirmedPauses });
+      if (verdict) return verdict;
     }
     if (snapshot.byteLength > (this.options.maxUploadBytes ?? MAX_UPLOAD_BYTES)) {
       return this.recordFailure(state, { kind: 'too-large' });
@@ -671,7 +737,7 @@ export class BackupEngine {
     const uploaded = await api.upload(keys, snapshot, { signal });
     if (!uploaded.ok) {
       return this.recordFailure(state, uploaded.error, {
-        answered: uploaded.error.status !== undefined,
+        nothingStored: provesNothingStored(uploaded.error),
       });
     }
 
@@ -688,6 +754,7 @@ export class BackupEngine {
       paused: null,
       shrink: null,
       otherDevice: null,
+      confirmedPauses: null,
     });
     return {
       kind: 'uploaded',
@@ -696,22 +763,21 @@ export class BackupEngine {
   }
 
   /**
-   * Before replacing the newest backup, makes sure this phone made it. Resolves to
-   * undefined to go ahead, or to why not:
+   * Before replacing the newest backup, makes sure this phone made it (from a HEAD of
+   * the newest version). Resolves to undefined to go ahead, or to why not:
    * - another phone uploaded since this one did: pause ('other-device');
    * - no account although this phone had backed up (the cloud copy was deleted, e.g.
    *   from the other phone): pause ('cloud-deleted'), never quietly make it again
    *   (the parent's own "Back up now" does, on purpose);
    * - the check itself failed (no signal, a busy server): a failure, retried later.
+   *   A "Back up now" goes ahead anyway: the server keeps earlier versions.
    * No account before this phone's first upload, or no versions yet, is fine.
    */
-  private async checkOtherDevice(
-    api: BackupApi,
-    keys: BackupKeys,
+  private async judgeLatest(
+    latest: ApiResult<LatestVersion>,
     state: StoredBackupState,
-    { manual, signal }: { manual: boolean; signal: AbortSignal },
+    { manual, confirmedPauses }: { manual: boolean; confirmedPauses?: PauseReason[] },
   ): Promise<AttemptOutcome | undefined> {
-    const latest = await api.latest(keys, { signal });
     if (!latest.ok) {
       const { kind } = latest.error;
       if (kind === 'not-found') return undefined;
@@ -720,6 +786,7 @@ export class BackupEngine {
           ? undefined
           : this.recordFailure(state, { kind: 'account-deleted', status: 401 });
       }
+      if (manual && kind !== 'aborted' && kind !== 'offline') return undefined;
       return this.recordFailure(state, latest.error);
     }
 
@@ -734,6 +801,7 @@ export class BackupEngine {
     await this.update(state, {
       paused: 'other-device',
       otherDevice: createdAt === undefined ? { version } : { version, createdAt },
+      confirmedPauses,
       lastError: { kind: error.kind, message: error.message, at: this.clock.now() },
       failures: null,
       nextAttemptAt: null,
@@ -744,22 +812,23 @@ export class BackupEngine {
   /**
    * Stores a failed attempt: pauses automatic backup for failures retrying can't fix,
    * otherwise schedules a retry with backoff. `kind` overrides the error's kind for
-   * the parent; `answered` says the server answered an upload (so it stored nothing).
+   * the parent; `nothingStored` says the server's answer to an upload proves it
+   * stored nothing (so no newest version can be this phone's).
    */
   private async recordFailure(
     state: StoredBackupState,
     error: ApiError,
     {
       kind = error.kind,
-      answered = false,
-    }: { kind?: CloudBackupErrorKind; answered?: boolean } = {},
+      nothingStored = false,
+    }: { kind?: CloudBackupErrorKind; nothingStored?: boolean } = {},
   ): Promise<AttemptOutcome> {
     // Cancelled (backup was just turned off) or offline: nothing went wrong.
     if (error.kind === 'aborted' || error.kind === 'offline') {
       return { kind: 'failed', error: cloudError(kind, 'backup') };
     }
     const now = this.clock.now();
-    const pendingUploadSize = answered ? null : undefined;
+    const pendingUploadSize = nothingStored ? null : undefined;
     const pause = pauseReasonFor(error.kind);
     if (pause) {
       const failure = cloudError(kind, 'backup');
@@ -776,7 +845,14 @@ export class BackupEngine {
     }
     const failures = (state.failures ?? 0) + 1;
     const delay = retryDelayMs(failures, error.retryAfterMs, this.timings);
-    const failure = cloudError(kind, 'backup', { retryAfterMs: error.retryAfterMs, waitMs: delay });
+    // A long wait on the first upload is the server's cap on new backups, not a busy server.
+    const newBackupLimit =
+      kind === 'rate-limited' && state.lastVersion === undefined && delay > 10 * 60_000;
+    const failure = cloudError(kind, 'backup', {
+      retryAfterMs: error.retryAfterMs,
+      waitMs: delay,
+      message: newBackupLimit ? newBackupLimitMessage(delay) : undefined,
+    });
     await this.update(state, {
       lastError: { kind, message: failure.message, at: now },
       failures,
@@ -797,6 +873,8 @@ export class BackupEngine {
    */
   async enable(): Promise<string> {
     if (!this.isAvailable()) throw new Error(cloudError('unavailable', 'backup').message);
+    // A turn-off in progress decides first whether there's still a code to reuse.
+    if (this.disabling) await this.disabling;
     const state = await turnOnBackupState(generateBackupCode(), this.clock.now());
     this.state = state;
     this.backUpInBackground();
@@ -824,24 +902,50 @@ export class BackupEngine {
       return cloudFailure('unexpected', 'restore');
     }
     try {
+      if (this.disabling) await this.disabling;
       const keys = await this.keysFor(code);
       let baseline = options.backup?.accountId === keys.accountId ? options.backup : undefined;
-      if (!baseline) {
+      let newest: string | undefined;
+      if (baseline) {
+        // The restored backup may be an earlier version than the server's newest. The
+        // parent chose it, so this phone carries on from the newest without calling
+        // that "another phone".
+        newest = (await this.newestVersion(keys)) ?? baseline.version;
+      } else {
         const fetched = await this.fetchBackup(code);
         // 'not-found': the account exists but holds no backup, so there's nothing to protect.
         if (!fetched.ok && fetched.error.kind !== 'not-found') return fetched;
-        if (fetched.ok) baseline = fetched.value;
+        if (fetched.ok) {
+          baseline = fetched.value;
+          newest = fetched.value.version;
+        }
       }
+      const data = baseline ? realData(baseline.file) : undefined;
 
       const current = await loadBackupState();
-      if (!isBackupOn(current) || current.code !== code) {
+      if (isBackupOn(current) && current.code === code) {
+        // Already on with this code (restoring the other phone's backup to settle a
+        // pause, say): carry on from what was restored, with nothing paused.
+        await this.update(current, {
+          backedUpGameIds: data?.gameIds ?? null,
+          backedUpEventCount: data?.events ?? null,
+          lastVersion: newest ?? null,
+          pendingUploadSize: null,
+          paused: null,
+          otherDevice: null,
+          shrink: null,
+          confirmedPauses: null,
+          lastError: null,
+          failures: null,
+          nextAttemptAt: null,
+        });
+      } else {
         const state: StoredBackupState = { code, enabledAt: this.clock.now() };
-        if (baseline) {
-          const data = realData(baseline.file);
+        if (data) {
           state.backedUpGameIds = data.gameIds;
           state.backedUpEventCount = data.events;
-          if (baseline.version !== undefined) state.lastVersion = baseline.version;
         }
+        if (newest !== undefined) state.lastVersion = newest;
         this.state = await replaceBackupState(state);
       }
       this.backUpInBackground();
@@ -849,6 +953,12 @@ export class BackupEngine {
     } catch {
       return cloudFailure('unexpected', 'restore');
     }
+  }
+
+  /** The server's newest version for these keys, or undefined if it can't say. */
+  private async newestVersion(keys: BackupKeys): Promise<string | undefined> {
+    const latest = await this.api()?.latest(keys);
+    return latest?.ok ? latest.value.version : undefined;
   }
 
   /**
@@ -880,11 +990,11 @@ export class BackupEngine {
         if (!api) return cloudFailure('unavailable', 'delete');
         const keys = await this.keysFor(state.code);
         // After any upload in flight, so none can land after the delete.
-        const deleted = await this.exclusive(() => api.deleteAll(keys));
+        const deleted = await this.exclusive(() => this.lock(() => api.deleteAll(keys)));
         // 401: the server holds nothing under this code (never uploaded, or deleted).
         if (!deleted.ok && deleted.error.kind !== 'unauthorized') {
-          // Backup stays on: look again for changes that were waiting.
-          this.requestCheck(this.clock.now());
+          // Nothing changed. If backup is on, look again for changes that were waiting.
+          if (isBackupOn(state)) this.requestCheck(this.clock.now());
           return cloudFailure(deleted.error.kind, 'delete', {
             retryAfterMs: deleted.error.retryAfterMs,
           });
@@ -908,15 +1018,19 @@ export class BackupEngine {
 
   /**
    * Uploads now: also when nothing changed, during a backoff, or while automatic backup
-   * is paused. The shrink guard and the other-phone check still apply unless `force`
-   * is true, which is how the parent confirms "Back up anyway".
+   * is paused. The shrink guard and the other-phone check still apply. `force` is the
+   * parent's "Back up anyway" for the pause being shown ('paused-shrink' or
+   * 'paused-other-device'): it overrides that check (and any the parent overrode
+   * before without success), and if another problem turns up instead, it pauses for
+   * that one.
    */
   async backUpNow({ force = false } = {}): Promise<CloudResult<BackupResult>> {
     if (!this.isAvailable()) return cloudFailure('unavailable', 'backup');
     try {
       // Being turned off: wait, then see whether backup is still on.
       if (this.disabling) await this.disabling;
-      const outcome = await this.exclusive(() => this.attempt({ manual: true, force }));
+      const overrides = force ? overridablePauses(await loadBackupState()) : [];
+      const outcome = await this.exclusive(() => this.attempt({ manual: true, overrides }));
       switch (outcome.kind) {
         case 'uploaded':
           return { ok: true, value: outcome.result };

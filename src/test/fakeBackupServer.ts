@@ -222,13 +222,12 @@ export class FakeBackupServer {
       };
     }
 
+    // Injected failures match the method as sent (HEAD included).
+    const injected = pathname.startsWith('/v1/') ? this.takeFailure(method) : undefined;
     // Like the real server (Hono), HEAD is GET without the body.
-    const response = this.route(
-      method === 'HEAD' ? 'GET' : method,
-      pathname,
-      request,
-      arrivedAfter,
-    );
+    const response = injected
+      ? fail(injected.status, injected.error ?? 'injected', injected.retryAfterSeconds)
+      : this.route(method === 'HEAD' ? 'GET' : method, pathname, request, arrivedAfter);
     if (method === 'HEAD') response.body = null;
     response.headers['Cache-Control'] = 'no-store';
     response.headers.Vary = 'Origin';
@@ -293,11 +292,6 @@ export class FakeBackupServer {
     const accountId = match?.[1];
     if (!match || accountId === undefined) return fail(404, 'not_found');
     const sub = match[2];
-
-    const injected = this.takeFailure(method);
-    if (injected) {
-      return fail(injected.status, injected.error ?? 'injected', injected.retryAfterSeconds);
-    }
 
     if (!HEX_64.test(accountId)) return fail(400, 'invalid_account_id');
     const authorization = request.headers.authorization?.trim();
