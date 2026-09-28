@@ -2,18 +2,15 @@ import type { ReactNode } from 'react';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { Sheet } from '@/components/Sheet/Sheet';
+import { AddToHomeScreenIcon, ShareIcon } from '@/components/Icons/Icons';
 import { useGames } from '@/data/hooks';
-import { isIosDevice } from './install';
-import { AddToHomeScreenIcon, ShareIcon } from './InstallIcons';
+import { APP_ICON_URL, isIosDevice } from './install';
 import styles from './InstallSheet.module.css';
 
 export interface InstallSheetProps {
   open: boolean;
   onClose: () => void;
 }
-
-/** The app icon, as it will look on the Home Screen. */
-const APP_ICON_URL = `${import.meta.env.BASE_URL}icon.svg`;
 
 function StepNumber({ children }: { children: ReactNode }) {
   return <span className={styles.stepNumber}>{children}</span>;

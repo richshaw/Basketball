@@ -1,11 +1,9 @@
 import { useState } from 'react';
 import { Button } from '@/components/Button/Button';
 import { CloseIcon } from '@/components/Icons/Icons';
-import { rememberInstallBannerDismissed, shouldShowInstallBanner } from './install';
+import { APP_ICON_URL, rememberInstallBannerDismissed, shouldShowInstallBanner } from './install';
 import { InstallSheet } from './InstallSheet';
 import styles from './InstallBanner.module.css';
-
-const APP_ICON_URL = `${import.meta.env.BASE_URL}icon.svg`;
 
 /**
  * Suggests adding Hoop Stats to the Home Screen, like Safari's own app banners. Only

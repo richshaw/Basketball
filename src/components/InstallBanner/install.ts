@@ -7,6 +7,9 @@
  * see the banner.
  */
 
+/** The app icon, as it looks on the Home Screen (public/icon.svg, under the app's base). */
+export const APP_ICON_URL = `${import.meta.env.BASE_URL}icon.svg`;
+
 type NavigatorInfo = Pick<Navigator, 'userAgent'> & {
   /** Missing in some browsers (and jsdom). */
   maxTouchPoints?: number;
