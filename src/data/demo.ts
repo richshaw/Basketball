@@ -11,6 +11,7 @@ import {
   THREE_POINT_RADIUS,
 } from '@/lib/court';
 import { parseLocalDate, todayLocalISO, toLocalISODate } from '@/lib/format';
+import { db } from './db';
 import { isFieldGoalType } from './stats';
 import { EXPORT_APP, EXPORT_SCHEMA_VERSION, importAll, type ExportFile } from './transfer';
 import type { CourtPoint, Game, HomeAway, Player, StatEvent, StatType } from './types';
@@ -25,11 +26,20 @@ export function demoGameId(n: number): string {
   return `demo-game-${String(n).padStart(2, '0')}`;
 }
 
+function isDemoGameId(id: string): boolean {
+  return id === DEMO_LIVE_GAME_ID || /^demo-game-\d{2}$/.test(id);
+}
+
 export interface DemoOptions {
   /** The local date ('YYYY-MM-DD') the games count back from. Defaults to today. */
   today?: string;
   /** Also add a live game today, in the third quarter (for the live game screen). */
   liveGame?: boolean;
+  /**
+   * seedDemoData only: replace the device's own data too. Without it, seeding refuses
+   * if there's any player or game that isn't demo data.
+   */
+  force?: boolean;
 }
 
 interface DemoGamePlan {
@@ -358,10 +368,27 @@ export function buildDemoData(options: DemoOptions = {}): ExportFile {
   };
 }
 
+/** Whether the device holds a player or game that isn't demo data. */
+async function hasOwnData(): Promise<boolean> {
+  const [playerIds, gameIds] = await Promise.all([
+    db.players.toCollection().primaryKeys(),
+    db.games.toCollection().primaryKeys(),
+  ]);
+  return playerIds.some((id) => id !== DEMO_PLAYER_ID) || gameIds.some((id) => !isDemoGameId(id));
+}
+
 /**
  * Replaces everything on this device with the demo data: player "Ava" #12 and ten
  * final "Fall 2026" games (ids `demoGameId(1)`…`demoGameId(10)`, newest last).
+ * It's on `window.hoopStats` in every build, so it refuses to touch real data
+ * (anything but earlier demo data) unless called with `{ force: true }`.
  */
 export async function seedDemoData(options: DemoOptions = {}): Promise<void> {
+  if (!options.force && (await hasOwnData())) {
+    throw new Error(
+      'This device has its own data, so the demo data was not loaded. ' +
+        'Use seedDemoData({ force: true }) to replace it.',
+    );
+  }
   await importAll(buildDemoData(options), 'replace');
 }
