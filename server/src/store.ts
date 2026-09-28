@@ -1,20 +1,35 @@
 import { randomBytes } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
-import { mkdir, open, readFile, readdir, rename, rm, rmdir, stat } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  statfs,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { isHex64 } from './auth.js';
 import { KeyedMutex } from './keyedMutex.js';
-import { isVersionId, parseVersionTime } from './versionId.js';
+import { isVersionId, parseVersionId } from './versionId.js';
 
 /**
  * Filesystem layout under DATA_DIR:
  *
- *   accounts/<accountId>/auth.json                 {"tokenSha256": "...", "createdAt": "..."}
- *   accounts/<accountId>/versions/<version>.bin    opaque encrypted bytes, exactly as uploaded
- *   trash/                                         deleted accounts on their way out
+ *   accounts/<accountId>/auth.json               {"tokenSha256": "...", "createdAt": "..."}
+ *   accounts/<accountId>/versions/<version>.bin  opaque encrypted bytes, exactly as uploaded
+ *   incoming/                                    uploads still arriving (cleared on startup)
+ *   trash/                                       deleted accounts on their way out
+ *   new-accounts/                                one empty file per account created recently
  *
- * Every file is written to a temp file in the same directory, fsynced, then renamed into place,
- * so a crash never leaves a half-written auth record or backup visible.
+ * Files are written to a temp file on the same filesystem, fsynced, then renamed into place, so
+ * a crash never leaves a half-written auth record or backup visible.
  */
 
 export interface AuthRecord {
@@ -31,23 +46,54 @@ export interface StoredVersion extends VersionRef {
   size: number;
 }
 
+export interface OpenedVersion {
+  stream: ReadableStream<Uint8Array>;
+  size: number;
+}
+
 export type UploadResult =
   { kind: 'received'; tempPath: string; size: number } | { kind: 'too_large' } | { kind: 'empty' };
+
+export interface DiskSpace {
+  freeBytes: number;
+  totalBytes: number;
+}
 
 /** The request body stream failed, usually because the client went away mid-upload. */
 export class BodyReadError extends Error {
   override name = 'BodyReadError';
 }
 
+const ACCOUNTS_DIR = 'accounts';
+const INCOMING_DIR = 'incoming';
+const TRASH_DIR = 'trash';
+const NEW_ACCOUNTS_DIR = 'new-accounts';
 const TEMP_PREFIX = '.tmp-';
 const VERSION_SUFFIX = '.bin';
+// Lock key for account creation; can never collide with a (hex) account id.
+const CREATION_LOCK = '#account-creation';
 
-function tempName(): string {
-  return `${TEMP_PREFIX}${randomBytes(8).toString('hex')}`;
+function randomName(bytes = 8): string {
+  return randomBytes(bytes).toString('hex');
 }
 
 export function isErrno(err: unknown, code: string): boolean {
   return err instanceof Error && (err as NodeJS.ErrnoException).code === code;
+}
+
+async function readdirOrEmpty(dir: string): Promise<string[]> {
+  try {
+    return await readdir(dir);
+  } catch (err) {
+    if (isErrno(err, 'ENOENT')) return [];
+    throw err;
+  }
+}
+
+/** Free space available to this process and total size of the filesystem holding `dir`. */
+export async function readDiskSpace(dir: string): Promise<DiskSpace> {
+  const s = await statfs(dir);
+  return { freeBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize };
 }
 
 /** Makes renames/unlinks in `dir` durable. Best effort: not every platform supports it. */
@@ -74,7 +120,7 @@ async function writeAll(handle: FileHandle, chunk: Uint8Array): Promise<void> {
 /** Temp file in the same directory, fsync, rename over the target, fsync the directory. */
 async function atomicWriteFile(target: string, data: string | Uint8Array): Promise<void> {
   const dir = path.dirname(target);
-  const temp = path.join(dir, tempName());
+  const temp = path.join(dir, `${TEMP_PREFIX}${randomName()}`);
   try {
     const handle = await open(temp, 'wx', 0o600);
     try {
@@ -91,18 +137,28 @@ async function atomicWriteFile(target: string, data: string | Uint8Array): Promi
   await fsyncDir(dir);
 }
 
+async function emptyDirectory(dir: string): Promise<void> {
+  for (const name of await readdirOrEmpty(dir)) {
+    await rm(path.join(dir, name), { recursive: true, force: true });
+  }
+}
+
 function newestFirst(a: VersionRef, b: VersionRef): number {
   return a.version < b.version ? 1 : a.version > b.version ? -1 : 0;
 }
 
 export class BackupStore {
   readonly #accountsDir: string;
+  readonly #incomingDir: string;
   readonly #trashDir: string;
+  readonly #newAccountsDir: string;
   readonly #locks = new KeyedMutex();
 
   constructor(dataDir: string) {
-    this.#accountsDir = path.join(dataDir, 'accounts');
-    this.#trashDir = path.join(dataDir, 'trash');
+    this.#accountsDir = path.join(dataDir, ACCOUNTS_DIR);
+    this.#incomingDir = path.join(dataDir, INCOMING_DIR);
+    this.#trashDir = path.join(dataDir, TRASH_DIR);
+    this.#newAccountsDir = path.join(dataDir, NEW_ACCOUNTS_DIR);
   }
 
   // Paths are only ever built from strictly validated ids (defense in depth: the HTTP layer
@@ -121,9 +177,14 @@ export class BackupStore {
     return path.join(this.#versionsDir(accountId), `${version}${VERSION_SUFFIX}`);
   }
 
-  /** Runs `task` while holding the account's write lock (uploads and deletes). */
+  /** Runs `task` while holding the account's lock (committing uploads and deleting). */
   withAccountLock<T>(accountId: string, task: () => Promise<T>): Promise<T> {
     return this.#locks.run(accountId, task);
+  }
+
+  /** Runs `task` while holding the global lock that serializes account creation. */
+  withCreationLock<T>(task: () => Promise<T>): Promise<T> {
+    return this.#locks.run(CREATION_LOCK, task);
   }
 
   async readAuth(accountId: string): Promise<AuthRecord | null> {
@@ -149,29 +210,62 @@ export class BackupStore {
     return { tokenSha256, createdAt: typeof createdAt === 'string' ? createdAt : '' };
   }
 
-  async createAuth(accountId: string, record: AuthRecord): Promise<void> {
-    await mkdir(this.#accountDir(accountId), { recursive: true, mode: 0o700 });
+  /** Number of accounts (directories holding an auth record). */
+  async countAccounts(): Promise<number> {
+    let count = 0;
+    for (const name of await readdirOrEmpty(this.#accountsDir)) {
+      if (!isHex64(name)) continue;
+      try {
+        await access(path.join(this.#accountsDir, name, 'auth.json'));
+        count += 1;
+      } catch (err) {
+        if (!isErrno(err, 'ENOENT')) throw err;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Times (epoch ms, oldest first) of the accounts created within `windowMs` before `nowMs`.
+   * Kept on disk so the daily cap survives restarts (the machine stops when idle). Expired
+   * records, and records dated more than a window ahead (a clock that had jumped forward),
+   * are deleted along the way.
+   */
+  async recentAccountCreations(nowMs: number, windowMs: number): Promise<number[]> {
+    const times: number[] = [];
+    for (const name of await readdirOrEmpty(this.#newAccountsDir)) {
+      const time = Number(/^(\d+)-[0-9a-f]+$/.exec(name)?.[1]);
+      if (Number.isSafeInteger(time) && time > nowMs - windowMs && time <= nowMs + windowMs) {
+        times.push(time);
+      } else {
+        await rm(path.join(this.#newAccountsDir, name), { force: true });
+      }
+    }
+    return times.sort((a, b) => a - b);
+  }
+
+  /** Creates the account directory and auth record, and notes the creation time. */
+  async createAccount(accountId: string, record: AuthRecord, nowMs: number): Promise<void> {
+    await mkdir(this.#versionsDir(accountId), { recursive: true, mode: 0o700 });
     await atomicWriteFile(
       path.join(this.#accountDir(accountId), 'auth.json'),
       `${JSON.stringify(record)}\n`,
     );
+    await mkdir(this.#newAccountsDir, { recursive: true, mode: 0o700 });
+    await writeFile(path.join(this.#newAccountsDir, `${nowMs}-${randomName(4)}`), '', {
+      flag: 'wx',
+      mode: 0o600,
+    });
   }
 
   /** Version ids and timestamps, newest first, without touching file contents. */
   async listVersionRefs(accountId: string): Promise<VersionRef[]> {
-    let names: string[];
-    try {
-      names = await readdir(this.#versionsDir(accountId));
-    } catch (err) {
-      if (isErrno(err, 'ENOENT')) return [];
-      throw err;
-    }
     const refs: VersionRef[] = [];
-    for (const name of names) {
+    for (const name of await readdirOrEmpty(this.#versionsDir(accountId))) {
       if (!name.endsWith(VERSION_SUFFIX)) continue;
       const version = name.slice(0, -VERSION_SUFFIX.length);
-      const createdAtMs = parseVersionTime(version);
-      if (createdAtMs !== null) refs.push({ version, createdAtMs });
+      const parsed = parseVersionId(version);
+      if (parsed !== null) refs.push({ version, createdAtMs: parsed.createdAtMs });
     }
     return refs.sort(newestFirst);
   }
@@ -181,21 +275,16 @@ export class BackupStore {
     const refs = await this.listVersionRefs(accountId);
     const versions = await Promise.all(
       refs.map(async (ref): Promise<StoredVersion | null> => {
-        try {
-          const { size } = await stat(this.#versionPath(accountId, ref.version));
-          return { ...ref, size };
-        } catch (err) {
-          if (isErrno(err, 'ENOENT')) return null; // pruned while we were listing
-          throw err;
-        }
+        const size = await this.versionSize(accountId, ref.version);
+        return size === null ? null : { ...ref, size }; // null: pruned while we were listing
       }),
     );
     return versions.filter((v): v is StoredVersion => v !== null);
   }
 
-  async readVersion(accountId: string, version: string): Promise<Buffer<ArrayBuffer> | null> {
+  async versionSize(accountId: string, version: string): Promise<number | null> {
     try {
-      return await readFile(this.#versionPath(accountId, version));
+      return (await stat(this.#versionPath(accountId, version))).size;
     } catch (err) {
       if (isErrno(err, 'ENOENT')) return null;
       throw err;
@@ -203,18 +292,38 @@ export class BackupStore {
   }
 
   /**
-   * Streams the request body into a temp file next to the account's versions, stopping as soon
-   * as it exceeds `maxBytes` (so oversized uploads are never buffered or stored in full).
-   * On success the caller must `commitUpload` or `discardUpload` the temp file.
+   * Opens a version for streaming. The file handle pins the data, so the full size is served
+   * even if the version is pruned meanwhile; it is closed when the stream ends or is cancelled.
+   */
+  async openVersion(accountId: string, version: string): Promise<OpenedVersion | null> {
+    let handle: FileHandle;
+    try {
+      handle = await open(this.#versionPath(accountId, version), 'r');
+    } catch (err) {
+      if (isErrno(err, 'ENOENT')) return null;
+      throw err;
+    }
+    try {
+      const { size } = await handle.stat();
+      const stream = Readable.toWeb(handle.createReadStream()) as ReadableStream<Uint8Array>;
+      return { stream, size };
+    } catch (err) {
+      await handle.close();
+      throw err;
+    }
+  }
+
+  /**
+   * Streams a request body into incoming/, stopping as soon as it exceeds `maxBytes` (so an
+   * oversized upload is never buffered or stored in full). Takes no lock. On success the caller
+   * must `commitUpload` or `discardUpload` the temp file.
    */
   async receiveUpload(
-    accountId: string,
     body: ReadableStream<Uint8Array> | null,
     maxBytes: number,
   ): Promise<UploadResult> {
-    const dir = this.#versionsDir(accountId);
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    const tempPath = path.join(dir, tempName());
+    await mkdir(this.#incomingDir, { recursive: true, mode: 0o700 });
+    const tempPath = path.join(this.#incomingDir, `${randomName(12)}.part`);
     let size = 0;
     let tooLarge = false;
     try {
@@ -256,7 +365,9 @@ export class BackupStore {
     return { kind: 'received', tempPath, size };
   }
 
+  /** Moves a received upload into place as `version` (same filesystem, so atomic). */
   async commitUpload(accountId: string, tempPath: string, version: string): Promise<void> {
+    await mkdir(this.#versionsDir(accountId), { recursive: true, mode: 0o700 });
     await rename(tempPath, this.#versionPath(accountId, version));
     await fsyncDir(this.#versionsDir(accountId));
   }
@@ -274,31 +385,13 @@ export class BackupStore {
   }
 
   /**
-   * Removes temp files left behind by a crash. Only call while holding the account lock: then
-   * no upload for this account can be in flight, so every temp file found is stale.
+   * Removes temp files a crash left next to an auth record. Only call while holding the
+   * account lock: then no write for this account is in flight, so every temp file is stale.
    */
   async removeStaleTempFiles(accountId: string): Promise<void> {
-    for (const dir of [this.#accountDir(accountId), this.#versionsDir(accountId)]) {
-      let names: string[];
-      try {
-        names = await readdir(dir);
-      } catch (err) {
-        if (isErrno(err, 'ENOENT')) continue;
-        throw err;
-      }
-      for (const name of names) {
-        if (name.startsWith(TEMP_PREFIX)) await rm(path.join(dir, name), { force: true });
-      }
-    }
-  }
-
-  /** Undoes the directories created by a failed first upload (rmdir only removes empty dirs). */
-  async removeEmptyAccountDirs(accountId: string): Promise<void> {
-    try {
-      await rmdir(this.#versionsDir(accountId));
-      await rmdir(this.#accountDir(accountId));
-    } catch {
-      // Not empty or already gone: nothing to undo.
+    const dir = this.#accountDir(accountId);
+    for (const name of await readdirOrEmpty(dir)) {
+      if (name.startsWith(TEMP_PREFIX)) await rm(path.join(dir, name), { force: true });
     }
   }
 
@@ -309,7 +402,7 @@ export class BackupStore {
    */
   async deleteAccount(accountId: string): Promise<boolean> {
     await mkdir(this.#trashDir, { recursive: true, mode: 0o700 });
-    const trashed = path.join(this.#trashDir, randomBytes(12).toString('hex'));
+    const trashed = path.join(this.#trashDir, randomName(12));
     try {
       await rename(this.#accountDir(accountId), trashed);
     } catch (err) {
@@ -323,16 +416,15 @@ export class BackupStore {
 }
 
 /**
- * Startup check: creates the directory layout, finishes deletions interrupted by a restart,
- * and fails fast with a clear error if the data directory is not writable (for example a
- * volume mounted with the wrong ownership).
+ * Startup check. Writes nothing, so the server still starts (and restores keep working) when
+ * the disk is completely full: it makes sure the data directory exists and is accessible
+ * (failing fast on e.g. a volume mounted with the wrong ownership), then finishes deletions
+ * interrupted by a restart and drops half-received uploads, both of which only free space.
+ * Subdirectories are created on demand.
  */
 export async function prepareDataDir(dataDir: string): Promise<void> {
-  await mkdir(path.join(dataDir, 'accounts'), { recursive: true, mode: 0o700 });
-  const trash = path.join(dataDir, 'trash');
-  await rm(trash, { recursive: true, force: true });
-  await mkdir(trash, { recursive: true, mode: 0o700 });
-  const probe = path.join(dataDir, `${TEMP_PREFIX}write-check`);
-  await atomicWriteFile(probe, 'ok\n');
-  await rm(probe, { force: true });
+  await mkdir(dataDir, { recursive: true });
+  await access(dataDir, fsConstants.R_OK | fsConstants.W_OK | fsConstants.X_OK);
+  await emptyDirectory(path.join(dataDir, TRASH_DIR));
+  await emptyDirectory(path.join(dataDir, INCOMING_DIR));
 }

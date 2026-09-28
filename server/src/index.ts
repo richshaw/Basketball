@@ -1,8 +1,7 @@
-import { serve } from '@hono/node-server';
-import { createApp } from './app.js';
 import type { ServerConfig } from './config.js';
 import { loadConfig } from './config.js';
-import { prepareDataDir } from './store.js';
+import type { RunningServer } from './server.js';
+import { startServer } from './server.js';
 
 const SHUTDOWN_GRACE_MS = 10_000;
 
@@ -19,24 +18,21 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  try {
-    await prepareDataDir(config.dataDir);
-  } catch (err) {
-    console.error(`DATA_DIR ${config.dataDir} is not usable: ${errorMessage(err)}`);
-    process.exit(1);
-  }
-
   if (config.allowedOrigins.length === 0) {
     console.warn('ALLOWED_ORIGINS is empty: browsers on other origins cannot call this server.');
   }
 
-  const app = createApp(config);
-  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-    console.log(
-      `Backup server listening on port ${info.port} ` +
-        `(data: ${config.dataDir}; origins: ${config.allowedOrigins.join(', ') || 'none'})`,
-    );
-  });
+  let running: RunningServer;
+  try {
+    running = await startServer(config);
+  } catch (err) {
+    console.error(`Could not start (DATA_DIR ${config.dataDir}): ${errorMessage(err)}`);
+    process.exit(1);
+  }
+  console.log(
+    `Backup server listening on port ${running.port} ` +
+      `(data: ${config.dataDir}; origins: ${config.allowedOrigins.join(', ') || 'none'})`,
+  );
 
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -44,10 +40,13 @@ async function main(): Promise<void> {
     shuttingDown = true;
     console.log(`${signal} received: finishing in-flight requests, then exiting.`);
     // Stop accepting connections; in-flight requests (e.g. an upload) are allowed to finish.
-    server.close((err) => {
-      if (err) console.error(`Error while closing server: ${err.message}`);
-      process.exit(err ? 1 : 0);
-    });
+    running.close().then(
+      () => process.exit(0),
+      (err: unknown) => {
+        console.error(`Error while closing server: ${errorMessage(err)}`);
+        process.exit(1);
+      },
+    );
     setTimeout(() => {
       console.error('Shutdown grace period elapsed; exiting.');
       process.exit(1);

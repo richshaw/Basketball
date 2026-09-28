@@ -9,8 +9,13 @@ export interface RetentionPolicy {
 }
 
 export interface VersionStamp {
+  /** Version id; ids sort (as strings) in upload order. */
   version: string;
   createdAtMs: number;
+}
+
+export interface SizedVersionStamp extends VersionStamp {
+  size: number;
 }
 
 export interface RetentionPlan<T extends VersionStamp> {
@@ -20,10 +25,18 @@ export interface RetentionPlan<T extends VersionStamp> {
   remove: T[];
 }
 
-const DAY_MS = 86_400_000;
+export interface RetentionOptions {
+  /**
+   * When false, nothing is dropped for being old: the newest version of every day is kept, as
+   * if the daily window were unlimited. Used when the clock can't be trusted to measure age.
+   * Defaults to true.
+   */
+  pruneByAge?: boolean;
+}
+
+export const DAY_MS = 86_400_000;
 
 function newestFirst(a: VersionStamp, b: VersionStamp): number {
-  if (a.createdAtMs !== b.createdAtMs) return b.createdAtMs - a.createdAtMs;
   return a.version < b.version ? 1 : a.version > b.version ? -1 : 0;
 }
 
@@ -33,14 +46,17 @@ function newestFirst(a: VersionStamp, b: VersionStamp): number {
  * therefore collapses to its final snapshot once it scrolls out of the recent window, while
  * older days keep their end-of-day snapshot for about six months.
  *
- * Pure function: no I/O, no clock. The newest version is always kept. Days after `nowMs`'s
- * day (clock skew) count as inside the daily window, so such versions are not pruned for age.
+ * "Newest" means most recently uploaded (highest version id); days come from `createdAtMs`.
+ * Pure function: no I/O, no clock. The newest version is always kept. Days after `nowMs`'s day
+ * (clock skew) count as inside the daily window, so such versions are not pruned for age.
  */
 export function planRetention<T extends VersionStamp>(
   versions: readonly T[],
   nowMs: number,
   policy: RetentionPolicy,
+  options: RetentionOptions = {},
 ): RetentionPlan<T> {
+  const pruneByAge = options.pruneByAge ?? true;
   const sorted = [...versions].sort(newestFirst);
   const keepRecent = Math.max(1, Math.floor(policy.keepRecent));
   const today = Math.floor(nowMs / DAY_MS);
@@ -52,7 +68,8 @@ export function planRetention<T extends VersionStamp>(
     const day = Math.floor(v.createdAtMs / DAY_MS);
     const newestOfItsDay = !daysSeen.has(day);
     daysSeen.add(day);
-    const withinDailyWindow = policy.keepDailyDays > 0 && today - day < policy.keepDailyDays;
+    const withinDailyWindow =
+      policy.keepDailyDays > 0 && (!pruneByAge || today - day < policy.keepDailyDays);
     if (index < keepRecent || (newestOfItsDay && withinDailyWindow)) {
       keep.push(v);
     } else {
@@ -60,5 +77,28 @@ export function planRetention<T extends VersionStamp>(
     }
   });
 
+  return { keep, remove };
+}
+
+/**
+ * Enforces a per-account storage budget: keeps the newest versions whose sizes add up to at
+ * most `maxTotalBytes` and drops the rest, oldest first. The newest version is always kept,
+ * even if it alone is over budget. Pure function.
+ */
+export function capTotalSize<T extends SizedVersionStamp>(
+  versions: readonly T[],
+  maxTotalBytes: number,
+): RetentionPlan<T> {
+  const keep: T[] = [];
+  const remove: T[] = [];
+  let total = 0;
+  for (const v of [...versions].sort(newestFirst)) {
+    if (keep.length === 0 || (remove.length === 0 && total + v.size <= maxTotalBytes)) {
+      keep.push(v);
+      total += v.size;
+    } else {
+      remove.push(v);
+    }
+  }
   return { keep, remove };
 }

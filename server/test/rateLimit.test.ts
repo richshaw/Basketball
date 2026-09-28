@@ -16,6 +16,21 @@ describe('FixedWindowRateLimiter', () => {
     expect(limiter.hit('a')).toEqual({ allowed: true });
   });
 
+  it('can refund a hit within the same window, but not into a new one', () => {
+    let now = 0;
+    const limiter = new FixedWindowRateLimiter(1, 60_000, () => now);
+    expect(limiter.hit('a')).toEqual({ allowed: true });
+    limiter.refund('a');
+    expect(limiter.hit('a')).toEqual({ allowed: true });
+    expect(limiter.hit('a').allowed).toBe(false);
+
+    now += 60_000; // new window: a late refund must not create extra allowance
+    limiter.refund('a');
+    expect(limiter.hit('a')).toEqual({ allowed: true });
+    expect(limiter.hit('a').allowed).toBe(false);
+    limiter.refund('unknown-key'); // harmless
+  });
+
   it('forgets idle keys', () => {
     let now = 0;
     const limiter = new FixedWindowRateLimiter(1, 1000, () => now);

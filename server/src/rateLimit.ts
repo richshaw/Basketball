@@ -44,6 +44,17 @@ export class FixedWindowRateLimiter {
     return { allowed: true };
   }
 
+  /**
+   * Gives back one hit for `key`, e.g. for an upload that failed through no fault of the client
+   * (signal dropped mid-upload). No-op if the window that was charged has already ended.
+   */
+  refund(key: string): void {
+    const bucket = this.#buckets.get(key);
+    if (bucket !== undefined && bucket.count > 0 && this.#now() < bucket.resetAt) {
+      bucket.count -= 1;
+    }
+  }
+
   /** Number of keys currently tracked (for tests and diagnostics). */
   get size(): number {
     return this.#buckets.size;

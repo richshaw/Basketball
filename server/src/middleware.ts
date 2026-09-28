@@ -5,7 +5,8 @@ import { rateLimitKeyForAddress } from './rateLimit.js';
 
 export const ALLOWED_METHODS = 'GET, PUT, DELETE, OPTIONS';
 export const ALLOWED_HEADERS = 'Authorization, Content-Type';
-export const EXPOSED_HEADERS = 'X-Backup-Version, X-Backup-Created-At';
+// Retry-After is not CORS-safelisted, so without this the app couldn't read it on 429/503.
+export const EXPOSED_HEADERS = 'X-Backup-Version, X-Backup-Created-At, Retry-After';
 const PREFLIGHT_MAX_AGE_SECONDS = '86400';
 const MAX_LOGGED_PATH_LENGTH = 160;
 

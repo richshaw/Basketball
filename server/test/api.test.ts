@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Harness } from './helpers.js';
 import {
   START,
+  VERSION_RE,
   auth,
   bytes,
   createHarness,
@@ -12,10 +13,9 @@ import {
   hex64,
   listDir,
   putBackup,
+  statusOf,
   uploadOk,
 } from './helpers.js';
-
-const VERSION_RE = /^\d{8}T\d{9}Z-[0-9a-f]{8}$/;
 
 let h: Harness;
 let accountId: string;
@@ -69,11 +69,12 @@ describe('PUT /v1/backups/:accountId', () => {
     expect(second.size).toBe(20);
   });
 
-  it('gives distinct, increasing versions to uploads within the same millisecond', async () => {
+  it('numbers versions in upload order, even within the same millisecond', async () => {
     const a = await uploadOk(h.app, accountId, token, bytes(1));
     const b = await uploadOk(h.app, accountId, token, bytes(2));
-    expect(b.version > a.version).toBe(true);
-    expect(Date.parse(b.createdAt) - Date.parse(a.createdAt)).toBe(1);
+    expect(a.version.startsWith('0000000001-')).toBe(true);
+    expect(b.version.startsWith('0000000002-')).toBe(true);
+    expect(b.createdAt).toBe(a.createdAt); // the clock didn't move; the sequence did
   });
 
   it('rejects a different token for an existing account with 401', async () => {
@@ -134,9 +135,22 @@ describe('GET /v1/backups/:accountId/latest', () => {
     const res = await getWithToken(h.app, `/v1/backups/${accountId}/latest`, token);
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
+    expect(res.headers.get('Content-Length')).toBe('12');
     expect(res.headers.get('X-Backup-Version')).toBe(newest.version);
     expect(res.headers.get('X-Backup-Created-At')).toBe(newest.createdAt);
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes(12, 2));
+  });
+
+  it('answers HEAD with the headers only', async () => {
+    const upload = await uploadOk(h.app, accountId, token, bytes(12, 2));
+    const res = await h.app.request(`/v1/backups/${accountId}/latest`, {
+      method: 'HEAD',
+      headers: auth(token),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Length')).toBe('12');
+    expect(res.headers.get('X-Backup-Version')).toBe(upload.version);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
   });
 
   it('is 401 for an unknown account and for a wrong token', async () => {
@@ -175,7 +189,7 @@ describe('GET /v1/backups/:accountId/:version', () => {
     await uploadOk(h.app, accountId, token, bytes(10));
     const res = await getWithToken(
       h.app,
-      `/v1/backups/${accountId}/20200101T000000000Z-00000000`,
+      `/v1/backups/${accountId}/0000000099-20200101T000000000Z`,
       token,
     );
     expect(res.status).toBe(404);
@@ -219,7 +233,7 @@ describe('DELETE /v1/backups/:accountId', () => {
       headers: auth(hex64()),
     });
     expect(res.status).toBe(401);
-    expect((await getWithToken(h.app, `/v1/backups/${accountId}/latest`, token)).status).toBe(200);
+    expect(await statusOf(getWithToken(h.app, `/v1/backups/${accountId}/latest`, token))).toBe(200);
   });
 
   it('frees the id so a later upload starts a fresh account', async () => {
@@ -251,7 +265,7 @@ describe('input validation', () => {
       await h.app.request(`/v1/backups/${id}`, { method: 'PUT', body: bytes(4), headers: auth(t) }),
       await h.app.request(`/v1/backups/${id}`, { headers: auth(t) }),
       await h.app.request(`/v1/backups/${id}/latest`, { headers: auth(t) }),
-      await h.app.request(`/v1/backups/${id}/20260101T000000000Z-00000000`, { headers: auth(t) }),
+      await h.app.request(`/v1/backups/${id}/0000000001-20260101T000000000Z`, { headers: auth(t) }),
       await h.app.request(`/v1/backups/${id}`, { method: 'DELETE', headers: auth(t) }),
     ];
     for (const res of responses) {
@@ -285,12 +299,13 @@ describe('input validation', () => {
   it.each([
     'nope',
     '20260101T000000000Z',
-    '20260101T000000000Z-0000000G',
-    '20261301T000000000Z-00000000',
+    '0000000001-20260101T000000000',
+    '000000000G-20260101T000000000Z',
+    '0000000001-20261301T000000000Z',
     '..%2Fauth.json',
     '%2e%2e%2fauth.json',
-    '20260101T000000000Z-00000000%2F..%2F..%2Fauth.json',
-    '20260101T000000000Z-00000000.bin',
+    '0000000001-20260101T000000000Z%2F..%2F..%2Fauth.json',
+    '0000000001-20260101T000000000Z.bin',
   ])('rejects version %j with 400', async (version) => {
     await uploadOk(h.app, accountId, token, bytes(4));
     const res = await getWithToken(h.app, `/v1/backups/${accountId}/${version}`, token);

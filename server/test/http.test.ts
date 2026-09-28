@@ -10,6 +10,7 @@ import {
   getWithToken,
   hex64,
   putBackup,
+  statusOf,
   uploadOk,
 } from './helpers.js';
 
@@ -75,9 +76,26 @@ describe('CORS', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(ALLOWED_ORIGIN);
     expect(res.headers.get('Access-Control-Expose-Headers')).toBe(
-      'X-Backup-Version, X-Backup-Created-At',
+      'X-Backup-Version, X-Backup-Created-At, Retry-After',
     );
     expect(res.headers.get('X-Backup-Version')).toBe(upload.version);
+    await res.arrayBuffer();
+  });
+
+  it('lets the app read Retry-After on a 429', async () => {
+    const limited = await createHarness({ limits: { requestsPerIpPerMinute: 1 } });
+    try {
+      await limited.app.request('/v2/anything', { headers: { Origin: ALLOWED_ORIGIN } });
+      const res = await limited.app.request('/v2/anything', {
+        headers: { Origin: ALLOWED_ORIGIN },
+      });
+      expect(res.status).toBe(429);
+      expect(res.headers.get('Retry-After')).toBe('60');
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe(ALLOWED_ORIGIN);
+      expect(res.headers.get('Access-Control-Expose-Headers')).toContain('Retry-After');
+    } finally {
+      await limited.cleanup();
+    }
   });
 
   it('adds CORS headers to error responses too, so the app can read the status', async () => {
@@ -141,6 +159,7 @@ describe('security headers', () => {
     const blob = await getWithToken(h.app, `/v1/backups/${accountId}/latest`, token);
     expect(blob.headers.get('X-Content-Type-Options')).toBe('nosniff');
     expect(blob.headers.get('Cache-Control')).toBe('no-store');
+    await blob.arrayBuffer();
     const res = await preflight(ALLOWED_ORIGIN);
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
   });
@@ -152,7 +171,7 @@ describe('request log', () => {
     const token = hex64();
     const payload = new TextEncoder().encode('ciphertext-marker');
     const upload = await uploadOk(h.app, accountId, token, new Uint8Array(payload));
-    await getWithToken(h.app, `/v1/backups/${accountId}/${upload.version}`, token);
+    await statusOf(getWithToken(h.app, `/v1/backups/${accountId}/${upload.version}`, token));
     await getWithToken(h.app, `/v1/backups/${accountId}`, hex64());
 
     expect(h.logs).toHaveLength(3);
