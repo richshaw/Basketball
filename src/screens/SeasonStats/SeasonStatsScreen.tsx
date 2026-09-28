@@ -1,19 +1,284 @@
+import { useId, useMemo, useState, type ReactNode } from 'react';
+import { Button } from '@/components/Button/Button';
+import { ButtonLink } from '@/components/Button/ButtonLink';
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
+import { StatTile, StatTileGrid } from '@/components/StatTile/StatTile';
+import { useToast } from '@/components/Toast/toastContext';
+import { useAllEvents, useGames, usePlayer, useSeasons } from '@/data/hooks';
+import { statLinesForGames, summarizeGames, type GamesSummary } from '@/data/stats';
+import type { Game, Player } from '@/data/types';
+import { formatAvg, formatMadeAttempted, formatPct, formatPlayerName } from '@/lib/format';
+import { shareText } from '@/lib/share';
+import { paths } from '@/routes';
+import { GameLog } from './GameLog';
+import { formatGameCount, formatRecord, opponentLabel } from './gameLabels';
+import { SeasonHighs } from './SeasonHighs';
+import { SeasonPicker } from './SeasonPicker';
+import { ALL_GAMES_LABEL, buildSeasonRecap } from './seasonRecap';
+import {
+  inSeason,
+  readRememberedSeason,
+  rememberSeason,
+  resolveSeasonKey,
+  seasonOf,
+  type SeasonKey,
+} from './seasonFilter';
+import { TotalsTable } from './TotalsTable';
+import { TrendChart } from './TrendChart';
+import styles from './SeasonStatsScreen.module.css';
 
-/** Placeholder: season totals and averages arrive in a later PR. */
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  const headingId = useId();
+  return (
+    <section className={styles.section} aria-labelledby={headingId}>
+      <h2 id={headingId} className={styles.sectionTitle}>
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+interface SummaryCardProps {
+  player: Player | null;
+  /** 'Fall 2026 · 10 games' */
+  caption: string;
+  record: GamesSummary['record'];
+}
+
+/** Whose stats these are, over which games, and the team's record in them. */
+function SummaryCard({ player, caption, record }: SummaryCardProps) {
+  const name = formatPlayerName(player);
+  const jersey = player?.jerseyNumber;
+  const recordText = formatRecord(record);
+  return (
+    <div className={styles.summary}>
+      <div className={styles.avatar} aria-hidden="true">
+        {jersey ?? name.charAt(0).toUpperCase()}
+      </div>
+      <div className={styles.identity}>
+        <p className={styles.playerName}>
+          {name}
+          {jersey ? <span className="visually-hidden">, number {jersey}</span> : null}
+        </p>
+        <p className={styles.summaryCaption}>{caption}</p>
+      </div>
+      {recordText ? (
+        <dl className={styles.record}>
+          <dt className={styles.recordLabel}>Record</dt>
+          <dd className={styles.recordValue}>{recordText}</dd>
+        </dl>
+      ) : null}
+    </div>
+  );
+}
+
+function Averages({ summary }: { summary: GamesSummary }) {
+  const { averages: avg, shooting, totals } = summary;
+  return (
+    <StatTileGrid aria-label="Averages per game" columns={3}>
+      <StatTile value={formatAvg(avg.pts)} label="PPG" fullLabel="Points per game" highlight />
+      <StatTile value={formatAvg(avg.reb)} label="RPG" fullLabel="Rebounds per game" />
+      <StatTile value={formatAvg(avg.ast)} label="APG" fullLabel="Assists per game" />
+      <StatTile value={formatAvg(avg.stl)} label="SPG" fullLabel="Steals per game" />
+      <StatTile value={formatAvg(avg.blk)} label="BPG" fullLabel="Blocks per game" />
+      <StatTile value={formatAvg(avg.tov)} label="TO/G" fullLabel="Turnovers per game" />
+      <StatTile
+        value={formatPct(shooting.fgPct)}
+        label="FG%"
+        fullLabel="Field goal percentage"
+        detail={formatMadeAttempted(totals.fgm, totals.fga)}
+      />
+      <StatTile
+        value={formatPct(shooting.fg3Pct)}
+        label="3P%"
+        fullLabel="Three-point percentage"
+        detail={formatMadeAttempted(totals.fg3m, totals.fg3a)}
+      />
+      <StatTile
+        value={formatPct(shooting.ftPct)}
+        label="FT%"
+        fullLabel="Free throw percentage"
+        detail={formatMadeAttempted(totals.ftm, totals.fta)}
+      />
+    </StatTileGrid>
+  );
+}
+
+/** Says which in-progress games the numbers leave out. */
+function liveGamesNote(liveGames: readonly Game[]): string | null {
+  const [only] = liveGames;
+  if (!only) return null;
+  if (liveGames.length === 1) {
+    return `The game ${opponentLabel(only)} is still in progress. It counts once it’s final.`;
+  }
+  return `${liveGames.length} games still in progress aren’t counted until they’re final.`;
+}
+
+function NoGamesYet({ liveGame }: { liveGame: Game | undefined }) {
+  return liveGame ? (
+    <EmptyState
+      icon="📊"
+      title="No finished games yet"
+      message={`The game ${opponentLabel(liveGame)} is still going. Its stats show up here once it’s final.`}
+      action={
+        <ButtonLink to={paths.trackGame(liveGame.id)} size="lg">
+          Back to the game
+        </ButtonLink>
+      }
+    />
+  ) : (
+    <EmptyState
+      icon="📊"
+      title="No stats yet"
+      message="Finish a game and the averages, highs, trends and game log all show up here."
+      action={
+        <ButtonLink to={paths.newGame} size="lg">
+          Start a game
+        </ButtonLink>
+      }
+    />
+  );
+}
+
+/**
+ * Season stats: the record, per-game averages, highs, a game-by-game chart, totals
+ * and the game log, for one season or all of them. Only final games count.
+ */
 export function SeasonStatsScreen() {
+  const games = useGames();
+  const events = useAllEvents();
+  const seasons = useSeasons();
+  const player = usePlayer();
+  const toast = useToast();
+  const [remembered, setRemembered] = useState(readRememberedSeason);
+
+  const finalGames = useMemo(() => games?.filter((game) => game.status === 'final'), [games]);
+  // Stat lines for every final game, newest first (the order of useGames).
+  const allEntries = useMemo(
+    () => (finalGames && events ? statLinesForGames(finalGames, events) : undefined),
+    [finalGames, events],
+  );
+  const key: SeasonKey | undefined =
+    finalGames && seasons ? resolveSeasonKey(remembered, seasons, finalGames) : undefined;
+  // Everything below is recomputed only when the games, their stats or the season change.
+  const entries = useMemo(
+    () => (key ? allEntries?.filter((entry) => inSeason(entry.game, key)) : undefined),
+    [allEntries, key],
+  );
+  const summary = useMemo(() => entries && summarizeGames(entries), [entries]);
+  const oldestFirst = useMemo(() => entries && [...entries].reverse(), [entries]);
+  const gamesById = useMemo(
+    () => new Map(entries?.map((entry) => [entry.game.id, entry.game])),
+    [entries],
+  );
+
+  const chooseSeason = (next: SeasonKey) => {
+    setRemembered(next);
+    rememberSeason(next);
+  };
+
+  const ready =
+    games && seasons && player !== undefined && key && entries && summary && oldestFirst;
+  const season = key ? seasonOf(key) : null;
+  const hasStats = Boolean(ready && entries.length > 0);
+
+  const share = async () => {
+    if (!summary) return;
+    const label = season ?? ALL_GAMES_LABEL;
+    const result = await shareText({
+      title: `${formatPlayerName(player)} — ${label}`,
+      text: buildSeasonRecap(player, season, summary),
+    });
+    if (result === 'copied') toast.show({ message: 'Copied' });
+    else if (result === 'failed') toast.show({ message: 'Couldn’t share or copy the recap' });
+  };
+
+  let content: ReactNode = null;
+  if (ready) {
+    const liveInView = games.filter((game) => game.status === 'live' && inSeason(game, key));
+    const note = liveGamesNote(liveInView);
+    const rangeLabel = season ?? (seasons.length > 0 ? 'All seasons' : null);
+
+    content =
+      finalGames?.length === 0 ? (
+        <NoGamesYet liveGame={games.find((game) => game.status === 'live')} />
+      ) : (
+        <>
+          <div className={styles.top}>
+            {seasons.length > 0 ? (
+              <SeasonPicker seasons={seasons} value={key} onChange={chooseSeason} />
+            ) : null}
+            {entries.length > 0 ? (
+              <SummaryCard
+                player={player}
+                caption={[rangeLabel, formatGameCount(summary.gamesPlayed)]
+                  .filter(Boolean)
+                  .join(' · ')}
+                record={summary.record}
+              />
+            ) : null}
+            {note ? <p className={styles.footnote}>{note}</p> : null}
+          </div>
+
+          {entries.length === 0 ? (
+            <EmptyState
+              icon="🗓️"
+              title={`No finished games in ${season ?? 'this season'} yet`}
+              message="Only finished games count toward stats."
+            />
+          ) : (
+            <>
+              <Section title="Averages">
+                <Averages summary={summary} />
+              </Section>
+
+              <SeasonHighs
+                title={season ? 'Season highs' : 'Career highs'}
+                highs={summary.highs}
+                games={gamesById}
+              />
+
+              <Section title="Game by game">
+                <TrendChart entries={oldestFirst} averages={summary.averages} />
+              </Section>
+
+              <Section title="Totals">
+                <TotalsTable label={season ?? ALL_GAMES_LABEL} summary={summary} />
+              </Section>
+
+              <Section title="Game log">
+                <GameLog entries={entries} />
+              </Section>
+
+              {/* Placeholder: a later PR puts the season ShotMap here. */}
+              <Section title="Shot chart">
+                <div className={styles.placeholder}>
+                  <p className={styles.placeholderTitle}>Season shot chart</p>
+                  <p>Coming soon: every shot this season, mapped on the court.</p>
+                </div>
+              </Section>
+            </>
+          )}
+        </>
+      );
+  }
+
   return (
     <main>
-      <ScreenHeader title="Stats" />
-      <ScreenBody>
-        <EmptyState
-          icon="📊"
-          title="Season stats are coming"
-          message="Totals, averages and shooting percentages across every game will show up here."
-        />
-      </ScreenBody>
+      <ScreenHeader
+        title="Stats"
+        action={
+          hasStats ? (
+            <Button variant="ghost" onClick={share}>
+              Share
+            </Button>
+          ) : undefined
+        }
+      />
+      <ScreenBody className={styles.body}>{content}</ScreenBody>
     </main>
   );
 }
