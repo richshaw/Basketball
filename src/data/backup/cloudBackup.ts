@@ -61,9 +61,13 @@ export interface EnableWithCodeOptions {
 
 /**
  * Turns cloud backup on with an existing code, after restoring from it on this phone
- * (importAll), and starts an upload. The code must have a backup on the server: its
- * games become the shrink guard's baseline, so a phone without them can't replace it
- * by accident. Replaces any other code this phone had (on or kept while off).
+ * (importAll), and starts an upload. The code must have a backup on the server: the
+ * restored backup's games become the shrink guard's baseline, so a phone without them
+ * can't replace it by accident, and the phone carries on from the server's newest
+ * version (so restoring an earlier one isn't taken for another phone's upload).
+ * Replaces any other code this phone had (on or kept while off); if it's on with this
+ * code already (restoring the other phone's backup to settle a 'paused-other-device',
+ * say), it carries on from the restored backup with nothing paused.
  */
 export function enableCloudBackupWithCode(
   code: string,
@@ -101,7 +105,9 @@ export interface BackUpNowOptions {
  * automatic backup waits for the parent (e.g. "Try again" after an error). Resolves
  * once it's done, with the new version or why it failed. 'shrink' (games in the last
  * backup aren't on this phone) and 'other-device' (another phone backed up since this
- * one did) are questions for the parent: ask, then pass `force: true` to replace it.
+ * one did) are questions for the parent: ask, then pass `force: true` ("Back up
+ * anyway"). That overrides the pause being shown (and any overridden before without an
+ * upload); if the other problem turns up instead, it pauses for that one: ask again.
  */
 export function backUpNow(options: BackUpNowOptions = {}): Promise<CloudResult<BackupResult>> {
   return engine.backUpNow(options);

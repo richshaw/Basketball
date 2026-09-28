@@ -63,7 +63,7 @@ const BACKUP: Partial<Record<CloudBackupErrorKind, string>> = {
     "Couldn't reach the backup server. Your stats are safe on this phone, and Hoop Stats will try again soon.",
   timeout: 'The backup server took too long to answer. Hoop Stats will try again soon.',
   unauthorized:
-    "The backup server doesn't accept this backup code anymore. Turn cloud backup off and on again to get a new code.",
+    "The backup server doesn't accept this backup code anymore. To start over with a new code, turn cloud backup off and delete its online copy, then turn it back on.",
   'account-deleted':
     'Your cloud backup was deleted, so automatic backup stopped. Back up now to start a new one.',
   'too-large': 'Your stats are too big for cloud backup. Save a backup file instead.',
@@ -97,9 +97,19 @@ const DELETE: Partial<Record<CloudBackupErrorKind, string>> = {
     "Couldn't reach the backup server, so your cloud backup wasn't deleted. Try again later.",
   timeout:
     "The backup server took too long to answer, so your cloud backup wasn't deleted. Try again later.",
-  unexpected: 'Something went wrong on this phone, so cloud backup is still on. Try again.',
+  unexpected: 'Something went wrong on this phone, so nothing changed. Try again.',
 };
 const DELETE_FALLBACK = "The backup server couldn't delete your cloud backup. Try again later.";
+
+/**
+ * The server's cap on new backups (a few a day) refused this phone's first upload:
+ * not a busy server, and it can take hours.
+ */
+export function newBackupLimitMessage(waitMs: number): string {
+  return `The backup server can't take a new backup right now. Hoop Stats will try again ${describeWait(
+    waitMs,
+  )}.`;
+}
 
 /** A busy server's message, with the real wait when it's known. */
 function busyMessage(context: ErrorContext, waitMs: number | undefined): string {
