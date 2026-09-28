@@ -160,21 +160,29 @@ describe('NewGameScreen', () => {
     await waitFor(() => expect(suggestionsOf(season)).toEqual(['Fall 2026', 'Summer 2026']));
   });
 
-  it('keeps names within the stored limits', async () => {
-    renderRoute(paths.newGame);
-    expect(await opponentField()).toHaveAttribute('maxLength', String(TEXT_LIMITS.opponent));
-    expect(screen.getByLabelText('Season or team')).toHaveAttribute(
-      'maxLength',
-      String(TEXT_LIMITS.season),
-    );
+  it('keeps names within the stored limits, spelled as typed', async () => {
+    const { container } = renderRoute(paths.newGame);
+    // Nothing shows until the settings are read.
+    expect(container.querySelector('main [aria-busy="true"]')).toBeInTheDocument();
+
+    const opponent = await opponentField();
+    const season = screen.getByLabelText('Season or team');
+    expect(container.querySelector('[aria-busy]')).not.toBeInTheDocument();
+    expect(opponent).toHaveAttribute('maxLength', String(TEXT_LIMITS.opponent));
+    expect(season).toHaveAttribute('maxLength', String(TEXT_LIMITS.season));
+    // Autocorrect could turn a team or season name into another word (a new season).
+    for (const field of [opponent, season]) {
+      expect(field).toHaveAttribute('autocorrect', 'off');
+      expect(field).toHaveAttribute('spellcheck', 'false');
+    }
   });
 
   it('points to the game in progress, and can still start another', async () => {
-    const live = await addGame({ opponent: 'Eastlake' });
+    const live = await addGame({ opponent: 'Eastlake', homeAway: 'away' });
     const { user, router } = renderRoute(paths.newGame);
 
     const note = await screen.findByRole('note');
-    expect(note).toHaveTextContent('You have a game in progress vs Eastlake');
+    expect(note).toHaveTextContent('You have a game in progress @ Eastlake');
     expect(within(note).getByRole('link', { name: 'Resume it' })).toHaveAttribute(
       'href',
       paths.trackGame(live.id),

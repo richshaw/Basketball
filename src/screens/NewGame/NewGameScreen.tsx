@@ -5,6 +5,7 @@ import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useGames, useLiveGame, useSeasons, useSettings } from '@/data/hooks';
 import type { Game } from '@/data/types';
+import { gameTitle } from '@/lib/gameTitle';
 import { paths } from '@/routes';
 import { NewGameForm } from './NewGameForm';
 import { pastOpponents } from './newGame';
@@ -15,7 +16,7 @@ function LiveGameNotice({ game }: { game: Game }) {
   return (
     <div role="note" className={styles.notice}>
       <span className={styles.noticeDot} aria-hidden="true" />
-      <p className={styles.noticeText}>You have a game in progress vs {game.opponent}</p>
+      <p className={styles.noticeText}>You have a game in progress {gameTitle(game)}</p>
       {/* Replace, like Start game does: going back from the game lands on Games. */}
       <Link to={paths.trackGame(game.id)} replace className={styles.noticeLink}>
         Resume it
@@ -38,7 +39,7 @@ export function NewGameScreen() {
   return (
     <main>
       <ScreenHeader title="New game" backTo={paths.home} backLabel="Games" />
-      <ScreenBody className={styles.body}>
+      <ScreenBody className={styles.body} aria-busy={ready ? undefined : true}>
         {ready ? (
           <>
             {liveGame ? <LiveGameNotice game={liveGame} /> : null}

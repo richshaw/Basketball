@@ -18,7 +18,7 @@ import {
 import { isLocalISODate, todayLocalISO } from '@/lib/format';
 import { paths } from '@/routes';
 import { DEFAULT_HOME_AWAY, exampleSeason } from './newGame';
-import styles from './NewGameScreen.module.css';
+import styles from './NewGameForm.module.css';
 
 const HOME_AWAY_OPTIONS: readonly SegmentedOption<HomeAway>[] = [
   { value: 'home', label: 'Home' },
@@ -152,6 +152,9 @@ export function NewGameForm({ settings, opponents, seasons }: NewGameFormProps) 
         maxLength={TEXT_LIMITS.season}
         autoComplete="off"
         autoCapitalize="words"
+        // An autocorrected label would quietly start a separate season.
+        autoCorrect="off"
+        spellCheck={false}
         enterKeyHint="done"
       />
       <div className={styles.choice}>

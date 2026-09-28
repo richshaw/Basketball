@@ -4,39 +4,13 @@
   gap: var(--space-5);
 }
 
-/* The form stays in the page flow (no bar pinned to the bottom): the iPhone keyboard
-   covers anything fixed there, and return closes the keyboard to bring Start back.
-   It fits on a 6.1" iPhone above the home indicator, even under the live game notice. */
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-/* A labelled SegmentedControl, spaced like the label of a TextField. */
-.choice {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.choiceLabel {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-tight);
-}
-
-.start {
-  margin-top: var(--space-3);
-}
-
 /* "You have a game in progress": a card with the way back on the right. */
 .notice {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
-  border: 2px solid var(--color-accent);
+  border: var(--border-width-emphasis) solid var(--color-accent);
   border-radius: var(--radius-lg);
   background-color: var(--color-surface);
 }
@@ -76,7 +50,6 @@
 }
 
 .noticeChevron {
-  width: var(--space-4);
-  height: var(--space-4);
-  stroke-width: 2.75;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
 }

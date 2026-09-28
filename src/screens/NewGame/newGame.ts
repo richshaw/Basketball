@@ -10,13 +10,18 @@ import type { Game, HomeAway } from '@/data/types';
  */
 export const DEFAULT_HOME_AWAY: HomeAway = 'home';
 
-/** An example season for the empty field, e.g. 'Fall 2026' in October 2026. */
+/**
+ * An example season for the empty field, e.g. 'Fall 2026' in October 2026. Dec–Feb
+ * is winter, Mar–May spring, Jun–Aug summer and Sep–Nov fall. A winter is named for
+ * the year it mostly falls in, so December 2026 through February 2027 are all
+ * 'Winter 2027'.
+ */
 export function exampleSeason(today: string): string {
-  const [year = '', month = '1'] = today.split('-');
-  // Dec–Feb winter, Mar–May spring, Jun–Aug summer, Sep–Nov fall.
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7));
   const names = ['Winter', 'Spring', 'Summer', 'Fall'] as const;
-  const name = names[Math.floor((Number(month) % 12) / 3)] ?? 'Fall';
-  return `${name} ${year}`;
+  const name = names[Math.floor((month % 12) / 3)] ?? 'Fall';
+  return `${name} ${month === 12 ? year + 1 : year}`;
 }
 
 /**
