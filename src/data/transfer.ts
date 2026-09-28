@@ -5,6 +5,7 @@
  * restores exactly what was exported.
  */
 import * as z from 'zod/mini';
+import { compareIds } from '@/lib/id';
 import { db, META_KEYS, touchLastChange } from './db';
 import { getSettings, primaryPlayer } from './repo';
 import type { Game, Player, Settings, StatEvent } from './types';
@@ -92,10 +93,6 @@ export function exportAll(): Promise<ExportFile> {
       settings,
     };
   });
-}
-
-function compareIds(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -15,7 +15,8 @@
  * nothing here throws, and without it taps are still saved, just not kept across a
  * reload.
  */
-import { newId } from '@/lib/id';
+import { isRealPoint } from '@/lib/court';
+import { compareIds, newId } from '@/lib/id';
 import { nextTimestamp } from './db';
 import { getGame, recordStat } from './repo';
 import { isFieldGoalType } from './stats';
@@ -89,12 +90,6 @@ export function isPendingStat(id: string): boolean {
   }
 }
 
-function isRealPoint(value: unknown): value is CourtPoint {
-  if (typeof value !== 'object' || value === null) return false;
-  const { x, y } = value as Record<string, unknown>;
-  return Number.isFinite(x) && Number.isFinite(y);
-}
-
 /** One entry, or undefined if it isn't a tap this version can save. */
 function parseEntry(key: string, text: string | null): PendingStat | undefined {
   if (text === null) return undefined;
@@ -139,7 +134,7 @@ export function listPendingStats(gameId?: string): PendingStat[] {
   } catch {
     // Blocked storage: nothing could have been kept there.
   }
-  return stats.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return stats.sort((a, b) => a.at - b.at || compareIds(a.id, b.id));
 }
 
 /** Saves a tap as its stat. Idempotent: a tap saved already resolves to its stat. */

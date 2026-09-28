@@ -11,7 +11,7 @@
  * keeps its value, and `null` or '' clears it.
  */
 import { Dexie } from 'dexie';
-import { clampToHalfCourt } from '@/lib/court';
+import { clampToHalfCourt, isRealPoint } from '@/lib/court';
 import { newId } from '@/lib/id';
 import { db, eventsOfGame, META_KEYS, nextTimestamp, touchLastChange } from './db';
 import { isFieldGoalType } from './stats';
@@ -309,10 +309,6 @@ export function getGameEvents(gameId: string): Promise<StatEvent[]> {
 /** Every event of every game (for season stats), grouped by game, oldest first. */
 export function getAllEvents(): Promise<StatEvent[]> {
   return db.events.orderBy('[gameId+createdAt]').toArray();
-}
-
-function isRealPoint(point: CourtPoint): boolean {
-  return Number.isFinite(point.x) && Number.isFinite(point.y);
 }
 
 /**
