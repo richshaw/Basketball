@@ -23,6 +23,7 @@ import { formatAvg, formatGameDate, formatMadeAttempted, formatPct } from '@/lib
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
 import { gameTitle } from '@/lib/gameTitle';
+import { formatGameCount } from './gameLabels';
 import { clearSessionValues } from './seasonFilter';
 import { buildSeasonRecap } from './seasonRecap';
 
@@ -68,10 +69,11 @@ function expectedLegend(events: readonly StatEvent[]): string {
   return `Made ${made} · Missed ${attempted - made}`;
 }
 
-/** The legend of the shot map named `caption`, e.g. 'Fall 2026 · 10 games'. */
-function shotMapLegend(caption: string) {
+/** The legend of the shot map of `games` games in `scope`, e.g. ('Fall 2026', 10). */
+function shotMapLegend(scope: string, games: number) {
   const chart = screen.getByRole('region', { name: 'Shot chart' });
-  const map = within(chart).getByRole('figure', { name: caption });
+  // Named by its caption, e.g. "Fall 2026 · 10 games".
+  const map = within(chart).getByRole('figure', { name: `${scope} · ${formatGameCount(games)}` });
   return within(map).getByText('Made').closest('p');
 }
 
@@ -322,7 +324,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       expect(screen.getByText('rebounds per game')).toBeInTheDocument();
       expect(rebounds).toHaveAccessibleDescription(
         new RegExp(
-          `^Rebounds in 10 games, .*Average ${formatAvg(expected.averages.reb)} a game\\.`,
+          `^Rebounds in 10\u00a0games, .*Average ${formatAvg(expected.averages.reb)} a game\\.`,
         ),
       );
 
@@ -497,11 +499,11 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       const { user } = renderRoute(paths.stats);
       await waitForStats();
 
-      expect(shotMapLegend('Fall 2026 · 10 games')).toHaveTextContent(expectedLegend(demo.events));
+      expect(shotMapLegend('Fall 2026', 10)).toHaveTextContent(expectedLegend(demo.events));
 
       await user.click(screen.getByRole('radio', { name: 'Summer 2026' }));
       await waitFor(() =>
-        expect(shotMapLegend('Summer 2026 · 1 game')).toHaveTextContent('Made 1 · Missed 1'),
+        expect(shotMapLegend('Summer 2026', 1)).toHaveTextContent('Made 1 · Missed 1'),
       );
       expect(screen.getByText('2 of 3 shots have a location')).toBeInTheDocument();
       // Paint, mid-range and 3PT: the summer game's shots alone.
@@ -514,9 +516,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       await user.click(screen.getByRole('radio', { name: 'All' }));
       const allEvents = await getAllEvents();
       await waitFor(() =>
-        expect(shotMapLegend('All seasons · 11 games')).toHaveTextContent(
-          expectedLegend(allEvents),
-        ),
+        expect(shotMapLegend('All seasons', 11)).toHaveTextContent(expectedLegend(allEvents)),
       );
       expect(expectedLegend(allEvents)).not.toBe(expectedLegend(demo.events));
     });
@@ -543,7 +543,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       // Nor are its shots on the shot chart.
       const finalEvents = demo.events.filter((event) => event.gameId !== DEMO_LIVE_GAME_ID);
       expect(expectedLegend(demo.events)).not.toBe(expectedLegend(finalEvents));
-      expect(shotMapLegend('Fall 2026 · 10 games')).toHaveTextContent(expectedLegend(finalEvents));
+      expect(shotMapLegend('Fall 2026', 10)).toHaveTextContent(expectedLegend(finalEvents));
       expect(
         within(screen.getByRole('table', { name: 'Game log' })).getAllByRole('row'),
       ).toHaveLength(
@@ -726,7 +726,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
         'Sat, Sep 12, 2026, vs Lincoln: 3 points',
       ]);
       expect(chart).toHaveAccessibleDescription(
-        'Points in 2 games, Sep 13, 2025 – Sep 12, 2026. Average 2.5 a game. ' +
+        'Points in 2\u00a0games, Sep 13, 2025 – Sep 12, 2026. Average 2.5 a game. ' +
           'High 3 vs Lincoln on Sat, Sep 12, 2026. Low 2 vs Lincoln on Sat, Sep 13, 2025.',
       );
       expect(screen.getByText('2 games · Sep 13, 2025 – Sep 12, 2026')).toBeInTheDocument();

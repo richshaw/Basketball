@@ -65,7 +65,8 @@ describe('describeTrend', () => {
   it('summarizes the range, the average, the high and the low', () => {
     const averages = { ...emptyStatLine(), pts: 13 };
     expect(describeTrend(trendPoints(entries, 'pts'), 'pts', averages)).toBe(
-      'Points in 4 games, Aug 1 – Sep 24. Average 13.0 a game. ' +
+      // The game count keeps its no-break space (see formatGameCount).
+      'Points in 4\u00a0games, Aug 1 – Sep 24. Average 13.0 a game. ' +
         'High 18 vs Oak Ridge on Sat, Sep 12. Low 6 @ Westview on Sat, Aug 22.',
     );
   });
@@ -73,7 +74,7 @@ describe('describeTrend', () => {
   it('gives every date its year when asked', () => {
     const averages = { ...emptyStatLine(), pts: 13 };
     expect(describeTrend(trendPoints(entries, 'pts'), 'pts', averages, { withYear: true })).toBe(
-      'Points in 4 games, Aug 1, 2026 – Sep 24, 2026. Average 13.0 a game. ' +
+      'Points in 4\u00a0games, Aug 1, 2026 – Sep 24, 2026. Average 13.0 a game. ' +
         'High 18 vs Oak Ridge on Sat, Sep 12, 2026. Low 6 @ Westview on Sat, Aug 22, 2026.',
     );
   });
@@ -83,14 +84,14 @@ describe('describeTrend', () => {
       .slice(0, 3)
       .map((entry) => ({ ...entry, line: { ...entry.line, ast: 2 } }));
     expect(describeTrend(trendPoints(level, 'ast'), 'ast', { ...emptyStatLine(), ast: 2 })).toBe(
-      'Assists in 3 games, Aug 1 – Sep 12. Average 2.0 a game.',
+      'Assists in 3\u00a0games, Aug 1 – Sep 12. Average 2.0 a game.',
     );
   });
 
   it('keeps it short for a single game, or none', () => {
     const one = trendPoints(entries.slice(0, 1), 'ast');
     expect(describeTrend(one, 'ast', emptyStatLine())).toBe(
-      'Assists in 1 game, Aug 1. Average 0.0 a game.',
+      'Assists in 1\u00a0game, Aug 1. Average 0.0 a game.',
     );
     expect(describeTrend([], 'reb', emptyStatLine())).toBe('Rebounds: no games yet.');
   });
