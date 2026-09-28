@@ -1,7 +1,7 @@
 /*
  * Exactly the height of the screen, never scrolling: top bar, stat strip, the
  * button grid (which takes whatever height is left), the last-action line and the
- * bottom bar. A shot chart can later take room above the grid without other changes.
+ * bottom bar. With the shot chart on, its court sits above the grid (see .withCourt).
  */
 .screen {
   display: flex;
@@ -45,4 +45,25 @@
   flex-shrink: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
+}
+
+/*
+ * With the shot chart's court (the stat strip is compact then): the grid keeps its
+ * buttons at least --game-button-min-height tall, and the court (ShotCourt) takes the
+ * rest, up to the whole width. All of it is fixed by the screen's size alone.
+ */
+.withCourt {
+  --stat-grid-min-height: calc(4 * var(--game-button-min-height) + 3 * var(--space-2));
+}
+
+/* Short screens (iPhone SE): tighter gaps and slightly shorter buttons leave the court room. */
+@media (max-height: 700px) {
+  .withCourt {
+    --stat-grid-gap: calc(var(--space-1) + var(--space-1) / 2);
+    --stat-grid-min-height: calc(
+      4 * var(--game-button-min-height-short) + 3 * var(--stat-grid-gap)
+    );
+
+    gap: var(--stat-grid-gap);
+  }
 }

@@ -68,6 +68,11 @@
   --focus-ring-width: 3px;
   --border-width-emphasis: 2px; /* accent outline of a card that must stand out (a live game) */
   --header-bar-height: 44px;
+  /* Stat buttons on the live game screen never get shorter than this with the shot
+     chart's court on screen too (the court gives way), and the short size on the
+     smallest iPhone (SE). */
+  --game-button-min-height: 72px;
+  --game-button-min-height-short: 64px;
   --tab-bar-height: 50px;
   --update-banner-height: 64px; /* the app-update banner above the tab bar */
   --content-max-width: 640px;

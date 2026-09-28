@@ -36,6 +36,24 @@
   white-space: nowrap;
 }
 
+/* The message with a note under it, both within the line's fixed height. */
+.lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.detail {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: fade var(--duration-normal) var(--ease-out);
+}
+
 .muted {
   color: var(--color-text-muted);
   font-weight: var(--font-weight-medium);

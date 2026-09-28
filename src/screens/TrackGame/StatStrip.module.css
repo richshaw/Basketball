@@ -108,3 +108,29 @@
     font-size: var(--font-size-4xl);
   }
 }
+
+/*
+ * Compact, beside the shot chart's court: one row of points, fouls and shooting (the
+ * other counts are hidden, from screen readers too: they're on their buttons). Tall
+ * enough for the "not saved" row laid over it.
+ */
+.compact {
+  grid-template-columns: auto repeat(4, minmax(0, 1fr));
+  padding-block: var(--space-1);
+}
+
+.compact .counter {
+  display: none;
+}
+
+.compact .points {
+  grid-row: auto;
+}
+
+.compact .shooting {
+  grid-column: auto;
+}
+
+.compact .points .value {
+  font-size: var(--font-size-2xl);
+}

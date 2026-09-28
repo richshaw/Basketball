@@ -1,11 +1,15 @@
-/* Fills the height its parent leaves for it: four equal rows of four equal buttons. */
+/*
+ * Fills the height its parent leaves for it: four equal rows of four equal buttons.
+ * The parent can hold it to a minimum height and set its gap (the screen does, when
+ * the shot chart's court shares the height).
+ */
 .grid {
   display: grid;
   flex: 1 1 0;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-rows: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2);
-  min-height: 0;
+  gap: var(--stat-grid-gap, var(--space-2));
+  min-height: var(--stat-grid-min-height, 0);
 }
 
 .button {

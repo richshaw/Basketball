@@ -163,7 +163,9 @@ export interface StatGridProps {
 
 /**
  * The 4x4 grid of big stat buttons (the last one is Undo). It fills whatever height
- * its parent gives it, so other parts (e.g. a shot chart) can take space above it.
+ * its parent gives it, so other parts (e.g. the shot chart's court) can take space
+ * above it; the parent can set `--stat-grid-min-height` and `--stat-grid-gap` to keep
+ * the buttons from getting too small.
  */
 export const StatGrid = memo(function StatGrid({ counts, onRecord, onUndo }: StatGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
