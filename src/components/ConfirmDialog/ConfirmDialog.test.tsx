@@ -153,11 +153,51 @@ describe('useConfirm', () => {
       </ConfirmProvider>,
     );
     await user.click(screen.getByRole('button', { name: 'Ask' }));
-    expect(screen.getByRole('alertdialog', { name: 'Second?' })).toBeInTheDocument();
+    expect(await screen.findByRole('alertdialog', { name: 'Second?' })).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog', { name: 'First?' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'OK' }));
     await waitFor(() => {
       expect(answers).toEqual([false, true]);
+    });
+  });
+
+  it('opens a follow-up question only after the first dialog has closed, from scratch', async () => {
+    const answers: boolean[] = [];
+    function EndThenDelete() {
+      const confirm = useConfirm();
+      return (
+        <Button
+          onClick={async () => {
+            answers.push(await confirm({ title: 'End the game?', confirmLabel: 'End game' }));
+            answers.push(await confirm(deleteGame));
+          }}
+        >
+          Finish
+        </Button>
+      );
+    }
+    const user = userEvent.setup();
+    render(
+      <ConfirmProvider>
+        <EndThenDelete />
+      </ConfirmProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Finish' }));
+    const first = screen.getByRole('alertdialog', { name: 'End the game?' });
+    expect(screen.getByRole('button', { name: 'End game' })).toHaveFocus();
+
+    await user.click(screen.getByRole('button', { name: 'End game' }));
+    const second = await screen.findByRole('alertdialog', { name: 'Delete this game?' });
+    // A new dialog, not the first one with new words: focus starts on the safe button,
+    // so a double tap on "End game" can't also delete the game.
+    expect(second).not.toBe(first);
+    expect(first).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(answers).toEqual([true, false]);
     });
   });
 
