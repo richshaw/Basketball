@@ -59,6 +59,7 @@
   --illustration-size: 80px; /* the round icon of an empty state */
   --stat-tile-min-width: 76px; /* fits four stat tiles across a 390px iPhone */
   --focus-ring-width: 3px;
+  --border-width-emphasis: 2px; /* accent outline of a card that must stand out (a live game) */
   --header-bar-height: 44px;
   --tab-bar-height: 50px;
   --update-banner-height: 64px; /* the app-update banner above the tab bar */
