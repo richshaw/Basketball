@@ -1,0 +1,60 @@
+/* A little air between the section's hint and the first period's header. */
+.periods {
+  padding-top: var(--space-2);
+}
+
+.play {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.time {
+  flex-shrink: 0;
+  min-width: var(--space-10);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.dot {
+  flex-shrink: 0;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+}
+
+.made {
+  background-color: var(--color-made);
+}
+
+.miss {
+  background-color: var(--color-miss);
+}
+
+.other {
+  background-color: var(--color-border-strong);
+}
+
+.label {
+  min-width: 0;
+}
+
+.points {
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Plays that added points stand out, so her scoring is easy to follow. */
+.scored {
+  color: var(--color-text);
+  font-weight: var(--font-weight-bold);
+}
+
+.empty {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-text-muted);
+}

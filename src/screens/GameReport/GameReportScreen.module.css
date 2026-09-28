@@ -1,0 +1,18 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+/* The result, the headline numbers and the share button read as one block. */
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.notes {
+  overflow-wrap: anywhere;
+  /* Keep the line breaks typed into the notes. */
+  white-space: pre-wrap;
+}

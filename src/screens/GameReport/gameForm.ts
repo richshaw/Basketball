@@ -9,6 +9,8 @@ import { isLocalISODate } from '@/lib/format';
 /** `'unset'` selects no segment: the game doesn't say where it was played. */
 export type Venue = HomeAway | 'unset';
 
+export type ScoreField = 'teamScore' | 'opponentScore';
+
 /** The field values, exactly as typed. */
 export interface GameForm {
   opponent: string;
