@@ -7,8 +7,9 @@ import { afterEach, beforeEach, vi } from 'vitest';
 import { resetDatabase } from './db';
 import { installDialogPolyfill } from './dialogPolyfill';
 
-// jsdom can't open <dialog> elements (Sheet, ConfirmDialog) on its own.
-installDialogPolyfill();
+// jsdom can't open <dialog> elements (Sheet, ConfirmDialog) on its own. (Tests that run
+// in Node instead, like src/data/backup/server.node.test.ts, have no DOM to patch.)
+if (typeof HTMLDialogElement !== 'undefined') installDialogPolyfill();
 
 // Every test starts with an empty database (seed data in beforeEach, not beforeAll).
 beforeEach(async () => {
