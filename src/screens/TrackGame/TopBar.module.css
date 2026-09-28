@@ -1,0 +1,118 @@
+.bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--header-bar-height);
+  padding-top: var(--safe-top);
+}
+
+.back {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-width: var(--tap-target);
+  min-height: var(--tap-target);
+  padding-inline-end: var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-md);
+}
+
+.back:active {
+  opacity: 0.6;
+}
+
+.backIcon {
+  width: var(--icon-size-nav);
+  height: var(--icon-size-nav);
+  margin-inline-start: calc(-1 * var(--space-1));
+  stroke-width: 2.5;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.period {
+  display: flex;
+  flex-shrink: 0;
+}
+
+/* A full-height tap target around a smaller pill. */
+.periodButton {
+  display: flex;
+  align-items: center;
+  min-width: var(--tap-target);
+  min-height: var(--tap-target);
+  padding-inline-start: var(--space-1);
+  border-radius: var(--radius-full);
+}
+
+.periodButton:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: calc(var(--tap-target) - var(--space-2));
+  border-radius: var(--radius-full);
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    filter var(--duration-fast) var(--ease-out);
+}
+
+/* The current period: the one thing up here worth a glance mid-game. */
+.current {
+  padding-inline: var(--space-3) var(--space-1);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.next {
+  padding-inline: var(--space-3) var(--space-1);
+  background-color: var(--color-surface-2);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.periodText {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-heavy);
+  font-variant-numeric: tabular-nums;
+}
+
+.periodButton:active:not(:disabled) .pill {
+  transform: scale(0.95);
+  filter: brightness(0.9);
+}
+
+.periodButton:disabled {
+  cursor: not-allowed;
+}
+
+.periodButton:disabled .pill {
+  opacity: 0.45;
+}
+
+.icon {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  stroke-width: 2.75;
+}
+
+/* Points down: this one opens a list of periods. */
+.pickIcon {
+  transform: rotate(90deg);
+}
