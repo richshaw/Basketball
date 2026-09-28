@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { db, META_KEYS } from './db';
-import { buildDemoData } from './demo';
+import { buildDemoData, demoGameId, seedDemoData } from './demo';
+import { replayPendingStats } from './pendingSaves';
+import { addPendingStat, listPendingStats, newPendingStat } from './pendingStats';
 import {
   createGame,
   deleteGame,
@@ -546,5 +548,79 @@ describe('clearAllData', () => {
     expect(await db.meta.get(META_KEYS.settings)).toBeUndefined();
     expect(await db.meta.get('backup')).toEqual({ key: 'backup', value: { enabled: true } });
     expect(await getLastChangeAt()).toBeGreaterThan(before ?? 0);
+  });
+
+  it('forgets every tap not saved yet, leaving no game id or stat type on the phone', async () => {
+    // A tap on a finished sample game ("Add or fix stats") that the database didn't take.
+    await seedDemoData({ force: true });
+    const gameId = demoGameId(10);
+    const before = await getGameEvents(gameId);
+    addPendingStat(newPendingStat({ gameId, type: 'tov', period: 4 }));
+    // One this version can't read, e.g. kept by a newer version of the app.
+    localStorage.setItem(
+      `hoop-stats.pendingStat.newer`,
+      JSON.stringify({ id: 'newer', gameId, type: 'dunk' }),
+    );
+
+    await clearAllData(); // Settings > Erase all data
+    const stored = JSON.stringify(Object.entries(localStorage));
+    expect(stored).not.toContain(gameId);
+    expect(stored).not.toMatch(/tov|dunk|pendingStat/);
+
+    // "Try it with sample data" again: the same game ids. The next start adds nothing.
+    await seedDemoData({ force: true });
+    expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+    expect(await getGameEvents(gameId)).toEqual(before);
+  });
+
+  it("keeps the taps not saved yet if the data couldn't be erased", async () => {
+    const game = await createGame({
+      opponent: 'Lincoln',
+      date: '2026-09-27',
+      periodFormat: 'quarters',
+    });
+    const tap = newPendingStat({ gameId: game.id, type: 'stl', period: 1 });
+    addPendingStat(tap);
+    vi.spyOn(db.games, 'clear').mockRejectedValue(new Error('Disk error'));
+    await expect(clearAllData()).rejects.toThrow('Disk error');
+    expect(listPendingStats()).toEqual([tap]);
+  });
+});
+
+describe('taps not saved yet, on a restore', () => {
+  async function gameWithKeptTap() {
+    const game = await createGame({
+      opponent: 'Lincoln',
+      date: '2026-09-27',
+      periodFormat: 'quarters',
+    });
+    await recordStat(game.id, 'ast');
+    const backup = await exportAll();
+    const tap = newPendingStat({ gameId: game.id, type: 'foul', period: 1 });
+    addPendingStat(tap);
+    return { game, backup, tap };
+  }
+
+  it('a replace forgets them: the phone holds exactly the backup', async () => {
+    const { game, backup } = await gameWithKeptTap();
+    await importAll(backup, 'replace');
+    expect(listPendingStats()).toEqual([]);
+    await replayPendingStats();
+    expect((await getGameEvents(game.id)).map((event) => event.type)).toEqual(['ast']);
+  });
+
+  it('a merge keeps them', async () => {
+    const { backup, tap } = await gameWithKeptTap();
+    await importAll(backup, 'merge');
+    expect(listPendingStats()).toEqual([tap]);
+  });
+
+  it("a replace that fails keeps them, and so does a file that can't be restored", async () => {
+    const { backup, tap } = await gameWithKeptTap();
+    await expect(importAll({ ...backup, games: [] }, 'replace')).rejects.toThrow(ExportFileError);
+    expect(listPendingStats()).toEqual([tap]);
+    vi.spyOn(db.events, 'bulkAdd').mockRejectedValue(new Error('Disk error'));
+    await expect(importAll(buildDemoData(), 'replace')).rejects.toThrow('Disk error');
+    expect(listPendingStats()).toEqual([tap]);
   });
 });

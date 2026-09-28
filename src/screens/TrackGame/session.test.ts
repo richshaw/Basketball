@@ -1,9 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { savePendingStat } from '@/data/pendingSaves';
-import { listPendingStats, type PendingStat } from '@/data/pendingStats';
-import { createGame, deleteStat, getGameEvents, setCurrentPeriod } from '@/data/repo';
+import { hasPendingStats, listPendingStats, type PendingStat } from '@/data/pendingStats';
+import * as repo from '@/data/repo';
+import { createGame, deleteGame, deleteStat, getGameEvents, setCurrentPeriod } from '@/data/repo';
 import type { StatEvent, StatType } from '@/data/types';
-import { AUTO_RETRY_MS, TrackingSession, type SessionDeps, type TakingBack } from './session';
+import {
+  AUTO_RETRY_MS,
+  trackingSession,
+  TrackingSession,
+  type SessionDeps,
+  type TakingBack,
+} from './session';
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -576,6 +583,74 @@ describe('TrackingSession', () => {
       expect(session.hasUnsaved()).toBe(false);
       await session.retryQuietly();
       expect(saves).toHaveLength(2);
+    });
+  });
+
+  describe("when its game's data is deleted or replaced", () => {
+    it('forgets every tap, and never saves one again', async () => {
+      const { session, saves, fail, pendingTypes } = setUp();
+      session.record('stl');
+      session.record('ast');
+      fail(0);
+      fail(1);
+      await flush();
+      session.forget();
+      expect(pendingTypes()).toEqual([]);
+      expect(session.getSnapshot().unsaved).toEqual([]);
+      expect(session.hasUnsaved()).toBe(false);
+      await session.retryQuietly();
+      session.retry();
+      expect(saves).toHaveLength(2);
+    });
+
+    it('forgets the tap of a stat deleted elsewhere, but not one being taken back here', async () => {
+      const { session, fail, pendingTypes } = setUp();
+      const steal = session.record('stl');
+      session.record('ast');
+      fail(0);
+      fail(1);
+      await flush();
+      session.forget(steal.id);
+      expect(pendingTypes()).toEqual(['ast']);
+
+      const block = session.record('blk');
+      const taking = session.undo(block);
+      session.forget(block.id);
+      fail(3);
+      expect(await taking.removal).toBe('removed');
+    });
+
+    it('drops a kept tap that is no longer kept (saved meanwhile, or erased in another tab)', async () => {
+      const { session, saves, fail, pendingTypes } = setUp();
+      const steal = session.record('stl');
+      fail(0);
+      await flush();
+      expect(pendingTypes()).toEqual(['stl']);
+      localStorage.removeItem(`hoop-stats.pendingStat.${steal.id}`);
+      session.retry();
+      expect(saves).toHaveLength(1);
+      expect(pendingTypes()).toEqual([]);
+    });
+  });
+
+  describe('trackingSession (one per game)', () => {
+    it('holds its taps for the app-wide retry until its game is deleted, then starts afresh', async () => {
+      const game = await createGame({
+        opponent: 'Central',
+        date: '2026-09-27',
+        periodFormat: 'quarters',
+      });
+      vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Connection lost'));
+      const session = trackingSession(game.id, 1);
+      expect(trackingSession(game.id, 1)).toBe(session);
+      session.record('stl');
+      await vi.waitFor(() => expect(session.getSnapshot().unsaved).toHaveLength(1));
+      expect(hasPendingStats()).toBe(true);
+
+      await deleteGame(game.id);
+      expect(session.getSnapshot().pending).toEqual([]);
+      expect(hasPendingStats()).toBe(false);
+      expect(trackingSession(game.id, 1)).not.toBe(session);
     });
   });
 

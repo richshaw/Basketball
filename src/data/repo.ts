@@ -14,6 +14,7 @@ import { Dexie } from 'dexie';
 import { clampToHalfCourt, isRealPoint } from '@/lib/court';
 import { newId } from '@/lib/id';
 import { db, eventsOfGame, META_KEYS, nextTimestamp, touchLastChange } from './db';
+import { forgetPendingStat, forgetPendingStats } from './pendingStats';
 import { isFieldGoalType } from './stats';
 import {
   STAT_TYPES,
@@ -287,15 +288,26 @@ export function reopenGame(gameId: string): Promise<Game> {
   return modifyGame(gameId, (game) => ({ ...game, status: 'live', endedAt: undefined }));
 }
 
-/** Deletes a game and all of its stats. Does nothing if the game doesn't exist. */
+/**
+ * Deletes a game and all of its stats, and forgets its taps not saved yet (see
+ * forgetPendingStats). Does nothing else if the game doesn't exist.
+ */
 export function deleteGame(gameId: string): Promise<void> {
-  return db.transaction('rw', [db.games, db.events, db.meta], async () => {
-    const game = await db.games.get(gameId);
-    const deletedEvents = await db.events.where('gameId').equals(gameId).delete();
-    if (!game && deletedEvents === 0) return;
-    await db.games.delete(gameId);
-    await touchLastChange(Date.now());
-  });
+  // First: then no retry can save one of its taps once it's gone (e.g. into the game
+  // restored from a backup later).
+  const keepAgain = forgetPendingStats(gameId);
+  return db
+    .transaction('rw', [db.games, db.events, db.meta], async () => {
+      const game = await db.games.get(gameId);
+      const deletedEvents = await db.events.where('gameId').equals(gameId).delete();
+      if (!game && deletedEvents === 0) return;
+      await db.games.delete(gameId);
+      await touchLastChange(Date.now());
+    })
+    .catch((error: unknown) => {
+      keepAgain();
+      throw error;
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -477,13 +489,22 @@ async function removeEvent(event: StatEvent, now: number): Promise<void> {
 export function undoLastStat(gameId: string): Promise<StatEvent | undefined> {
   return db.transaction('rw', [db.games, db.events, db.meta], async () => {
     const last = await eventsOfGame(gameId).last();
-    if (last) await removeEvent(last, Date.now());
+    if (last) {
+      // Its tap, if one is still kept, must never be saved again.
+      forgetPendingStat(last.id);
+      await removeEvent(last, Date.now());
+    }
     return last;
   });
 }
 
-/** Removes one event (e.g. from the event log). Resolves to it, or undefined if missing. */
+/**
+ * Removes one event (e.g. from the event log), and forgets its tap if one is still
+ * kept, so it can't be saved again. Resolves to it, or undefined if missing.
+ */
 export function deleteStat(eventId: string): Promise<StatEvent | undefined> {
+  // First: then no retry can save it once it's gone.
+  forgetPendingStat(eventId);
   return db.transaction('rw', [db.games, db.events, db.meta], async () => {
     const event = await db.events.get(eventId);
     if (event) await removeEvent(event, Date.now());

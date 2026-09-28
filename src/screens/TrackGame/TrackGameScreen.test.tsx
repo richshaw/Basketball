@@ -1,7 +1,8 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
-import { replayPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
+import { demoGameId, seedDemoData } from '@/data/demo';
+import { replayPendingStats, retryPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
 import { listPendingStats } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
 import {
@@ -14,6 +15,7 @@ import {
   setCurrentPeriod,
   type NewGame,
 } from '@/data/repo';
+import { clearAllData } from '@/data/transfer';
 import { MAX_PERIOD, type Game, type StatType } from '@/data/types';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
@@ -916,6 +918,35 @@ describe('TrackGameScreen', () => {
         });
         expect(router.state.location.pathname).toBe(paths.home);
       });
+    });
+
+    it('forgets it once its data is erased, even when the same sample game is back', async () => {
+      await seedDemoData({ force: true });
+      const gameId = demoGameId(10);
+      const before = await eventTypes(gameId);
+      const { user, router } = renderRoute(paths.trackGame(gameId));
+      await screen.findByRole('group', { name: 'Record a stat' });
+      const failing = vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Lost'));
+      fireEvent.click(statButton('Turnover'));
+      await screen.findByRole('alert');
+      await user.click(screen.getByRole('button', { name: 'Done' }));
+      const sheet = await screen.findByRole('dialog', { name: "1 stat isn't saved yet" });
+      await user.click(within(sheet).getByRole('button', { name: 'Done anyway' }));
+      await waitFor(() => expect(router.state.location.pathname).toBe(paths.gameReport(gameId)));
+      failing.mockRestore();
+
+      // Settings: Erase all data, then "Try it with sample data" (the same game ids).
+      await clearAllData();
+      await seedDemoData({ force: true });
+      // Saving what's pending (while the app is open, or at the next start) adds nothing.
+      await retryPendingStats();
+      expect(await eventTypes(gameId)).toEqual(before);
+
+      // Its live game screen starts afresh: nothing "not saved", nothing extra counted.
+      await act(() => router.navigate(paths.trackGame(gameId)));
+      await screen.findByRole('group', { name: 'Record a stat' });
+      expect(notSaved()).not.toBeInTheDocument();
+      await expectStrip(`Turnovers: ${before.filter((type) => type === 'tov').length}`);
     });
   });
 

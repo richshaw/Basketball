@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   addPendingStat,
+  forgetPendingStat,
+  forgetPendingStats,
   hasPendingStats,
   holdUnsavedTaps,
   isPendingStat,
@@ -140,6 +142,7 @@ describe('what is pending', () => {
       gameId: 'game-1',
       hasUnsaved: () => unsaved,
       retryQuietly: () => Promise.resolve(),
+      forget: () => {},
     });
     expect(hasPendingStats()).toBe(true);
     unsaved = false;
@@ -157,5 +160,87 @@ describe('what is pending', () => {
     stop();
     notifyPendingStats();
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('forgetting taps whose data is deleted or replaced', () => {
+  /** A (fake) session holding taps of `gameId` in memory, until the test ends. */
+  function holdTaps(gameId: string) {
+    const forget = vi.fn();
+    const release = holdUnsavedTaps({
+      gameId,
+      hasUnsaved: () => false,
+      retryQuietly: () => Promise.resolve(),
+      forget,
+    });
+    onTestFinished(release);
+    return forget;
+  }
+
+  function keepUnreadable(id: string, gameId: string) {
+    // E.g. kept by a newer version of the app, with a stat type this one doesn't know.
+    localStorage.setItem(`${KEY_PREFIX}${id}`, JSON.stringify({ id, gameId, type: 'dunk' }));
+  }
+
+  it("forgets one game's taps, even ones this version can't read, and its sessions forget theirs", () => {
+    addPendingStat(stat({ id: 'a', gameId: 'game-1' }));
+    addPendingStat(stat({ id: 'b', gameId: 'game-2' }));
+    keepUnreadable('c', 'game-1');
+    localStorage.setItem(`${KEY_PREFIX}garbled`, '{"id":');
+    const forgetOne = holdTaps('game-1');
+    const forgetTwo = holdTaps('game-2');
+
+    forgetPendingStats('game-1');
+    expect(journalKeys()).toEqual([`${KEY_PREFIX}b`, `${KEY_PREFIX}garbled`]);
+    expect(forgetOne).toHaveBeenCalledExactlyOnceWith();
+    expect(forgetTwo).not.toHaveBeenCalled();
+  });
+
+  it('forgets them all, leaving no game id or stat type in localStorage, and nothing else', () => {
+    addPendingStat(stat({ id: 'a', gameId: 'game-1' }));
+    keepUnreadable('c', 'game-2');
+    localStorage.setItem(`${KEY_PREFIX}garbled`, '{"id":');
+    localStorage.setItem('hoop-stats.lastBackupFile', '{"savedAt":1}');
+    const forgetOne = holdTaps('game-1');
+    const forgetTwo = holdTaps('game-2');
+
+    forgetPendingStats();
+    expect(Object.entries(localStorage)).toEqual([['hoop-stats.lastBackupFile', '{"savedAt":1}']]);
+    expect(forgetOne).toHaveBeenCalledExactlyOnceWith();
+    expect(forgetTwo).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it('keeps the entries again if the data could not be deleted after all, and says so', () => {
+    const steal = stat({ id: 'a', gameId: 'game-1' });
+    addPendingStat(steal);
+    keepUnreadable('c', 'game-1');
+    const listener = vi.fn();
+    onTestFinished(watchPendingStats(listener));
+
+    const keepAgain = forgetPendingStats('game-1');
+    expect(journalKeys()).toEqual([]);
+    keepAgain();
+    expect(journalKeys()).toEqual([`${KEY_PREFIX}a`, `${KEY_PREFIX}c`]);
+    expect(listPendingStats()).toEqual([steal]);
+    // The app-wide retry wakes up for them.
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets one tap by its id, kept or held in memory', () => {
+    addPendingStat(stat({ id: 'a' }));
+    addPendingStat(stat({ id: 'b' }));
+    const forget = holdTaps('game-1');
+    forgetPendingStat('a');
+    expect(listPendingStats().map((each) => each.id)).toEqual(['b']);
+    expect(forget).toHaveBeenCalledExactlyOnceWith('a');
+  });
+
+  it('carries on without localStorage', () => {
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    const forget = holdTaps('game-1');
+    expect(() => forgetPendingStats()()).not.toThrow();
+    expect(forget).toHaveBeenCalledTimes(1);
   });
 });

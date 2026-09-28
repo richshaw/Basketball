@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db, META_KEYS } from './db';
+import { replayPendingStats, savePendingStat } from './pendingSaves';
+import { addPendingStat, listPendingStats, newPendingStat } from './pendingStats';
 import {
   createGame,
   DEFAULT_SETTINGS,
@@ -27,6 +29,7 @@ import {
   updateSettings,
   type NewGame,
 } from './repo';
+import { exportAll, importAll } from './transfer';
 import { MAX_PERIOD, type Game, type Player, type StatEvent } from './types';
 
 const T0 = new Date(2026, 8, 27, 18, 0).getTime();
@@ -650,6 +653,23 @@ describe('undoLastStat and deleteStat', () => {
     await deleteStat(stat.id);
     expect((await mustGetGame(game.id)).updatedAt).toBe(T0 + 4);
   });
+
+  it("forgets a deleted stat's tap if it's still kept, so it can't be saved again", async () => {
+    const game = await newGame();
+    const steal = newPendingStat({ gameId: game.id, type: 'stl', period: 1 });
+    const block = newPendingStat({ gameId: game.id, type: 'blk', period: 1 }, steal.at);
+    const assist = newPendingStat({ gameId: game.id, type: 'ast', period: 1 }, block.at);
+    for (const tap of [steal, block, assist]) addPendingStat(tap);
+    // The Block and the Assist were saved, but the page heard they failed: still kept.
+    await savePendingStat(block);
+    await savePendingStat(assist);
+
+    await deleteStat(block.id); // e.g. on the report
+    await undoLastStat(game.id); // the Assist
+    expect(listPendingStats()).toEqual([steal]);
+    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
+    expect((await getGameEvents(game.id)).map((event) => event.type)).toEqual(['stl']);
+  });
 });
 
 describe('endGame and reopenGame', () => {
@@ -720,6 +740,32 @@ describe('deleteGame', () => {
     const before = await getLastChangeAt();
     await deleteGame('nope');
     expect(await getLastChangeAt()).toBe(before);
+  });
+
+  it("forgets the game's taps not saved yet, so restoring it later can't bring them back", async () => {
+    const doomed = await newGame();
+    const kept = await newGame({ opponent: 'Roosevelt' });
+    await recordStat(doomed.id, 'ast');
+    const backup = await exportAll();
+    addPendingStat(newPendingStat({ gameId: doomed.id, type: 'foul', period: 1 }));
+    addPendingStat(newPendingStat({ gameId: kept.id, type: 'stl', period: 1 }));
+
+    await deleteGame(doomed.id);
+    expect(listPendingStats().map((stat) => stat.gameId)).toEqual([kept.id]);
+    // A merge-restore brings the game back; the next start saves what's still kept.
+    await importAll(backup, 'merge');
+    await replayPendingStats();
+    expect((await getGameEvents(doomed.id)).map((event) => event.type)).toEqual(['ast']);
+    expect((await getGameEvents(kept.id)).map((event) => event.type)).toEqual(['stl']);
+  });
+
+  it("keeps the game's taps if it couldn't be deleted", async () => {
+    const game = await newGame();
+    const tap = newPendingStat({ gameId: game.id, type: 'foul', period: 1 });
+    addPendingStat(tap);
+    vi.spyOn(db.games, 'delete').mockRejectedValue(new Error('Disk error'));
+    await expect(deleteGame(game.id)).rejects.toThrow('Disk error');
+    expect(listPendingStats()).toEqual([tap]);
   });
 });
 

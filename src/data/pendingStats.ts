@@ -154,6 +154,11 @@ export interface UnsavedTapHolder {
    * changes anything there). Settles once those tries are done; never rejects.
    */
   retryQuietly(): Promise<void>;
+  /**
+   * Its game's data was deleted or replaced (no id), or one stat was deleted (its id):
+   * forgets those taps, never saving them.
+   */
+  forget(id?: string): void;
 }
 
 const holders = new Set<UnsavedTapHolder>();
@@ -197,4 +202,68 @@ export function watchPendingStats(listener: () => void): () => void {
 /** Says a tap may be pending now (e.g. its save just failed), to wake the app-wide retry. */
 export function notifyPendingStats(): void {
   for (const listener of [...listeners]) listener();
+}
+
+// ---------------------------------------------------------------------------
+// Forgetting taps whose data is deleted or replaced
+
+/** The game id in an entry, read loosely: an entry this version can't save has one too. */
+function entryGameId(text: string): unknown {
+  try {
+    const value = JSON.parse(text) as unknown;
+    return typeof value === 'object' && value !== null
+      ? (value as Record<string, unknown>).gameId
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Forgets the kept taps of one game, or of every game (then every entry, even one this
+ * version can't read, so no game id or stat type is left behind), and has the sessions
+ * holding such taps in memory forget theirs. For writes that delete or replace a game's
+ * data: no retry may save one of its taps into it afterwards (say, into a game restored
+ * or made again under the same id). Call it just before that write, so a save asked for
+ * earlier lands first and goes with it. Returns a function that keeps the forgotten
+ * entries again, for when the write fails.
+ */
+export function forgetPendingStats(gameId?: string): () => void {
+  const forgotten: [key: string, text: string][] = [];
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(KEY_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) {
+      const text = localStorage.getItem(key);
+      if (text === null || (gameId !== undefined && entryGameId(text) !== gameId)) continue;
+      localStorage.removeItem(key);
+      forgotten.push([key, text]);
+    }
+  } catch {
+    // Blocked storage: nothing could have been kept there.
+  }
+  for (const holder of [...holders]) {
+    if (gameId === undefined || holder.gameId === gameId) holder.forget();
+  }
+  return () => {
+    if (forgotten.length === 0) return;
+    try {
+      for (const [key, text] of forgotten) localStorage.setItem(key, text);
+    } catch {
+      // Full or blocked since: those taps can't be kept any more.
+    }
+    notifyPendingStats();
+  };
+}
+
+/**
+ * Forgets one tap by its stat's id, kept or held in memory, just before that stat is
+ * deleted: no retry may save it again afterwards.
+ */
+export function forgetPendingStat(id: string): void {
+  removePendingStat(id);
+  for (const holder of [...holders]) holder.forget(id);
 }

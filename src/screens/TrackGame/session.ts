@@ -26,6 +26,7 @@ import { savePendingStat } from '@/data/pendingSaves';
 import {
   addPendingStat,
   holdUnsavedTaps,
+  isPendingStat,
   listPendingStats,
   newPendingStat,
   notifyPendingStats,
@@ -351,6 +352,10 @@ export class TrackingSession implements UnsavedTapHolder {
     for (const record of this.taps) {
       if (record.undone) {
         if (record.orphan) tries.push(this.removeOrphan(record));
+      } else if (record.status === 'failed' && record.kept && !isPendingStat(record.stat.id)) {
+        // No longer kept: saved meanwhile (e.g. by the app-wide retry), or its game's
+        // data was deleted or replaced (e.g. in another tab). Never saved again.
+        this.drop(record);
       } else if (record.status === 'failed') {
         this.save(record, quiet);
         tries.push(record.settled);
@@ -380,6 +385,23 @@ export class TrackingSession implements UnsavedTapHolder {
   /** Whether it holds a tap not saved yet, or a taken-back one whose removal failed. */
   hasUnsaved(): boolean {
     return this.taps.some((record) => (record.undone ? record.orphan : record.status !== 'saved'));
+  }
+
+  /**
+   * Its game's data was deleted or replaced (no id): every tap is forgotten, never
+   * saved. With an id, that stat was deleted elsewhere: its tap, unless it's being taken
+   * back here, is forgotten and never saved again.
+   */
+  forget(id?: string): void {
+    if (id === undefined) {
+      this.taps = [];
+      this.removing.clear();
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    } else {
+      this.taps = this.taps.filter((record) => record.undone || record.stat.id !== id);
+    }
+    this.emit();
   }
 
   /**
@@ -603,14 +625,26 @@ const sessions = new Map<string, TrackingSession>();
 
 /**
  * The session of a game, made on first use; it lasts as long as the page, holding its
- * taps not saved yet for the app-wide retry even after the screen closes.
+ * taps not saved yet for the app-wide retry even after the screen closes, until its
+ * game's data is deleted or replaced (the next screen for that game starts afresh).
  */
 export function trackingSession(gameId: string, period: number): TrackingSession {
   let session = sessions.get(gameId);
   if (!session) {
-    session = new TrackingSession(gameId, period);
-    sessions.set(gameId, session);
-    holdUnsavedTaps(session);
+    const created = new TrackingSession(gameId, period);
+    const release = holdUnsavedTaps({
+      gameId,
+      hasUnsaved: () => created.hasUnsaved(),
+      retryQuietly: () => created.retryQuietly(),
+      forget: (id) => {
+        created.forget(id);
+        if (id !== undefined) return;
+        release();
+        if (sessions.get(gameId) === created) sessions.delete(gameId);
+      },
+    });
+    sessions.set(gameId, created);
+    session = created;
   }
   return session;
 }

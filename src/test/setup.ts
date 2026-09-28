@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
+import { forgetPendingStats } from '@/data/pendingStats';
 import { resetDatabase } from './db';
 import { installDialogPolyfill } from './dialogPolyfill';
 
@@ -18,8 +19,10 @@ if (typeof HTMLCanvasElement !== 'undefined') {
 }
 
 // Every test starts with an empty database (seed data in beforeEach, not beforeAll),
-// and with nothing in localStorage (e.g. taps kept by src/data/pendingStats.ts).
+// with nothing in localStorage (e.g. taps kept by src/data/pendingStats.ts), and with
+// no taps held by an earlier test's live game screen.
 beforeEach(async () => {
+  forgetPendingStats();
   if (typeof localStorage !== 'undefined') localStorage.clear();
   await resetDatabase();
 });
