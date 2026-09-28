@@ -1,5 +1,7 @@
 name: Server CI
 
+# deploy-server.yml deploys after this workflow (by this name) passes for a push to main, so
+# keep the push trigger below.
 on:
   pull_request:
     paths:
@@ -14,7 +16,8 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch or PR supersedes the running checks.
+# A newer push to the same branch or PR supersedes the running checks. On main this also means
+# only the newest commit's run can complete and trigger a deploy.
 concurrency:
   group: server-ci-${{ github.ref }}
   cancel-in-progress: true
