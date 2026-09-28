@@ -90,9 +90,13 @@ function useScrollEdges() {
 
 const alignClass = { start: styles.start, center: styles.center, end: styles.end } as const;
 
-/** A tap on a linked row follows the row's link, unless it landed on a control already. */
+/**
+ * A tap on a linked row follows the row's link, unless it landed on a control already.
+ * Modified clicks (new tab, select text…) and other buttons are left to the browser.
+ */
 function followRowLink(event: MouseEvent<HTMLTableRowElement>) {
-  if (event.defaultPrevented) return;
+  if (event.defaultPrevented || event.button !== 0) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   if (event.target instanceof Element && event.target.closest('a, button, input, label')) return;
   event.currentTarget.querySelector<HTMLAnchorElement>('a[href]')?.click();
 }

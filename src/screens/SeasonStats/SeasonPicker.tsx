@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
-import { ChevronRightIcon } from '@/components/Icons/Icons';
+import { CheckmarkIcon, ChevronRightIcon } from '@/components/Icons/Icons';
 import {
   SegmentedControl,
   type SegmentedOption,
@@ -16,26 +16,6 @@ const SEGMENT_MAX_CHARS: Record<number, number> = { 2: 18, 3: 11 };
 function fitsSegments(options: readonly SegmentedOption<SeasonKey>[]): boolean {
   const maxChars = SEGMENT_MAX_CHARS[options.length];
   return maxChars !== undefined && options.every((option) => option.label.length <= maxChars);
-}
-
-function CheckmarkIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={24}
-      height={24}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2.75}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-      className={className}
-    >
-      <path d="M5 12.5l4.5 4.5L19 7.5" />
-    </svg>
-  );
 }
 
 export interface SeasonPickerProps {

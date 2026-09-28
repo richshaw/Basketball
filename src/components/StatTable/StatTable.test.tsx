@@ -157,4 +157,27 @@ describe('StatTable', () => {
     expect(router.state.location.pathname).toBe('/periods/Q1');
     expect(visited.size).toBe(1);
   });
+
+  it('with linkedRows, leaves modified and non-primary clicks on a row alone', () => {
+    const linkRows: StatTableRow<Key>[] = [
+      { period: <Link to="/periods/Q1">Q1</Link>, pts: 4, fg: '2-3', reb: 1 },
+    ];
+    const { router } = renderWithRouter(
+      <StatTable caption="Points by quarter" columns={columns} rows={linkRows} linkedRows />,
+    );
+    const cell = screen.getByRole('cell', { name: '4' });
+
+    for (const init of [
+      { metaKey: true },
+      { ctrlKey: true },
+      { shiftKey: true },
+      { altKey: true },
+      { button: 1 },
+    ]) {
+      fireEvent.click(cell, init);
+      expect(router.state.location.pathname, JSON.stringify(init)).toBe('/');
+    }
+    fireEvent.click(cell);
+    expect(router.state.location.pathname).toBe('/periods/Q1');
+  });
 });
