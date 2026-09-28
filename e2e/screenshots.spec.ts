@@ -39,6 +39,7 @@ const screens: Screen[] = [
       expect(page.getByRole('heading', { level: 2, name: 'Play-by-play' })).toBeVisible(),
   },
   { name: 'track-game', path: paths.trackGame('demo') },
+  { name: 'restore-backup', path: paths.restoreBackup() },
   // The shared component gallery, and its overlays one at a time.
   { name: 'dev-ui', path: paths.devUi },
   {
