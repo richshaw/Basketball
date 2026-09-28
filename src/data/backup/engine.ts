@@ -20,8 +20,7 @@
  * Nothing here runs on the tap path of the live game screen: data changes only move a
  * timer, and all work happens later, asynchronously.
  */
-import { liveQuery } from 'dexie';
-import { getLastChangeAt, getLiveGame } from '../repo';
+import { getLastChangeAt, getLiveGame, subscribeToChanges } from '../repo';
 import { exportAll, type ExportFile } from '../transfer';
 import {
   createBackupApi,
@@ -172,18 +171,48 @@ export const browserEnvironment: BackupEnvironment = {
   },
 };
 
-/** Watches the database (from any tab) with a Dexie live query. */
+/** What the scheduler watches, read now. */
+export async function readObservation(): Promise<BackupObservation> {
+  const [lastChangeAt, liveGame, state] = await Promise.all([
+    getLastChangeAt(),
+    getLiveGame(),
+    loadBackupState(),
+  ]);
+  return { lastChangeAt, liveGame: liveGame !== undefined, state };
+}
+
+/**
+ * Calls `listener` with the current observation, then again after writes (from any
+ * tab, via subscribeToChanges). A burst of writes is read once, after the last read.
+ */
 export function observeDatabase(listener: (observation: BackupObservation) => void): () => void {
-  const subscription = liveQuery(async (): Promise<BackupObservation> => ({
-    lastChangeAt: await getLastChangeAt(),
-    liveGame: (await getLiveGame()) !== undefined,
-    state: await loadBackupState(),
-  })).subscribe({
-    next: listener,
-    // A failed read (storage trouble) must never break the app; the next write retries.
-    error: () => undefined,
-  });
-  return () => subscription.unsubscribe();
+  let stopped = false;
+  let reading = false;
+  let readAgain = false;
+  const read = async () => {
+    if (reading) {
+      readAgain = true;
+      return;
+    }
+    reading = true;
+    try {
+      do {
+        readAgain = false;
+        const observation = await readObservation();
+        if (!stopped) listener(observation);
+      } while (readAgain && !stopped);
+    } catch {
+      // A failed read (storage trouble) must never break the app; the next write retries.
+    } finally {
+      reading = false;
+    }
+  };
+  const unsubscribe = subscribeToChanges(() => void read());
+  void read();
+  return () => {
+    stopped = true;
+    unsubscribe();
+  };
 }
 
 const MAX_CACHED_KEYS = 4;

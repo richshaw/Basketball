@@ -5,14 +5,13 @@
  */
 import {
   BackupEngine,
+  readObservation,
   type BackupClock,
   type BackupEngineOptions,
   type BackupEnvironment,
   type BackupEnvironmentEvent,
   type BackupObservation,
 } from '@/data/backup/engine';
-import { loadBackupState } from '@/data/backup/state';
-import { getLastChangeAt, getLiveGame } from '@/data/repo';
 import { FakeBackupServer } from './fakeBackupServer';
 
 export const TEST_API_URL = 'https://backup.hoop-stats.test';
@@ -89,14 +88,6 @@ export class FakeEnvironment implements BackupEnvironment {
     if (event === 'offline') this.online = false;
     for (const listener of this.listeners) listener(event);
   }
-}
-
-export async function readObservation(): Promise<BackupObservation> {
-  return {
-    lastChangeAt: await getLastChangeAt(),
-    liveGame: (await getLiveGame()) !== undefined,
-    state: await loadBackupState(),
-  };
 }
 
 export interface EngineHarness {
