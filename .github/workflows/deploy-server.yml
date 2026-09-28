@@ -1,0 +1,49 @@
+name: Deploy backup server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; never cancel a deploy that is already running.
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    steps:
+      # Until the owner completes the one-time Fly.io setup (server/README.md), there is no
+      # FLY_API_TOKEN secret: skip the deploy with a notice instead of failing the run.
+      - name: Check for FLY_API_TOKEN
+        id: fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::notice title=Backup server not deployed::The FLY_API_TOKEN secret is not set yet. Follow the one-time Fly.io setup in server/README.md, then re-run this workflow."
+            echo "Deploy skipped: FLY_API_TOKEN is not set. See the one-time Fly.io setup in server/README.md." >> "$GITHUB_STEP_SUMMARY"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.fly.outputs.configured == 'true'
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: steps.fly.outputs.configured == 'true'
+
+      - name: Deploy
+        if: steps.fly.outputs.configured == 'true'
+        working-directory: server
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --ha=false
