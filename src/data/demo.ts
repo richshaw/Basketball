@@ -26,7 +26,8 @@ export function demoGameId(n: number): string {
   return `demo-game-${String(n).padStart(2, '0')}`;
 }
 
-function isDemoGameId(id: string): boolean {
+/** Whether a game is demo data (e.g. to remove the sample games and nothing else). */
+export function isDemoGameId(id: string): boolean {
   return id === DEMO_LIVE_GAME_ID || /^demo-game-\d{2}$/.test(id);
 }
 
@@ -40,6 +41,8 @@ export interface DemoOptions {
    * if there's any player or game that isn't demo data.
    */
   force?: boolean;
+  /** seedDemoData only: keep this device's settings instead of the demo's. */
+  keepSettings?: boolean;
 }
 
 interface DemoGamePlan {
@@ -390,5 +393,7 @@ export async function seedDemoData(options: DemoOptions = {}): Promise<void> {
         'Use seedDemoData({ force: true }) to replace it.',
     );
   }
-  await importAll(buildDemoData(options), 'replace');
+  const { settings, ...data } = buildDemoData(options);
+  // A backup without settings leaves the device's own settings alone.
+  await importAll(options.keepSettings ? data : { ...data, settings }, 'replace');
 }

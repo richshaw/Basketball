@@ -1,0 +1,14 @@
+/* "Periods" on the left, the segmented control on the right, in one row. */
+.periods {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.periodControl {
+  flex: 0 1 var(--row-control-width);
+  min-width: 0;
+  /* Its 44px segments overlap the row's padding instead of making the row taller. */
+  margin-block: calc(-1 * var(--space-1));
+}

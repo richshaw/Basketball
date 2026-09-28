@@ -1,4 +1,4 @@
-/** Sharing and copying text (game summaries, backups). These never throw. */
+/** Sharing text (game summaries) and files (backups), and copying text. These never throw. */
 
 /**
  * - `shared`: the share sheet finished.
@@ -37,6 +37,31 @@ export async function shareText({ title, text }: ShareTextOptions): Promise<Shar
   return (await copyText(text)) ? 'copied' : 'failed';
 }
 
+/**
+ * - `shared`: the share sheet finished.
+ * - `cancelled`: the user closed the share sheet.
+ * - `unavailable`: this browser can't share files, or its share sheet failed (e.g. the
+ *   tap was too long ago), so offer the file another way (a download).
+ */
+export type ShareFileResult = 'shared' | 'cancelled' | 'unavailable';
+
+/**
+ * Opens the share sheet with just `file` (on an iPhone: Save to Files, iCloud Drive,
+ * AirDrop, Mail…). Resolves to what happened; never rejects. Build the file first and
+ * call this straight from the tap handler.
+ */
+export async function shareFile(file: File): Promise<ShareFileResult> {
+  // Files only: with a title or text too, iOS saves an extra text file next to it.
+  const data: ShareData = { files: [file] };
+  if (!canShare(data)) return 'unavailable';
+  try {
+    await navigator.share(data);
+    return 'shared';
+  } catch (error) {
+    return isAbortError(error) ? 'cancelled' : 'unavailable';
+  }
+}
+
 /** Copies `text` to the clipboard. Resolves to `false` instead of throwing. */
 export async function copyText(text: string): Promise<boolean> {
   try {
@@ -52,7 +77,8 @@ export async function copyText(text: string): Promise<boolean> {
 function canShare(data: ShareData): boolean {
   if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') return false;
   try {
-    return typeof navigator.canShare === 'function' ? navigator.canShare(data) : true;
+    // A browser without canShare predates sharing files: it shares text only.
+    return typeof navigator.canShare === 'function' ? navigator.canShare(data) : !data.files;
   } catch {
     return false;
   }

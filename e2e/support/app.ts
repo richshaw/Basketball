@@ -1,5 +1,9 @@
 import { expect, type Page } from '@playwright/test';
 
+/** Safari on an iPhone: the only browser that gets the "Add to Home Screen" banner. */
+export const IPHONE_SAFARI_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1';
+
 /** Relative URL of an app route (hash routing), e.g. `appUrl(paths.stats)` -> `./#/stats`. */
 export function appUrl(path: string): string {
   return `./#${path}`;

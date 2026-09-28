@@ -1,0 +1,36 @@
+.content {
+  padding-top: var(--space-2);
+}
+
+/* The step's number in an accent circle, in the row's icon slot. */
+.stepNumber {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+}
+
+/* iOS glyphs and the app icon, inline with the step's text. */
+.glyph,
+.appIcon {
+  display: inline-block;
+  width: 1.25em;
+  height: 1.25em;
+  vertical-align: -0.25em;
+}
+
+.glyph {
+  color: var(--color-stat-text);
+}
+
+.otherDevices {
+  margin: var(--space-4) var(--space-4) 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+}

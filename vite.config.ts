@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -6,10 +8,42 @@ import { defineConfig } from 'vitest/config';
 // Dark theme colors (keep in sync with src/styles/tokens.css and index.html).
 const DARK_BACKGROUND = '#0b0d10';
 
+/** package.json's version, or '' if it can't be read. */
+function packageVersion(): string {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
+    ) as { version?: unknown };
+    return typeof manifest.version === 'string' ? manifest.version : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Short SHA of the commit being built. Falls back to CI's GITHUB_SHA, then to '' (a
+ * build without git, e.g. from a source archive, still works).
+ */
+function commitSha(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return process.env.GITHUB_SHA?.slice(0, 7) ?? '';
+  }
+}
+
 export default defineConfig({
   // Relative base so the same build works at any sub-path
   // (e.g. https://richshaw.github.io/Basketball/) and from the service worker cache.
   base: './',
+  // Build info shown in Settings > About (typed in src/global.d.ts).
+  define: {
+    __APP_VERSION__: JSON.stringify(packageVersion()),
+    __APP_COMMIT__: JSON.stringify(commitSha()),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

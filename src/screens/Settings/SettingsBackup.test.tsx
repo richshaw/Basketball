@@ -1,0 +1,513 @@
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { restoreStubs } from '@/test/browser';
+import { seedDemoData } from '@/data/demo';
+import {
+  createGame,
+  endGame,
+  getPlayer,
+  getSettings,
+  listGames,
+  recordStat,
+  savePlayer,
+  updateGame,
+  updateSettings,
+} from '@/data/repo';
+import {
+  clearAllData,
+  exportAll,
+  importAll,
+  parseExportFile,
+  type ExportFile,
+} from '@/data/transfer';
+import { todayLocalISO } from '@/lib/format';
+import { paths } from '@/routes';
+import { renderRoute } from '@/test/render';
+import fixtureJson from '../../../e2e/fixtures/settings-backup.json?raw';
+import { formatDayWithYear } from './backupFiles';
+import { GAMES_CSV_HEADERS } from './gamesCsv';
+import { captureDownloads, sharedFile, stubFileSharing } from './testUtils';
+import type * as TransferModule from '@/data/transfer';
+
+// exportAll as usual, but a test can hold it back (see holdExports).
+vi.mock('@/data/transfer', async (importOriginal) => {
+  const actual = await importOriginal<typeof TransferModule>();
+  return { ...actual, exportAll: vi.fn(actual.exportAll) };
+});
+
+/**
+ * Makes every export from now on wait until `release()`, then read the data as it is
+ * by then. For catching a tap that lands before the backup has re-read a change.
+ */
+async function holdExports() {
+  const actual = await vi.importActual<typeof TransferModule>('@/data/transfer');
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(exportAll).mockImplementation(async () => {
+    await released;
+    return actual.exportAll();
+  });
+  return release;
+}
+
+const notifications = () => screen.getByRole('status', { name: 'Notifications' });
+
+/** Waits for a toast. (Re-queried: the toast area moves into a sheet while one is open.) */
+async function expectToast(message: string) {
+  await waitFor(() => {
+    expect(notifications()).toHaveTextContent(message);
+  });
+}
+const backupList = () => screen.getByRole('list', { name: 'Backup' });
+const backupFileName = () => `hoop-stats-backup-${todayLocalISO()}.json`;
+
+/** Renders Settings and waits until the backup rows are ready to use. */
+async function renderSettings() {
+  const view = renderRoute(paths.settings);
+  await screen.findByRole('heading', { level: 2, name: 'Backup' });
+  return view;
+}
+
+async function enabledButton(name: RegExp | string) {
+  const button = within(backupList()).getByRole('button', { name });
+  await waitFor(() => {
+    expect(button).toBeEnabled();
+  });
+  return button;
+}
+
+/** A backup file the parent might pick in the Files app. */
+function pickedFile(contents: string, name = 'hoop-stats-backup-2026-09-20.json') {
+  return new File([contents], name, { type: 'application/json' });
+}
+
+async function chooseBackupFile(user: ReturnType<typeof renderRoute>['user'], file: File) {
+  await user.upload(screen.getByLabelText('Backup file to restore'), file);
+}
+
+/** One game on this phone that isn't in the fixture. */
+async function seedPhoneGame() {
+  await savePlayer({ name: 'Ava', jerseyNumber: '12' });
+  const game = await createGame({
+    opponent: 'Lincoln',
+    date: '2026-09-26',
+    periodFormat: 'quarters',
+  });
+  await recordStat(game.id, 'fg3_made');
+  await endGame(game.id, { teamScore: 40, opponentScore: 38 });
+  return game;
+}
+
+afterEach(() => {
+  restoreStubs();
+  localStorage.clear();
+  // Back to the real exportAll, even if a test failed before releasing held exports.
+  vi.mocked(exportAll).mockReset();
+});
+
+describe('Settings: save a backup file', () => {
+  it('shares the backup as a file where the share sheet takes files', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    const share = stubFileSharing();
+    const downloads = captureDownloads();
+    const { user } = await renderSettings();
+    expect(
+      within(backupList()).getByRole('button', { name: /Save a backup file/ }),
+    ).toHaveTextContent('Not saved on this phone yet');
+
+    await user.click(await enabledButton(/Save a backup file/));
+
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(share).toHaveBeenCalledWith({ files: [expect.any(File)] });
+    const file = sharedFile(share);
+    expect(file.name).toBe(backupFileName());
+    expect(file.type).toBe('application/json');
+    const backup = parseExportFile(await file.text());
+    expect(backup.games).toHaveLength(10);
+    expect(backup.players).toEqual([expect.objectContaining({ name: 'Ava', jerseyNumber: '12' })]);
+    expect(downloads).toEqual([]);
+
+    await expectToast('Backup file saved');
+    expect(
+      within(backupList()).getByRole('button', { name: /Save a backup file/ }),
+    ).toHaveTextContent(`Last saved: ${formatDayWithYear(Date.now())}`);
+  });
+
+  it('downloads the backup where files cannot be shared', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    const downloads = captureDownloads();
+    const { user, unmount } = await renderSettings();
+
+    await user.click(await enabledButton(/Save a backup file/));
+
+    await expectToast('Backup file downloaded');
+    expect(downloads.map((download) => download.name)).toEqual([backupFileName()]);
+    const backup = parseExportFile(await (downloads[0]?.file as Blob).text());
+    expect(backup.games).toHaveLength(10);
+
+    // "Last saved" is remembered on this device.
+    unmount();
+    await renderSettings();
+    expect(
+      within(backupList()).getByRole('button', { name: /Save a backup file/ }),
+    ).toHaveTextContent(`Last saved: ${formatDayWithYear(Date.now())}`);
+  });
+
+  it('remembers nothing when the share sheet is closed', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    const share = stubFileSharing(() =>
+      Promise.reject(new DOMException('Share canceled', 'AbortError')),
+    );
+    const downloads = captureDownloads();
+    const { user } = await renderSettings();
+    const save = await enabledButton(/Save a backup file/);
+
+    await user.click(save);
+
+    await waitFor(() => {
+      expect(save).toBeEnabled();
+    });
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(downloads).toEqual([]);
+    expect(save).toHaveTextContent('Not saved on this phone yet');
+    expect(notifications()).toBeEmptyDOMElement();
+  });
+
+  it('says "Last saved" only while nothing has changed since, even after erasing', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    captureDownloads();
+    const { user } = await renderSettings();
+    const save = await enabledButton(/Save a backup file/);
+    const today = formatDayWithYear(Date.now());
+
+    await user.click(save);
+    await waitFor(() => {
+      expect(save).toHaveTextContent(`Last saved: ${today}`);
+    });
+
+    await clearAllData();
+    await waitFor(() => {
+      expect(save).toHaveTextContent('Nothing to back up yet');
+    });
+    await createGame({ opponent: 'Hillcrest', date: '2026-09-28', periodFormat: 'quarters' });
+    await waitFor(() => {
+      expect(save).toHaveTextContent(`Changes since your last backup file on ${today}`);
+    });
+  });
+
+  it('has nothing to save on an empty phone', async () => {
+    await renderSettings();
+    const save = within(backupList()).getByRole('button', { name: /Save a backup file/ });
+    await waitFor(() => {
+      expect(save).toHaveTextContent('Nothing to back up yet');
+    });
+    expect(save).toBeDisabled();
+  });
+});
+
+describe('Settings: data that changes while Settings is open', () => {
+  it('never saves a backup file that misses the latest change', async () => {
+    const game = await seedPhoneGame();
+    const share = stubFileSharing();
+    const { user } = await renderSettings();
+    const save = await enabledButton(/Save a backup file/);
+    const release = await holdExports();
+
+    // A change lands (from this screen, another screen or another tab)...
+    await updateGame(game.id, { opponent: 'Lincoln Prep' });
+    // ...and the parent taps before the backup has read it: nothing is saved.
+    fireEvent.click(save);
+    expect(share).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(save).toBeDisabled();
+    });
+
+    release();
+    await user.click(await enabledButton(/Save a backup file/));
+    const backup = parseExportFile(await sharedFile(share).text());
+    expect(backup.games.map(({ opponent }) => opponent)).toEqual(['Lincoln Prep']);
+    // Stamped with when the data was read, not when the file was saved.
+    const { updatedAt } = backup.games[0] ?? game;
+    expect(Date.parse(backup.exportedAt)).toBeGreaterThanOrEqual(updatedAt);
+  });
+
+  it('never exports a spreadsheet that misses the latest change', async () => {
+    const game = await seedPhoneGame();
+    const share = stubFileSharing();
+    const { user } = await renderSettings();
+    const csv = await enabledButton(/Export spreadsheet/);
+    const release = await holdExports();
+
+    await updateGame(game.id, { opponent: 'Lincoln Prep' });
+    fireEvent.click(csv);
+    expect(share).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(csv).toBeDisabled();
+    });
+
+    release();
+    await user.click(await enabledButton(/Export spreadsheet/));
+    expect(await sharedFile(share).text()).toContain(',Lincoln Prep,');
+  });
+});
+
+describe('Settings: export spreadsheet', () => {
+  it('shares a CSV with one row per finished game', async () => {
+    await seedDemoData({ today: '2026-09-28', liveGame: true });
+    const share = stubFileSharing();
+    const { user } = await renderSettings();
+
+    await user.click(await enabledButton(/Export spreadsheet \(CSV\)/));
+
+    const file = sharedFile(share);
+    expect(file.name).toBe(`hoop-stats-games-${todayLocalISO()}.csv`);
+    expect(file.type).toBe('text/csv');
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const lines = (await file.text()).trimEnd().split('\r\n');
+    expect(lines[0]).toBe(GAMES_CSV_HEADERS.join(','));
+    // Ten final games; the live one is left out.
+    expect(lines).toHaveLength(11);
+    await expectToast('Spreadsheet saved');
+  });
+
+  it('downloads the CSV where files cannot be shared', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    const downloads = captureDownloads();
+    const { user } = await renderSettings();
+
+    await user.click(await enabledButton(/Export spreadsheet \(CSV\)/));
+
+    expect(downloads.map((download) => download.name)).toEqual([
+      `hoop-stats-games-${todayLocalISO()}.csv`,
+    ]);
+    await expectToast('Spreadsheet downloaded');
+  });
+
+  it('waits for a finished game', async () => {
+    await createGame({ opponent: 'Lincoln', date: '2026-09-26', periodFormat: 'quarters' });
+    await renderSettings();
+    const csv = within(backupList()).getByRole('button', { name: /Export spreadsheet/ });
+    expect(csv).toBeDisabled();
+    expect(csv).toHaveTextContent('Available once a game is finished');
+  });
+});
+
+describe('Settings: restore from a backup file', () => {
+  it('previews the backup, then adds it to what is on the phone', async () => {
+    const phoneGame = await seedPhoneGame();
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).toHaveAccessibleDescription(
+      `Backup from ${formatDayWithYear(Date.parse('2026-09-20T12:00:00.000Z'))} · 2 games · Maya #7`,
+    );
+    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+
+    await expectToast('Restored 2 games');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Restore this backup?' })).toBeNull();
+    });
+    const games = await listGames();
+    expect(games.map((game) => game.opponent).sort()).toEqual([
+      'Brookside',
+      'Hillcrest',
+      'Lincoln',
+    ]);
+    expect(games.find((game) => game.id === phoneGame.id)).toBeDefined();
+  });
+
+  it('says how many games were restored and how many the phone already had', async () => {
+    // This phone already has the fixture's first game.
+    const fixture = parseExportFile(fixtureJson);
+    const firstGame = fixture.games.slice(0, 1);
+    await importAll(
+      {
+        ...fixture,
+        games: firstGame,
+        events: fixture.events.filter((event) => event.gameId === firstGame[0]?.id),
+      },
+      'replace',
+    );
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+
+    await expectToast('Restored 1 game · 1 already up to date');
+    expect(await listGames()).toHaveLength(2);
+  });
+
+  it('explains a backup with nothing new, next to the way to use it anyway', async () => {
+    await importAll(parseExportFile(fixtureJson), 'replace');
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+
+    // The sheet stays open and says why, instead of claiming "Restored 2 games". (The
+    // status is always there, empty, so screen readers announce it: wait for the text.)
+    const result = within(sheet).getByRole('status', { name: 'Restore result' });
+    await waitFor(() => {
+      expect(result).toHaveTextContent(
+        "Nothing new was added: this phone already has both games in this backup (the same, or changed here since). To go back to the backup's versions, use Replace everything on this phone.",
+      );
+    });
+    expect(notifications()).toBeEmptyDOMElement();
+
+    await user.click(
+      within(sheet).getByRole('button', { name: /Replace everything on this phone/ }),
+    );
+    await user.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Replace everything' }),
+    );
+    await expectToast('Restored 2 games');
+  });
+
+  it('replaces everything on the phone after a confirmation', async () => {
+    await seedPhoneGame();
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await user.click(
+      within(sheet).getByRole('button', { name: /Replace everything on this phone/ }),
+    );
+
+    const confirm = screen.getByRole('alertdialog', { name: 'Replace everything on this phone?' });
+    expect(confirm).toHaveAccessibleDescription(
+      "The game on this phone and its stats, the player's name and number, and your settings will be erased and replaced with what's in the backup. This can't be undone.",
+    );
+    await user.click(within(confirm).getByRole('button', { name: 'Replace everything' }));
+
+    await expectToast('Restored 2 games');
+    expect((await listGames()).map((game) => game.opponent).sort()).toEqual([
+      'Brookside',
+      'Hillcrest',
+    ]);
+    expect(await getPlayer()).toMatchObject({ name: 'Maya', jerseyNumber: '7' });
+  });
+
+  it('changes nothing when the replacement is not confirmed', async () => {
+    await seedPhoneGame();
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    await user.click(
+      await screen.findByRole('button', { name: /Replace everything on this phone/ }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    // Back at the choice, with the phone's data untouched.
+    expect(screen.getByRole('dialog', { name: 'Restore this backup?' })).toBeInTheDocument();
+    expect((await listGames()).map((game) => game.opponent)).toEqual(['Lincoln']);
+  });
+
+  it('just restores on a phone with no games yet', async () => {
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).toHaveTextContent(
+      'There are no games on this phone yet, so nothing will be lost.',
+    );
+    expect(within(sheet).queryByRole('button', { name: /Replace everything/ })).toBeNull();
+    await user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+
+    await expectToast('Restored 2 games');
+    expect(await listGames()).toHaveLength(2);
+    expect(await getPlayer()).toMatchObject({ name: 'Maya', jerseyNumber: '7' });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('keeps the player and settings set up on a phone with no games yet', async () => {
+    await savePlayer({ name: 'Ava', jerseyNumber: '12' });
+    const settings = await updateSettings({ shotChart: false, defaultPeriodFormat: 'halves' });
+    const { user } = await renderSettings();
+    // A backup whose player was never named, with the default settings.
+    const fixture = parseExportFile(fixtureJson);
+    const backup: ExportFile = {
+      ...fixture,
+      players: fixture.players.map(({ jerseyNumber: _, ...player }) => ({ ...player, name: '' })),
+      settings: { shotChart: true, defaultPeriodFormat: 'quarters' },
+    };
+
+    await chooseBackupFile(user, pickedFile(JSON.stringify(backup)));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+
+    await expectToast('Restored 2 games');
+    expect((await listGames()).map((game) => game.opponent).sort()).toEqual([
+      'Brookside',
+      'Hillcrest',
+    ]);
+    expect(await getPlayer()).toMatchObject({ name: 'Ava', jerseyNumber: '12' });
+    expect(await getSettings()).toEqual(settings);
+  });
+
+  it("explains a file that isn't a backup, and changes nothing", async () => {
+    await seedPhoneGame();
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile('{"hello":"world"}', 'notes.json'));
+
+    const sheet = await screen.findByRole('dialog', { name: "Can't restore this file" });
+    expect(sheet).toHaveAccessibleDescription("This file isn't a Hoop Stats backup.");
+    expect(sheet).toHaveTextContent(
+      'Choose a backup saved from Hoop Stats. Its name starts with hoop-stats-backup.',
+    );
+    await user.click(within(sheet).getByRole('button', { name: 'OK' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect((await listGames()).map((game) => game.opponent)).toEqual(['Lincoln']);
+  });
+
+  it('explains a backup from a newer version of the app', async () => {
+    const { user } = await renderSettings();
+    const newer = { ...(JSON.parse(fixtureJson) as object), schemaVersion: 99 };
+
+    await chooseBackupFile(user, pickedFile(JSON.stringify(newer)));
+
+    const sheet = await screen.findByRole('dialog', { name: "Can't restore this file" });
+    expect(sheet).toHaveAccessibleDescription(
+      'This backup is from a newer version of Hoop Stats. Update the app, then try again.',
+    );
+    // It is a Hoop Stats backup, so no "choose a Hoop Stats backup" hint.
+    expect(sheet).not.toHaveTextContent('Choose a backup saved from Hoop Stats');
+  });
+
+  it('explains a damaged backup without asking for a different file', async () => {
+    const { user } = await renderSettings();
+    const damaged = { ...(JSON.parse(fixtureJson) as object), games: [{ id: 'half a game' }] };
+
+    await chooseBackupFile(user, pickedFile(JSON.stringify(damaged)));
+
+    const sheet = await screen.findByRole('dialog', { name: "Can't restore this file" });
+    expect(sheet).toHaveAccessibleDescription("This backup is damaged, so it can't be restored.");
+    expect(sheet).not.toHaveTextContent('Choose a backup saved from Hoop Stats');
+  });
+
+  it('can restore the same file twice in a row', async () => {
+    const { user } = await renderSettings();
+    const file = pickedFile('not json at all');
+
+    await chooseBackupFile(user, file);
+    await user.click(await screen.findByRole('button', { name: 'OK' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    await chooseBackupFile(user, file);
+    expect(await screen.findByRole('dialog', { name: "Can't restore this file" })).toBeVisible();
+  });
+});
