@@ -143,6 +143,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - `formatPct(45.4)` gives '45%' (null gives '–').
 - `formatAvg(12.34)` gives '12.3' (rounded half up, so `formatAvg(17 / 20)` is '0.9').
 - `formatMadeAttempted(5, 9)` gives '5/9'.
+- `pad2(7)` gives '07' (e.g. for clock times).
 - `formatPlayerName(player)`.
 
 ### Backups, demo data and storage
