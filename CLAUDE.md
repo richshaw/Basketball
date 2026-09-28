@@ -32,7 +32,8 @@ src/
   components/<Name>/       shared UI: <Name>.tsx, <Name>.module.css, <Name>.test.tsx
   screens/<Feature>/       one folder per screen: <Feature>Screen.tsx, .module.css, tests, screen-only parts
   data/                    the data layer: model types, Dexie database, repository, hooks, stats math,
-                           backup format, demo data (see "Data layer" below)
+                           backup format, demo data (see "Data layer" below); data/backup/ is the
+                           encrypted cloud backup (see "Cloud backup")
   lib/                     pure helpers, plus thin guarded wrappers over browser APIs: no React,
                            no DOM elements (e.g. cx, color, court, format, id, share)
   pwa/                     service worker registration and app-update state
@@ -158,8 +159,8 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
   - A round trip through JSON is exact. Settings are part of the export; `meta.lastChangeAt` isn't.
 - `data/demo.ts`: `seedDemoData({ today?, liveGame?, force?, keepSettings? })` replaces all data with "Ava" #12 and ten final "Fall 2026" games (`keepSettings` keeps the device's own settings). Their ids run from `demo-game-01` (oldest) to `demo-game-10`, and `demo-live` is the optional live game in Q3; `isDemoGameId(id)` tells them apart. It refuses to replace a device's own data (anything but earlier demo data) unless `force: true`; a fresh Playwright context starts empty, so tests don't need it.
 - `data/persistence.ts`: `requestPersistentStorage()` (called once at startup) and `getStorageStatus()` (`{ persisted, usage?, quota? }`).
-- `window.hoopStats` (`{ seedDemoData, clearAllData, exportAll }`) is installed in every build, for the console, e2e tests and screenshots.
-- Other modules (e.g. the cloud backup) may keep their own state in the `meta` table under their own keys. `clearAllData` leaves those alone.
+- `window.hoopStats` (`{ seedDemoData, clearAllData, exportAll, backup }`) is installed in every build, for the console, e2e tests and screenshots; `backup` is the cloud backup's API (below).
+- Other modules may keep their own state in the `meta` table under their own keys, as the cloud backup does (`cloudBackup`). `clearAllData` leaves those alone.
 
 ### Changing the schema
 
@@ -167,6 +168,35 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - **Any change to what a record can hold** (a new field, a new allowed value such as a stat type or period format, a looser limit) **must bump `EXPORT_SCHEMA_VERSION`** in `transfer.ts`, and `parseExportFile` must learn to read the older versions. An older app then tells the parent to update it, instead of silently dropping the new data (it strips fields it doesn't know) or calling a good backup damaged.
 - Add a Dexie index only if something queries by it: every index is rewritten on every write, and a game is written on every tap.
 - To change indexes or migrate stored data, add `this.version(n + 1)` in `db.ts`. Never edit a version that has shipped.
+
+## Cloud backup
+
+Opt-in, end-to-end-encrypted copies of all the data on the project's backup server (`server/`, API in `server/README.md`), in `src/data/backup/`. Screens use only `cloudBackup.ts` (actions) and `hooks.ts` (`useCloudBackupStatus`). The server comes from `VITE_BACKUP_API_URL` at build time (`deploy.yml` sets https://richshaw-hoop-stats.fly.dev); without it `isCloudBackupAvailable()` is false and nothing touches the network.
+
+### API (`data/backup/cloudBackup.ts`)
+
+Network calls resolve to `CloudResult<T>`: `{ ok: true, value }` or `{ ok: false, error: { kind, message, retryAfterMs? } }`. They don't throw for expected failures (no signal, a typo, a busy server): show `error.message` (written for the parent) and branch on `error.kind` if needed.
+
+- `isCloudBackupAvailable()`: a server is configured and WebCrypto works (https or localhost only).
+- `enableCloudBackup(): Promise<string>`: makes a backup code, turns backup on and starts the first upload (watch the status); resolves to the code, for the parent to write down. If backup is on already, the existing code. Rejects only when unavailable.
+- `getBackupCode()`: the code (`XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX`), or undefined when backup is off.
+- `backUpNow({ force? })`: uploads now, also when nothing changed, during a backoff or while paused (use it for "Try again"). `kind: 'shrink'` means the phone has much less data than the last backup: ask, then call again with `force: true` ("Back up anyway").
+- `fetchCloudBackup(code, { version? })`: downloads and decrypts a backup for a restore preview: `{ file, games, events, exportedAt, createdAt?, version?, size, accountId }`. Show `exportedAt`: it's inside the encrypted data, while `createdAt` is the server's word. Nothing is imported.
+- To restore: `importAll(backup.file, 'replace' | 'merge')`, then `enableCloudBackupWithCode(code, { backup })` so this phone carries on backing up under that code (passing `backup` saves a second download). The backup's size becomes the shrink guard's baseline, so a phone with much less data can't replace it by accident.
+- `listCloudVersions(code)`: `[{ version, createdAt, size }]`, newest first, for "restore an earlier backup" (then `fetchCloudBackup(code, { version })`).
+- `disableCloudBackup({ deleteCloudCopy? })`: this phone forgets the code and stops. With `deleteCloudCopy`, the server's copies are deleted first; that needs signal, and if it fails backup stays on and the error says why.
+- `useCloudBackupStatus()` (`hooks.ts`): `undefined` while loading, then `{ available, enabled, state, lastSuccessAt?, lastError?, nextAttemptAt?, pendingChanges, shrink? }`. `state` is `idle`, `backing-up`, `waiting-for-signal` (changes wait for a connection), `needs-attention` (automatic backup stopped: the server refused the code (401), the cloud copy was deleted (409) or the data is too big (413); `lastError.message` says which, and `backUpNow()` retries), `paused-shrink` (`shrink: { backedUpGames, currentGames }`) or `error` (retried at `nextAttemptAt`).
+- `parseBackupCode` / `normalizeBackupCode` (`code.ts`) check a typed code offline and throw `BackupCodeError` with a message; the functions above already do it.
+
+### How it works
+
+- **Code** (`code.ts`): 128 random bits as 28 Crockford base32 characters in groups of four; the last two are a Reed-Solomon check, so any one or two typos (or a swap) are caught before a network call. Case, spaces and dashes don't matter; O reads as 0 and I or L as 1.
+- **Keys** (`keys.ts`): HKDF-SHA256 over the code's 16 bytes (salt `hoopstats/v1/salt`; info `hoopstats/v1/account-id`, `hoopstats/v1/auth-token`, `hoopstats/v1/enc-key`) gives the account id, the bearer token and a non-extractable AES-GCM-256 key. Never change the labels: every existing backup would become unreadable.
+- **Snapshot** (`snapshot.ts`): `HSB1`, a flags byte (bit 0: gzipped), a random 12-byte IV, then AES-GCM of the (gzipped, via CompressionStream when there is one) `exportAll()` JSON, with the header and account id as additional data. Decrypting ends with `parseExportFile`. A new format needs a new magic or flag, which older apps report as "update the app".
+- **Scheduler** (`engine.ts`, timings in `policy.ts`, started once by `main.tsx`): checks 3 s after startup, on `online`, when the app becomes visible and after writes (`subscribeToChanges`). It uploads 20 s after the last change but no more than 60 s after the first, at most once a minute while a game is live, 2 s after a game ends, and at once when the app is hidden with changes waiting. One upload at a time. It reads `lastChangeAt` before `exportAll()` and skips when nothing changed since the last upload. Offline, it waits for `online`. Failures back off 1, 2, 5, 15, then every 30 min (longer if the server's Retry-After says so); a connection coming back retries network failures at once.
+- **Shrink guard** (`isMuchSmaller` in `policy.ts`): it never uploads on its own a snapshot with no games over a backup that had some, one that lost at least 3 games and at least half of them, or one with no stats where there were some. It pauses (`paused-shrink`) until `backUpNow({ force: true })`, or until the data grows back (after a restore, say).
+- **State** (`state.ts`): the `meta` record `cloudBackup`, one transaction per write, patched with the usual rule (`undefined` keeps, `null` clears): the code, `enabledAt`, `lastSuccessAt`, `lastUploadedChangeAt`, the uploaded game and stat counts, `lastVersion`, `lastError`, `failures`, `nextAttemptAt`, `paused` and `shrink`. It's never in `exportAll()` or a snapshot and never bumps `lastChangeAt`, and **`clearAllData()` keeps it** on purpose: an erased phone stays on the same code, and the shrink guard stops it replacing the good cloud copy. Only `disableCloudBackup()` removes it.
+- A code is meant for one phone at a time: two phones backing up under the same code take turns being "latest" (older versions stay on the server: its last 20 uploads plus one a day).
 
 ## Testing
 
@@ -176,6 +206,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - jsdom can't open a `<dialog>`, so `src/test/dialogPolyfill.ts` stands in for `showModal`, `close` and Escape (like browsers, it marks the page outside the top modal `inert` and fires `close` from a queued task); `e2e/ui-kit.spec.ts` checks sheets in a real browser. Closing a sheet or a toast finishes asynchronously: wait with `waitFor` or a `findBy` query.
 - The toast area is `getByRole('status', { name: 'Notifications' })` and is always on screen, so give your own status messages a name or query them by text.
 - End-to-end tests cover key flows. They build the app and serve it under `/Basketball/`, like GitHub Pages. For data, use `e2e/support/data.ts`: `await seedDemoData(page)` after `page.goto('./')`, then navigate (e.g. to `paths.gameReport(demoGameId(10))`).
+- Cloud backup tests use `src/test/fakeBackupServer.ts` (an in-memory copy of the server's API, which e2e specs route into the page with `routeFakeBackupServer` from `e2e/support/backup.ts`) and `src/test/backupHarness.ts` (`createEngineHarness()`: an engine with a manual clock, a fake connection and visibility, and `notify()` for data changes). `src/data/backup/server.node.test.ts` runs the client against the real `server/` app in process, and the same contract against the fake; it needs `npm ci --prefix server` (it's skipped with a note without it, except in CI).
 - Add each new screen to `e2e/screenshots.spec.ts` (one line), run `npm run screenshots`, and look at the PNGs in light and dark mode.
 - @playwright/test is pinned to exactly 1.56.1 to match the preinstalled Chromium. Don't run `playwright install` in the agent environment; CI installs its own browser.
 
@@ -191,4 +222,6 @@ npm run lint && npm run format:check && npm run typecheck && npm test && npm run
 - `npm run e2e` builds and serves this checkout on `E2E_PORT` (default 4173) and fails if the port is taken: parallel worktrees must use distinct `E2E_PORT` values.
 - Build output and `public/` files are precached only if their extension is in `workbox.globPatterns` (`vite.config.ts`). Add new file types there.
 - An app update reloads only the window where the user tapped Update (`src/pwa/updates.ts`). Nothing else may reload the page.
+- The e2e build's backup server is `https://backup.hoop-stats.test` (`playwright.config.ts`): nothing answers there unless a spec routes it, so no test can reach the real server. `window.hoopStats.backup.setBackupTimingsForTests({ debounceMs: 300 })` shortens the scheduler's waits.
+- To try cloud backup locally, run the server (`cd server && ALLOWED_ORIGINS=http://localhost:5173 npm run dev`) and the app with `VITE_BACKUP_API_URL=http://localhost:8080 npm run dev`.
 - In Vitest, `react-router/dom` is aliased to `react-router` (see `vite.config.ts`) so tests never load two copies of the router.
