@@ -69,6 +69,12 @@ describe.each(themes)('%s theme tokens meet WCAG AA', (theme) => {
     ).toBeGreaterThanOrEqual(AA_UI_CONTRAST);
   });
 
+  it('the selected segment outline against the track', () => {
+    expect(
+      contrastRatio(color(theme, '--color-border-strong'), color(theme, '--color-surface-2')),
+    ).toBeGreaterThanOrEqual(AA_UI_CONTRAST);
+  });
+
   it('text on the selected segment', () => {
     expect(
       contrastRatio(color(theme, '--color-text'), color(theme, '--color-thumb')),

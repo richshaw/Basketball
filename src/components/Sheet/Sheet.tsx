@@ -1,9 +1,11 @@
 import {
   useEffect,
+  useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
@@ -13,6 +15,7 @@ import {
 import { CloseIcon } from '@/components/Icons/Icons';
 import { cx } from '@/lib/cx';
 import { registerOpenSheet } from './sheetStack';
+import { useViewportInsets } from './useViewportInsets';
 import styles from './Sheet.module.css';
 
 export interface SheetProps {
@@ -23,6 +26,11 @@ export interface SheetProps {
    * Set `open` to false in response.
    */
   onClose: () => void;
+  /**
+   * Called once the sheet has finished closing (after its exit animation), e.g. to
+   * open the next sheet only when this one is gone.
+   */
+  onClosed?: () => void;
   /** Heading at the top; also the dialog's accessible name. */
   title: string;
   /** Short text under the title; also the dialog's accessible description. */
@@ -41,7 +49,11 @@ export interface SheetProps {
   hideCloseButton?: boolean;
   /** Accessible name of the close button. */
   closeLabel?: string;
-  /** Element to focus when the sheet opens. By default the first focusable element gets focus. */
+  /**
+   * Element to focus when the sheet opens. By default focus starts on the close
+   * button, or on the title when there is none; never on a text field, which would
+   * open the iPhone keyboard.
+   */
   initialFocusRef?: RefObject<HTMLElement | null>;
   /** Use `alertdialog` for a confirmation that interrupts (ConfirmDialog does). */
   role?: 'dialog' | 'alertdialog';
@@ -49,10 +61,13 @@ export interface SheetProps {
   className?: string;
 }
 
-/** `closing` keeps the sheet on screen while the exit animation plays. */
+/**
+ * `closing`: the dialog has already closed (focus is back and the page works again)
+ * but stays on screen, swallowing taps, while its exit animation plays.
+ */
 type Phase = 'closed' | 'open' | 'closing';
 
-/** Closes the sheet even if an exit animation never reports that it finished. */
+/** Finishes closing even if an exit animation never reports that it ended. */
 const EXIT_TIMEOUT_MS = 600;
 
 /** The finite animations currently running on these elements (e.g. the exit animation). */
@@ -67,12 +82,14 @@ function runningAnimations(...elements: Array<Element | null>): Animation[] {
 /**
  * Bottom sheet built on the native <dialog> element: `showModal()` keeps focus
  * inside and makes the page behind inert. It slides up from the bottom (a fade
- * with reduced motion), pads the home-indicator area and locks page scrolling
- * while open. Closing returns focus to whatever opened it.
+ * with reduced motion), pads the home-indicator area, rides above the on-screen
+ * keyboard, and locks page scrolling while open. Closing returns focus to whatever
+ * opened it.
  */
 export function Sheet({
   open,
   onClose,
+  onClosed,
   title,
   description,
   children,
@@ -101,6 +118,8 @@ export function Sheet({
   const titleId = useId();
   const descriptionId = useId();
   const showCloseButton = dismissible && !hideCloseButton;
+  const insets = useViewportInsets(phase === 'open');
+  const notifyClosed = useEffectEvent(() => onClosed?.());
 
   // Open: show as a modal. The browser moves focus inside and makes the page inert.
   useLayoutEffect(() => {
@@ -124,32 +143,34 @@ export function Sheet({
     if (start && document.activeElement !== start) start.focus();
   }, [phase, reopenRequests, initialFocusRef, showCloseButton]);
 
-  // While open: lock page scrolling and let toasts show above the sheet.
+  // While open: lock page scrolling and let toasts show inside the sheet.
   useLayoutEffect(() => {
     const toastOutlet = toastOutletRef.current;
     if (phase !== 'open' || !toastOutlet) return;
     return registerOpenSheet(toastOutlet);
   }, [phase]);
 
-  // Closing: wait for the exit animation, then close the dialog and restore focus.
-  useEffect(() => {
+  // Closing: close the dialog right away, so focus returns and the page (and any toast
+  // shown now) works again, then keep it on screen until the exit animation ends.
+  useLayoutEffect(() => {
     const dialog = dialogRef.current;
     if (phase !== 'closing' || !dialog) return;
+
+    if (dialog.open) dialog.close();
+    const returnFocusTo = returnFocusRef.current;
+    returnFocusRef.current = null;
+    const focused = document.activeElement;
+    const focusWasLost = !focused || focused === document.body || dialog.contains(focused);
+    if (returnFocusTo?.isConnected && focusWasLost) returnFocusTo.focus({ preventScroll: true });
 
     let cancelled = false;
     const finish = () => {
       if (cancelled) return;
       cancelled = true;
-      dialog.close();
-      const returnFocusTo = returnFocusRef.current;
-      returnFocusRef.current = null;
-      const focused = document.activeElement;
-      const focusWasLost = !focused || focused === document.body || dialog.contains(focused);
-      if (returnFocusTo?.isConnected && focusWasLost) returnFocusTo.focus({ preventScroll: true });
       setPhase('closed');
+      notifyClosed();
     };
-
-    const animations = dialog.open ? runningAnimations(dialog, panelRef.current) : [];
+    const animations = runningAnimations(dialog, panelRef.current);
     Promise.all(animations.map((animation) => animation.finished)).then(finish, finish);
     const timeout = window.setTimeout(finish, EXIT_TIMEOUT_MS);
     return () => {
@@ -158,17 +179,38 @@ export function Sheet({
     };
   }, [phase]);
 
+  // When the keyboard moves the sheet, keep the focused field in view.
+  useEffect(() => {
+    if (insets.bottom === 0) return;
+    const focused = document.activeElement;
+    if (
+      focused instanceof HTMLElement &&
+      panelRef.current?.contains(focused) &&
+      typeof focused.scrollIntoView === 'function'
+    ) {
+      focused.scrollIntoView({ block: 'nearest' });
+    }
+  }, [insets.top, insets.bottom]);
+
   if (phase === 'closed') return null;
+  const closing = phase === 'closing';
+
+  // `cancel` and `close` don't bubble in the DOM, but React passes them up to ancestor
+  // handlers: ignore the ones that belong to a dialog nested inside this sheet.
 
   // Escape (or another close request): `open` decides, so never let the browser close it.
   const handleCancel = (event: SyntheticEvent<HTMLDialogElement>) => {
+    if (event.target !== event.currentTarget) return;
     event.preventDefault();
     if (dismissible && phase === 'open') onClose();
   };
 
-  // The browser closed the dialog by itself, e.g. after Escape twice in a row.
-  const handleClose = () => {
-    if (phase !== 'open') return;
+  // The browser closed the dialog by itself, e.g. after Escape twice in a row. ("close"
+  // arrives from a queued task, so ignore one that finds the dialog open again.)
+  const handleClose = (event: SyntheticEvent<HTMLDialogElement>) => {
+    if (event.target !== event.currentTarget || event.currentTarget.open || phase !== 'open') {
+      return;
+    }
     if (dismissible) onClose();
     setReopenRequests((count) => count + 1);
   };
@@ -184,22 +226,29 @@ export function Sheet({
     if (tappedBackdrop && dismissible && phase === 'open') onClose();
   };
 
+  // Lifts the panel above the on-screen keyboard (see useViewportInsets).
+  const keyboardInsets = {
+    '--keyboard-inset': `${insets.bottom}px`,
+    '--viewport-inset-top': `${insets.top}px`,
+  } as CSSProperties;
+
   return (
     <dialog
       ref={dialogRef}
       className={styles.dialog}
+      style={keyboardInsets}
       role={role === 'alertdialog' ? 'alertdialog' : undefined}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
-      data-closing={phase === 'closing' ? '' : undefined}
+      data-closing={closing ? '' : undefined}
       onCancel={handleCancel}
       onClose={handleClose}
       onPointerDown={handlePointerDown}
       onClick={handleClick}
     >
-      {/* Inert while closing, so a second tap on an action can't fire it twice. */}
-      <div ref={panelRef} className={cx(styles.panel, className)} inert={phase === 'closing'}>
-        <div className={styles.header}>
+      <div ref={panelRef} className={cx(styles.panel, className)}>
+        {/* The content goes inert while closing, so a second tap can't fire an action twice. */}
+        <div className={styles.header} inert={closing}>
           <div className={styles.headings}>
             {/*
               Focusable (from script only) just when it's the starting point: with no close
@@ -232,13 +281,19 @@ export function Sheet({
             </button>
           ) : null}
         </div>
+        {/* Toasts shown while this sheet is on top appear here, under the header. */}
+        <div ref={toastOutletRef} className={styles.toastOutlet} />
         {children === undefined || children === null ? null : (
-          <div className={styles.body}>{children}</div>
+          <div className={styles.body} inert={closing}>
+            {children}
+          </div>
         )}
-        {footer ? <div className={styles.footer}>{footer}</div> : null}
+        {footer ? (
+          <div className={styles.footer} inert={closing}>
+            {footer}
+          </div>
+        ) : null}
       </div>
-      {/* Toasts shown while this sheet is on top render here (see ToastProvider). */}
-      <div ref={toastOutletRef} />
     </dialog>
   );
 }

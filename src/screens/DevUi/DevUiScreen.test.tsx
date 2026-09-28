@@ -1,13 +1,24 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
 
 const notifications = () => screen.getByRole('status', { name: 'Notifications' });
 
+// The gallery loads on demand; load its module once up front so each render is quick.
+beforeAll(async () => {
+  await import('./DevUiScreen');
+});
+
+async function openGallery() {
+  const view = renderRoute(paths.devUi);
+  await screen.findByRole('heading', { level: 1, name: 'UI kit' });
+  return view;
+}
+
 describe('DevUiScreen', () => {
-  it('shows a section for each shared component', () => {
-    renderRoute(paths.devUi);
+  it('shows a section for each shared component', async () => {
+    await openGallery();
     for (const title of [
       'SegmentedControl',
       'TextField and TextArea',
@@ -25,7 +36,7 @@ describe('DevUiScreen', () => {
   });
 
   it('opens a sheet whose Save closes it and shows a toast', async () => {
-    const { user } = renderRoute(paths.devUi);
+    const { user } = await openGallery();
     await user.click(screen.getByRole('button', { name: 'Edit game' }));
     const sheet = screen.getByRole('dialog', { name: 'Edit game' });
 
@@ -37,7 +48,7 @@ describe('DevUiScreen', () => {
   });
 
   it('asks before deleting and reports the answer', async () => {
-    const { user } = renderRoute(paths.devUi);
+    const { user } = await openGallery();
     await user.click(screen.getByRole('button', { name: 'Delete game' }));
     const dialog = screen.getByRole('alertdialog', { name: 'Delete this game?' });
 
@@ -46,10 +57,32 @@ describe('DevUiScreen', () => {
     expect(notifications()).toHaveTextContent('Game deleted');
   });
 
-  it('shows an undo toast', async () => {
-    const { user } = renderRoute(paths.devUi);
+  it('confirms inside a sheet without closing the sheet on Cancel', async () => {
+    const { user } = await openGallery();
+    await user.click(screen.getByRole('button', { name: 'Edit game' }));
+    const sheet = screen.getByRole('dialog', { name: 'Edit game' });
+
+    await user.click(within(sheet).getByRole('button', { name: 'Delete…' }));
+    const confirmDelete = () => screen.getByRole('alertdialog', { name: 'Delete this game?' });
+    await user.click(within(confirmDelete()).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    });
+    expect(sheet).toBeInTheDocument();
+
+    await user.click(within(sheet).getByRole('button', { name: 'Delete…' }));
+    await user.click(within(confirmDelete()).getByRole('button', { name: 'Delete game' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(notifications()).toHaveTextContent('Game deleted');
+  });
+
+  it('shows an undo toast whose action runs once', async () => {
+    const { user } = await openGallery();
     await user.click(screen.getByRole('button', { name: '2PT made' }));
     await user.click(within(notifications()).getByRole('button', { name: 'Undo' }));
-    expect(notifications()).toHaveTextContent('Undone: 2PT made');
+    expect(screen.getByText('Undos: 1')).toBeInTheDocument();
+    expect(await within(notifications()).findByText('Undone: 2PT made')).toBeInTheDocument();
   });
 });

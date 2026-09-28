@@ -1,9 +1,11 @@
 import { useId, useState, type ReactNode } from 'react';
 import { Badge } from '@/components/Badge/Badge';
 import { Button } from '@/components/Button/Button';
+import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
+import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { SegmentedControl } from '@/components/SegmentedControl/SegmentedControl';
 import { Sheet } from '@/components/Sheet/Sheet';
@@ -48,6 +50,8 @@ export function DevUiScreen() {
   const [openSheet, setOpenSheet] = useState<OpenSheet>(null);
   const [opponent, setOpponent] = useState('Tigers');
   const [lastAnswer, setLastAnswer] = useState('none yet');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [undos, setUndos] = useState(0);
   const periodsLabelId = useId();
   const closeSheet = () => setOpenSheet(null);
 
@@ -55,7 +59,10 @@ export function DevUiScreen() {
     toast.show({
       message: '2PT made',
       actionLabel: 'Undo',
-      onAction: () => toast.show({ message: 'Undone: 2PT made' }),
+      onAction: () => {
+        setUndos((count) => count + 1);
+        toast.show({ message: 'Undone: 2PT made' });
+      },
     });
 
   const deleteGame = async () => {
@@ -69,14 +76,25 @@ export function DevUiScreen() {
     if (confirmed) toast.show({ message: 'Game deleted' });
   };
 
-  const endGame = async () => {
-    const confirmed = await confirm({
-      title: 'End the game?',
-      message: 'You can still edit its stats afterwards.',
-      confirmLabel: 'End game',
-      cancelLabel: 'Keep playing',
+  // Two questions in a row: the second opens only once the first has gone.
+  const archiveSeason = async () => {
+    const archived = await confirm({
+      title: 'Archive this season?',
+      message: 'Its games move to Past seasons.',
+      confirmLabel: 'Archive',
+      cancelLabel: 'Not now',
     });
-    setLastAnswer(confirmed ? 'ended' : 'kept playing');
+    if (!archived) {
+      setLastAnswer('kept the season');
+      return;
+    }
+    const deleted = await confirm({
+      title: 'Delete its practice games too?',
+      message: 'They will be gone for good.',
+      confirmLabel: 'Delete practices',
+      destructive: true,
+    });
+    setLastAnswer(deleted ? 'archived, deleted practices' : 'archived, kept practices');
   };
 
   const share = async () => {
@@ -87,7 +105,7 @@ export function DevUiScreen() {
   return (
     <main>
       <ScreenHeader title="UI kit" backTo={paths.home} backLabel="Games" />
-      <div className={styles.body}>
+      <ScreenBody className={styles.body}>
         <p className={styles.note}>
           Every shared component in its main states. Nothing links here; open <code>#/dev/ui</code>{' '}
           directly.
@@ -235,8 +253,8 @@ export function DevUiScreen() {
             <Button variant="danger" onClick={deleteGame}>
               Delete game
             </Button>
-            <Button variant="secondary" onClick={endGame}>
-              End game
+            <Button variant="secondary" onClick={archiveSeason}>
+              Archive season
             </Button>
           </div>
           <p className={styles.note} aria-live="polite">
@@ -259,10 +277,17 @@ export function DevUiScreen() {
             >
               Long toast
             </Button>
+            <Button
+              variant="secondary"
+              onClick={() => toast.show({ message: 'Saved', placement: 'top' })}
+            >
+              Top toast
+            </Button>
             <Button variant="secondary" onClick={share}>
               Share summary
             </Button>
           </div>
+          <p className={styles.note}>Undos: {undos}</p>
         </Section>
 
         <Section title="Button">
@@ -283,7 +308,7 @@ export function DevUiScreen() {
         >
           <CourtDemo />
         </Section>
-      </div>
+      </ScreenBody>
 
       <Sheet
         open={openSheet === 'editGame'}
@@ -316,7 +341,24 @@ export function DevUiScreen() {
             value={venue}
             onChange={setVenue}
           />
+          <Button variant="ghost" onClick={() => setConfirmingDelete(true)}>
+            Delete…
+          </Button>
         </div>
+        {/* A dialog inside a sheet: closing it must leave the sheet open. */}
+        <ConfirmDialog
+          open={confirmingDelete}
+          title="Delete this game?"
+          message="Its stats will be gone for good."
+          confirmLabel="Delete game"
+          destructive
+          onConfirm={() => {
+            setConfirmingDelete(false);
+            closeSheet();
+            toast.show({ message: 'Game deleted' });
+          }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
       </Sheet>
 
       <Sheet
@@ -343,6 +385,12 @@ export function DevUiScreen() {
       </Sheet>
 
       <Sheet open={openSheet === 'opponents'} onClose={closeSheet} title="Pick opponent">
+        <Button
+          variant="ghost"
+          onClick={() => toast.show({ message: `Copied ${demo.manyOpponents.length} teams` })}
+        >
+          Copy list
+        </Button>
         <GroupedList aria-label="Opponents">
           {demo.manyOpponents.map((team) => (
             <ListRow

@@ -1,0 +1,80 @@
+name: Deploy backup server
+
+on:
+  # Deploy only after "Server CI" passed for a push to main. That workflow runs only when
+  # server/** (or its own file) changes, so other pushes don't redeploy.
+  workflow_run:
+    workflows: ['Server CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; never cancel a deploy that is already running.
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Fly.io
+    # A manual run, or a green CI run for a push to this repository's main branch. Never a pull
+    # request or a fork: their code must not run with the deploy token.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      # Re-running an old "Server CI" run on main must not redeploy that old commit: only the
+      # commit that is still the tip of main is deployed (the newer one deploys after its own CI).
+      - name: Check the commit is still the tip of main
+        id: tip
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$tip" != "$HEAD_SHA" ]; then
+            echo "::notice title=Deploy skipped::$HEAD_SHA is no longer the tip of main ($tip). The newer commit deploys after its own CI run."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Until the owner completes the one-time Fly.io setup (server/README.md), there is no
+      # FLY_API_TOKEN secret: skip the deploy with a notice instead of failing the run.
+      - name: Check for FLY_API_TOKEN
+        id: fly
+        if: steps.tip.outputs.stale != 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::notice title=Backup server not deployed::The FLY_API_TOKEN secret is not set yet. Follow the one-time Fly.io setup in server/README.md, then re-run this workflow."
+            echo "Deploy skipped: FLY_API_TOKEN is not set. See the one-time Fly.io setup in server/README.md." >> "$GITHUB_STEP_SUMMARY"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.fly.outputs.configured == 'true'
+        with:
+          # Exactly the commit that passed CI (for a manual run: the selected branch).
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+        if: steps.fly.outputs.configured == 'true'
+
+      - name: Deploy
+        if: steps.fly.outputs.configured == 'true'
+        working-directory: server
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --ha=false

@@ -2,7 +2,6 @@
 .viewport {
   position: fixed;
   right: 0;
-  bottom: calc(var(--overlay-inset-bottom) + var(--space-3));
   left: 0;
   z-index: var(--z-toast);
   display: flex;
@@ -11,10 +10,20 @@
   pointer-events: none;
 }
 
-/* Over an open sheet the bottom holds the sheet's buttons, so use the top instead. */
+/* Above the home indicator, and the tab bar and update banner on tab screens. */
+.bottom {
+  bottom: calc(var(--overlay-inset-bottom) + var(--space-3));
+}
+
+/* Under the screen header's back-button bar, clear of a screen's bottom controls. */
+.top {
+  top: calc(var(--safe-top) + var(--header-bar-height) + var(--space-2));
+}
+
+/* Inside an open sheet: hangs from the outlet under the sheet's header (Sheet.module.css). */
 .overSheet {
-  top: calc(var(--safe-top) + var(--space-3));
-  bottom: auto;
+  position: absolute;
+  top: var(--space-2);
 }
 
 .toast {
@@ -33,6 +42,14 @@
 
 .withAction {
   padding-inline-end: var(--space-1);
+}
+
+/*
+ * On its way out: fades while its action button still swallows taps (ToastProvider.tsx).
+ * (Two classes, so the reduced-motion entrance below can't override it.)
+ */
+.toast.leaving {
+  animation: leave var(--duration-slow) var(--ease-in) forwards;
 }
 
 .message {
@@ -62,12 +79,12 @@
 /* The usual blue ring is hard to see on the inverse fill. */
 .action:focus-visible {
   outline-color: var(--color-on-inverse);
-  outline-offset: -3px;
+  outline-offset: calc(-1 * var(--focus-ring-width));
 }
 
 @media (prefers-reduced-motion: reduce) {
   .toast {
-    animation-name: fade;
+    animation-name: fadeIn;
   }
 }
 
@@ -78,8 +95,14 @@
   }
 }
 
-@keyframes fade {
+@keyframes fadeIn {
   from {
+    opacity: 0;
+  }
+}
+
+@keyframes leave {
+  to {
     opacity: 0;
   }
 }
