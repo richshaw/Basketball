@@ -83,10 +83,12 @@
 
 /*
  * This game's count, tucked into the top corner (clear of a centered label even on
- * the smallest iPhone): the button's fill color on its text color.
+ * the smallest iPhone): the button's fill color on its text color. The parent can set
+ * a smaller size for shorter buttons (--stat-count-size, --stat-count-font-size), so
+ * it stays clear of a two-line label there too.
  */
 .count {
-  --count-size: calc(var(--space-5) + var(--space-1) / 2);
+  --count-size: var(--stat-count-size, calc(var(--space-5) + var(--space-1) / 2));
 
   position: absolute;
   top: calc(var(--space-1) / 2);
@@ -97,7 +99,7 @@
   height: var(--count-size);
   padding-inline: var(--space-1);
   border-radius: var(--radius-full);
-  font-size: var(--font-size-sm);
+  font-size: var(--stat-count-font-size, var(--font-size-sm));
   font-weight: var(--font-weight-heavy);
   line-height: 1;
 }

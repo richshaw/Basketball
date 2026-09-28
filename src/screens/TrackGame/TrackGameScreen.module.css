@@ -54,6 +54,12 @@
  */
 .withCourt {
   --stat-grid-min-height: calc(4 * var(--game-button-min-height) + 3 * var(--space-2));
+  /*
+   * Shorter buttons: each count shrinks with its button (cqb: its height), so it stays
+   * clear of a long first word ("Charge"). Full size on buttons 88px and up.
+   */
+  --stat-count-size: min(calc(var(--space-5) + var(--space-1) / 2), 25cqb);
+  --stat-count-font-size: min(var(--font-size-sm), 17cqb);
 }
 
 /* Short screens (iPhone SE): tighter gaps and slightly shorter buttons leave the court room. */
