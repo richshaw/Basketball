@@ -49,6 +49,7 @@ describe('DevUiScreen', () => {
     const { user } = renderRoute(paths.devUi);
     await user.click(screen.getByRole('button', { name: '2PT made' }));
     await user.click(within(notifications()).getByRole('button', { name: 'Undo' }));
-    expect(notifications()).toHaveTextContent('Undone: 2PT made');
+    // The confirmation follows once the undone toast has faded (its tap guard).
+    expect(await within(notifications()).findByText('Undone: 2PT made')).toBeInTheDocument();
   });
 });
