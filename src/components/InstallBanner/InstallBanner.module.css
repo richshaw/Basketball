@@ -24,15 +24,15 @@
 }
 
 .dismissIcon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   stroke-width: 2.5;
 }
 
 .appIcon {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
+  width: var(--app-icon-size);
+  height: var(--app-icon-size);
 }
 
 .message {

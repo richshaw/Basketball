@@ -1,6 +1,6 @@
-/* A bigger icon slot for the avatar (GroupedList sizes its row icons with --icon-size). */
+/* A bigger icon slot for the avatar (GroupedList sizes its row icons with --list-icon-size). */
 .item {
-  --icon-size: 52px;
+  --list-icon-size: var(--avatar-size);
 }
 
 .avatar {

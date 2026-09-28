@@ -1,7 +1,7 @@
 .switch {
-  --track-width: 51px;
-  --track-height: 31px;
-  --thumb-inset: 2px;
+  --track-width: var(--switch-track-width);
+  --track-height: var(--switch-track-height);
+  --thumb-inset: var(--switch-thumb-inset);
   --thumb-size: calc(var(--track-height) - 2 * var(--thumb-inset));
 
   display: inline-grid;
