@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
-const PORT = 4173;
+// Each worktree running e2e in parallel needs its own port: E2E_PORT=4174 npm run e2e.
+const PORT = Number(process.env.E2E_PORT ?? 4173);
 // Serve the build under a sub-path, like GitHub Pages does (richshaw.github.io/Basketball/),
 // so any absolute URL that would break there fails here first.
 const BASE_PATH = '/Basketball/';
@@ -35,7 +36,8 @@ export default defineConfig({
   webServer: {
     command: `npm run build && npm run preview -- --port ${PORT} --strictPort --base ${BASE_PATH}`,
     url: baseURL,
-    reuseExistingServer: !process.env.CI,
+    // Always test this checkout's fresh build, never a server someone else left running.
+    reuseExistingServer: false,
     timeout: 180_000,
   },
 });
