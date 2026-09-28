@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import {
   appUrl,
@@ -70,9 +70,8 @@ test('shows the season, switches the chart and opens a game from the log', async
   await expectRoute(page, paths.gameReport(demoGameId(10)));
 });
 
-test('a long season name leaves the totals in view', async ({ page }) => {
-  const season = 'Westside Warriors 12U Spring 2026';
-  await seedDemoData(page);
+/** Moves all ten demo games into `season`, then opens the Stats screen afresh. */
+async function showSeason(page: Page, season: string) {
   await patchGames(
     page,
     Object.fromEntries(
@@ -82,6 +81,14 @@ test('a long season name leaves the totals in view', async ({ page }) => {
   await page.goto('about:blank');
   await page.goto(appUrl(paths.stats));
   await expect(page.getByText(`${season} · 10 games`).first()).toBeVisible();
+}
+
+test('a long season name leaves the totals in view, and never widens the page', async ({
+  page,
+}) => {
+  const season = 'Westside Warriors 12U Spring 2026';
+  await seedDemoData(page);
+  await showSeason(page, season);
 
   const totals = page.getByRole('table', { name: 'Totals' });
   await totals.scrollIntoViewIfNeeded();
@@ -90,6 +97,12 @@ test('a long season name leaves the totals in view', async ({ page }) => {
   const points = await totals.getByRole('columnheader', { name: 'Points' }).boundingBox();
   expect(label?.width).toBeLessThan(IPHONE_VIEWPORT.width / 2);
   expect((points?.x ?? Infinity) + (points?.width ?? 0)).toBeLessThanOrEqual(IPHONE_VIEWPORT.width);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    IPHONE_VIEWPORT.width,
+  );
+
+  // As long as a name can be (60 characters), with no space to wrap at: it wraps anyway.
+  await showSeason(page, 'W'.repeat(60));
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     IPHONE_VIEWPORT.width,
   );

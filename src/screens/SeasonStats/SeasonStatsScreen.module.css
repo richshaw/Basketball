@@ -74,6 +74,8 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-tight);
+  /* A long season name wraps instead of widening the page. */
+  overflow-wrap: anywhere;
 }
 
 .record {
