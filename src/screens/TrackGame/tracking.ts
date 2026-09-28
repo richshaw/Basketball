@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the live game screen: no React, no DOM, no database.
  */
-import { regulationPeriods, STAT_DEFS, type StatDef } from '@/data/stats';
+import { regulationPeriods, statDefOf, type StatDef } from '@/data/stats';
 import { MAX_PERIOD, MAX_SCORE, STAT_TYPES, type PeriodFormat, type StatType } from '@/data/types';
 import { pad2 } from '@/lib/format';
 
@@ -17,19 +17,14 @@ export function countByType(events: readonly { type: StatType }[]): StatCounts {
   return counts;
 }
 
-/** A stat's definition, or undefined for a type this app doesn't know (e.g. from a newer one). */
-function statDef(type: StatType): StatDef | undefined {
-  return Object.hasOwn(STAT_DEFS, type) ? STAT_DEFS[type] : undefined;
-}
-
 /** The label of a stat type, e.g. '3PT Made' (the type itself if it's unknown). */
 export function statLabel(type: StatType): string {
-  return statDef(type)?.label ?? type;
+  return statDefOf(type)?.label ?? type;
 }
 
 /** A stat's color: made, miss or other ('other' for a type this app doesn't know). */
 export function statKind(type: StatType): StatDef['kind'] {
-  return statDef(type)?.kind ?? 'other';
+  return statDefOf(type)?.kind ?? 'other';
 }
 
 /** Local clock time of a timestamp as 'h:mm:ss' (12-hour, no AM/PM), e.g. '7:42:05'. */

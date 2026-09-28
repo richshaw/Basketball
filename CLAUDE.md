@@ -131,7 +131,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 
 ### Stats math (`data/stats.ts`, pure)
 
-- `STAT_DEFS[type]` is the single source of truth for buttons, the event log and reports. It has `label` ('2PT Made', 'Off Reb', 'Charge Taken'), `shortLabel` ('Made 2', 'OReb'), `kind` ('made' | 'miss' | 'other', for colors), `points` and `shot`. `STAT_TYPES` gives the order.
+- `STAT_DEFS[type]` is the single source of truth for buttons, the event log and reports. It has `label` ('2PT Made', 'Off Reb', 'Charge Taken'), `shortLabel` ('Made 2', 'OReb'), `kind` ('made' | 'miss' | 'other', for colors), `points` and `shot`. `STAT_TYPES` gives the order. For a type read from stored data, use `statDefOf(type)`: it's undefined for a type this version doesn't know (e.g. from a newer app).
 - `computeStatLine(events)`: a `StatLine` with `pts, fgm, fga, fg2m, fg2a, fg3m, fg3a, ftm, fta, oreb, dreb, reb, ast, stl, blk, tov, pf, deflections, charges`. FG counts 2PT plus 3PT, never free throws. `emptyStatLine()` and `addStatLines(a, b)` round it out.
 - `statLinesByPeriod(events, game)`: `[{ period, label, line }]` for every period through the current one, empty periods included.
 - `percentage(made, attempted)`: 0-100, or null with no attempts. Show it with `formatPct`. It's exact at a true .5 (23/40 is 57.5, shown as 58%), so don't compute `(made / attempted) * 100` yourself.

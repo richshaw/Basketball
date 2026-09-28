@@ -2,7 +2,7 @@
  * The play-by-play list as plain data: a game's stats grouped by period, with the
  * points each play and each period added. Pure: no React, no database.
  */
-import { periodLabel, regulationPeriods, STAT_DEFS, type StatDef } from '@/data/stats';
+import { periodLabel, regulationPeriods, statDefOf, type StatDef } from '@/data/stats';
 import type { PeriodFormat, StatEvent } from '@/data/types';
 
 export interface Play {
@@ -28,14 +28,6 @@ export interface PeriodPlays {
 
 /** A game with this many plays or fewer shows every period's plays at first. */
 export const EXPAND_ALL_UP_TO = 15;
-
-/**
- * The definition of a stat type, or undefined for one this version doesn't know
- * (e.g. data from a newer app), which reports leave out, as `computeStatLine` does.
- */
-export function statDefOf(type: string): StatDef | undefined {
-  return Object.hasOwn(STAT_DEFS, type) ? STAT_DEFS[type as keyof typeof STAT_DEFS] : undefined;
-}
 
 function ordinal(n: number): string {
   const lastTwo = n % 100;
