@@ -1,0 +1,23 @@
+/* Right side of a row: the result on top, the key numbers under it. */
+.value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.badge {
+  font-variant-numeric: tabular-nums;
+}
+
+.keyLine {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+  white-space: nowrap;
+}
+
+.number {
+  color: var(--color-text);
+  font-weight: var(--font-weight-bold);
+}
