@@ -4,7 +4,9 @@ import { appUrl, emulateIPhoneSafeArea, expectRoute, screenHeading } from './sup
 import { seedDemoData } from './support/data';
 
 // Screenshots of the Games tab and the New game form in their main states
-// (`npm run screenshots`). Same conventions as screenshots.spec.ts.
+// (`npm run screenshots`). Same conventions as screenshots.spec.ts, which already
+// captures both screens on a fresh app (`games`: the first run, `new-game`: the
+// empty form), so those states aren't repeated here.
 
 interface Screen {
   /** File name stem: saved as `<name>-light.png` and `<name>-dark.png`. */
@@ -19,6 +21,8 @@ interface Screen {
   viewportOnly?: boolean;
 }
 
+const TRACK_URL = /#\/games\/[^/]+\/track$/;
+
 /** First run on Games: name the player. */
 async function setUpPlayer(page: Page) {
   const setup = page.getByRole('region', { name: 'Who are you tracking?' });
@@ -28,14 +32,19 @@ async function setUpPlayer(page: Page) {
   await expect(setup).toHaveCount(0);
 }
 
-/** Starts a game through the form, in another season than the demo games. */
+/** Starts a game through the form. */
+async function startGame(page: Page, opponent: string, season?: string) {
+  await page.goto(appUrl(paths.newGame));
+  await page.getByLabel('Opponent').fill(opponent);
+  if (season) await page.getByLabel('Season or team').fill(season);
+  await page.getByRole('button', { name: 'Start game' }).tap();
+  await expect(page).toHaveURL(TRACK_URL);
+}
+
+/** The demo season, plus a live game in another season. */
 async function startWinterGame(page: Page) {
   await seedDemoData(page);
-  await page.goto(appUrl(paths.newGame));
-  await page.getByLabel('Opponent').fill('Central');
-  await page.getByLabel('Season or team').fill('Winter 2027');
-  await page.getByRole('button', { name: 'Start game' }).tap();
-  await expect(page).toHaveURL(/#\/games\/[^/]+\/track$/);
+  await startGame(page, 'Central', 'Winter 2027');
 }
 
 async function fillNewGame(page: Page) {
@@ -49,7 +58,6 @@ async function tryToStartEmpty(page: Page) {
 }
 
 const screens: Screen[] = [
-  { name: 'home-first-run', path: paths.home },
   { name: 'home-no-games', path: paths.home, setup: setUpPlayer },
   { name: 'home-games', path: paths.home, setup: (page) => seedDemoData(page) },
   {
@@ -63,8 +71,14 @@ const screens: Screen[] = [
     viewportOnly: true,
     setup: (page) => seedDemoData(page, { liveGame: true }),
   },
+  // A game started before the player was named: Resume stays the main action.
+  {
+    name: 'home-live-game-unnamed',
+    path: paths.home,
+    viewportOnly: true,
+    setup: (page) => startGame(page, 'Central'),
+  },
   { name: 'home-seasons', path: paths.home, setup: startWinterGame },
-  { name: 'new-game-empty', path: paths.newGame },
   {
     name: 'new-game-filled',
     path: paths.newGame,
@@ -79,11 +93,15 @@ const screens: Screen[] = [
   { name: 'new-game-invalid', path: paths.newGame, interact: tryToStartEmpty },
 ];
 
-/** Both screens hold back their content until the data is in: wait for it. */
+/**
+ * Both screens hold their content back until its data is read, then mark anything
+ * still loading (the Games list waits for every stat) `aria-busy`. Wait for all of it.
+ */
 async function waitForData(page: Page) {
   const newGameLink = page.getByRole('link', { name: 'New game' });
   const startButton = page.getByRole('button', { name: 'Start game' });
   await expect(newGameLink.or(startButton)).toBeVisible();
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
 }
 
 const outputDir = process.env.SCREENSHOT_DIR || 'screenshots';
