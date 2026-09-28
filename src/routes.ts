@@ -15,6 +15,8 @@ export const routePatterns = {
   newGame: '/games/new',
   gameReport: '/games/:gameId',
   trackGame: '/games/:gameId/track',
+  /** Hidden gallery of the shared components (not linked from the app). */
+  devUi: '/dev/ui',
 } as const;
 
 const gamePath = (gameId: GameId) => `/games/${encodeURIComponent(String(gameId))}`;
@@ -27,4 +29,5 @@ export const paths = {
   newGame: routePatterns.newGame,
   gameReport: (gameId: GameId) => gamePath(gameId),
   trackGame: (gameId: GameId) => `${gamePath(gameId)}/track`,
+  devUi: routePatterns.devUi,
 } as const;

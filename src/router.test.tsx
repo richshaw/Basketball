@@ -12,6 +12,7 @@ const fullScreens = [
   { path: paths.newGame, title: 'New game' },
   { path: paths.gameReport('g1'), title: 'Game report' },
   { path: paths.trackGame('g1'), title: 'Live game' },
+  { path: paths.devUi, title: 'UI kit' },
 ];
 
 const tabBar = () => screen.queryByRole('navigation', { name: 'Main' });
