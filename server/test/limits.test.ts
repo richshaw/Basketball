@@ -243,11 +243,11 @@ describe('disk space guard (507)', () => {
 });
 
 describe('concurrent uploads', () => {
-  it('turns away uploads beyond MAX_CONCURRENT_UPLOADS with 503 and Retry-After', async () => {
-    const h = await harness({ limits: { maxConcurrentUploads: 1 } });
+  /** Starts an upload that stalls after 10 bytes (from `ip`); resolves once it is under way. */
+  async function startStalledUpload(h: Harness, id: string, token: string, ip: string) {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
-    const slow = new ReadableStream<Uint8Array>({
+    const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(bytes(10));
       },
@@ -256,23 +256,109 @@ describe('concurrent uploads', () => {
         controller.close();
       },
     });
-    const accountId = hex64();
-    const token = hex64();
-    const inFlight = Promise.resolve(putStream(h, accountId, token, slow));
-    // Wait until the first upload is being received.
-    for (let i = 0; (await listDir(path.join(h.dataDir, 'incoming'))).length === 0; i += 1) {
-      if (i > 200) throw new Error('upload never started');
+    const incoming = path.join(h.dataDir, 'incoming');
+    const before = (await listDir(incoming)).length;
+    const response = Promise.resolve(
+      h.app.request(`/v1/backups/${id}`, {
+        method: 'PUT',
+        body,
+        duplex: 'half',
+        headers: { ...auth(token), 'Fly-Client-IP': ip },
+      }),
+    );
+    for (let i = 0; (await listDir(incoming)).length <= before; i += 1) {
+      if (i > 400) throw new Error('upload never started');
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
+    return { response, release };
+  }
 
-    const busy = await putBackup(h.app, hex64(), hex64(), bytes(8));
+  it("keeps strangers' stalled first uploads from taking the family's upload slots", async () => {
+    const h = await harness(); // 4 slots, of which first uploads to unknown ids may use 1
+    const family = { id: hex64(), token: hex64() };
+    await uploadOk(h.app, family.id, family.token, bytes(8));
+
+    const stranger = await startStalledUpload(h, hex64(), hex64(), '203.0.113.9');
+    const another = await putBackup(h.app, hex64(), hex64(), bytes(8), {
+      'Fly-Client-IP': '203.0.113.10',
+    });
+    expect(another.status).toBe(503);
+    expect(await another.json()).toEqual({ error: 'server_busy' });
+    expect(another.headers.get('Retry-After')).toBe('5');
+
+    // The family's existing account still has its slots.
+    await uploadOk(h.app, family.id, family.token, bytes(8), { 'Fly-Client-IP': '198.51.100.1' });
+
+    stranger.release();
+    expect((await stranger.response).status).toBe(201);
+  });
+
+  it('turns away uploads beyond MAX_CONCURRENT_UPLOADS with 503', async () => {
+    const h = await harness({ limits: { maxConcurrentUploads: 2 } });
+    const accounts = [0, 1, 2].map(() => ({ id: hex64(), token: hex64() }));
+    for (const a of accounts) await uploadOk(h.app, a.id, a.token, bytes(8));
+
+    const [a, b, c] = accounts as [
+      (typeof accounts)[0],
+      (typeof accounts)[0],
+      (typeof accounts)[0],
+    ];
+    const first = await startStalledUpload(h, a.id, a.token, '198.51.100.1');
+    const second = await startStalledUpload(h, b.id, b.token, '198.51.100.2');
+    const busy = await putBackup(h.app, c.id, c.token, bytes(8), {
+      'Fly-Client-IP': '198.51.100.3',
+    });
     expect(busy.status).toBe(503);
-    expect(await busy.json()).toEqual({ error: 'server_busy' });
-    expect(busy.headers.get('Retry-After')).toBe('5');
 
-    release();
-    expect((await inFlight).status).toBe(201);
-    await uploadOk(h.app, hex64(), hex64(), bytes(8));
+    first.release();
+    second.release();
+    expect((await first.response).status).toBe(201);
+    expect((await second.response).status).toBe(201);
+    await uploadOk(h.app, c.id, c.token, bytes(8));
+  });
+
+  it('limits concurrent uploads per client IP (429)', async () => {
+    const h = await harness({ limits: { maxConcurrentUploadsPerIp: 2 } });
+    const accounts = [0, 1, 2].map(() => ({ id: hex64(), token: hex64() }));
+    for (const a of accounts) await uploadOk(h.app, a.id, a.token, bytes(8));
+    const [a, b, c] = accounts as [
+      (typeof accounts)[0],
+      (typeof accounts)[0],
+      (typeof accounts)[0],
+    ];
+
+    const first = await startStalledUpload(h, a.id, a.token, '198.51.100.7');
+    const second = await startStalledUpload(h, b.id, b.token, '198.51.100.7');
+    const limited = await putBackup(h.app, c.id, c.token, bytes(8), {
+      'Fly-Client-IP': '198.51.100.7',
+    });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: 'rate_limited' });
+    expect(limited.headers.get('Retry-After')).toBe('5');
+    // Other clients are unaffected.
+    await uploadOk(h.app, c.id, c.token, bytes(8), { 'Fly-Client-IP': '198.51.100.8' });
+
+    first.release();
+    second.release();
+    await Promise.all([first.response, second.response]);
+  });
+
+  it('drops an upload whose body stops arriving (408) and frees its slot', async () => {
+    const h = await harness({
+      limits: { uploadStallTimeoutMs: 150, writesPerAccountPerMinute: 1, maxConcurrentUploads: 2 },
+    });
+    const id = hex64();
+    const token = hex64();
+    const stalled = await startStalledUpload(h, id, token, '198.51.100.1');
+
+    const res = await stalled.response; // never released: the server gives up on its own
+    expect(res.status).toBe(408);
+    expect(await res.json()).toEqual({ error: 'upload_stalled' });
+    expect(await listDir(path.join(h.dataDir, 'incoming'))).toEqual([]);
+    expect(await listDir(path.join(h.dataDir, 'accounts'))).toEqual([]);
+    // The slot and the upload allowance are both back.
+    await uploadOk(h.app, id, token, bytes(8), { 'Fly-Client-IP': '198.51.100.1' });
+    stalled.release();
   });
 });
 

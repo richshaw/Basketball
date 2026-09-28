@@ -18,6 +18,9 @@ describe('config', () => {
       maxNewAccountsPerDay: 3,
       minFreeDiskPercent: 20,
       maxConcurrentUploads: 4,
+      maxConcurrentNewAccountUploads: 1,
+      maxConcurrentUploadsPerIp: 2,
+      uploadStallTimeoutMs: 10_000,
       requestsPerIpPerMinute: 120,
       writesPerAccountPerMinute: 20,
       downloadsPerAccountPerMinute: 30,
@@ -37,6 +40,9 @@ describe('config', () => {
       MAX_NEW_ACCOUNTS_PER_DAY: '1',
       MIN_FREE_DISK_PERCENT: '0',
       MAX_CONCURRENT_UPLOADS: '3',
+      MAX_CONCURRENT_NEW_ACCOUNT_UPLOADS: '2',
+      MAX_CONCURRENT_UPLOADS_PER_IP: '1',
+      UPLOAD_STALL_TIMEOUT_MS: '5000',
       RATE_LIMIT_PER_IP_PER_MINUTE: '5',
       RATE_LIMIT_WRITES_PER_ACCOUNT_PER_MINUTE: '6',
       RATE_LIMIT_DOWNLOADS_PER_ACCOUNT_PER_MINUTE: '7',
@@ -54,6 +60,9 @@ describe('config', () => {
       maxNewAccountsPerDay: 1,
       minFreeDiskPercent: 0,
       maxConcurrentUploads: 3,
+      maxConcurrentNewAccountUploads: 2,
+      maxConcurrentUploadsPerIp: 1,
+      uploadStallTimeoutMs: 5000,
       requestsPerIpPerMinute: 5,
       writesPerAccountPerMinute: 6,
       downloadsPerAccountPerMinute: 7,
@@ -70,6 +79,8 @@ describe('config', () => {
     ['MAX_ACCOUNTS', '0'],
     ['MIN_FREE_DISK_PERCENT', '100'],
     ['REQUEST_TIMEOUT_MS', '10'],
+    ['UPLOAD_STALL_TIMEOUT_MS', '10'],
+    ['MAX_CONCURRENT_UPLOADS', '1'],
     ['RETENTION_KEEP_RECENT', '0'],
   ])('rejects %s=%s', (name, value) => {
     expect(() => loadConfig({ [name]: value })).toThrow(ConfigError);
@@ -79,6 +90,12 @@ describe('config', () => {
     expect(() => loadConfig({ MAX_BODY_BYTES: '2048', MAX_ACCOUNT_BYTES: '1024' })).toThrow(
       /MAX_ACCOUNT_BYTES/,
     );
+  });
+
+  it('keeps upload slots for existing accounts that first uploads cannot take', () => {
+    expect(() =>
+      loadConfig({ MAX_CONCURRENT_UPLOADS: '4', MAX_CONCURRENT_NEW_ACCOUNT_UPLOADS: '4' }),
+    ).toThrow(/MAX_CONCURRENT_NEW_ACCOUNT_UPLOADS/);
   });
 
   it('normalizes allowed origins and rejects invalid ones', () => {

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { open, rm } from 'node:fs/promises';
+import { open, readdir, readlink, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_LIMITS } from '../src/config.js';
@@ -132,6 +132,63 @@ describe('real HTTP server', () => {
     const list = await fetch(`${s.url}/v1/backups/${accountId}`, { headers: auth(token) });
     expect(((await list.json()) as { versions: unknown[] }).versions).toHaveLength(2);
   });
+
+  it('gives up on an upload that stops making progress long before the request timeout', async () => {
+    server = await startTestServer({
+      dataDir,
+      limits: { ...DEFAULT_LIMITS, uploadStallTimeoutMs: 300 },
+    });
+    const stalled = await openRawRequest(
+      server.port,
+      rawPutHead(hex64(), hex64(), 5000),
+      bytes(100),
+    );
+    const started = Date.now();
+    await stalled.closed;
+    expect(Date.now() - started).toBeLessThan(5000); // requestTimeout here is 60 s
+    expect(stalled.received()).toMatch(/^HTTP\/1\.1 408/);
+    expect(stalled.received()).toContain('"error":"upload_stalled"');
+    expect(await listDir(path.join(dataDir, 'incoming'))).toEqual([]);
+  });
+
+  it('closes download files when clients disconnect before the response starts', async (ctx) => {
+    if (process.platform !== 'linux') ctx.skip(); // counts open files through /proc
+    server = await startTestServer({
+      dataDir,
+      limits: {
+        ...DEFAULT_LIMITS,
+        downloadsPerAccountPerMinute: 1000,
+        requestsPerIpPerMinute: 1000,
+      },
+    });
+    const s = server;
+    const accountId = hex64();
+    const token = hex64();
+    expect((await put(s, accountId, token, randomBytes(1_000_000))).status).toBe(201);
+
+    const versions = path.join(dataDir, 'accounts', accountId, 'versions');
+    const openVersionFiles = async (): Promise<number> => {
+      let count = 0;
+      for (const fd of await readdir('/proc/self/fd')) {
+        const target = await readlink(`/proc/self/fd/${fd}`).catch(() => '');
+        if (target.startsWith(versions)) count += 1;
+      }
+      return count;
+    };
+
+    const request =
+      `GET /v1/backups/${accountId}/latest HTTP/1.1\r\nHost: 127.0.0.1\r\n` +
+      `Authorization: Bearer ${token}\r\n\r\n`;
+    for (let i = 0; i < 100; i += 1) {
+      const raw = await openRawRequest(s.port, request, new Uint8Array(0));
+      raw.socket.destroy(); // gone before the server has answered
+    }
+    await waitFor(() => s.logs.filter((line) => line.startsWith('GET ')).length >= 100);
+    // Checked once, shortly after: a leaked handle would stay open until garbage collection
+    // (without the fix, about a quarter of these requests leaked one).
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(await openVersionFiles()).toBe(0);
+  });
 });
 
 /** Fills the filesystem holding `dir` until writes fail with ENOSPC. */
@@ -203,6 +260,16 @@ describe('on a real, completely full disk', () => {
       expect(
         (await fetch(`${s.url}/v1/backups/${accountId}`, { headers: auth(token) })).status,
       ).toBe(200);
+
+      // Deleting still works on the full disk (trash/ was created with the account).
+      const deleted = await fetch(`${s.url}/v1/backups/${accountId}`, {
+        method: 'DELETE',
+        headers: auth(token),
+      });
+      expect(deleted.status).toBe(204);
+      expect(
+        (await fetch(`${s.url}/v1/backups/${accountId}`, { headers: auth(token) })).status,
+      ).toBe(401);
     } finally {
       await server?.close();
       server = undefined;

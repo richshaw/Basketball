@@ -1,6 +1,7 @@
 /**
  * Version ids look like `0000000042-20260928T041523123Z`: a zero-padded per-account sequence
- * number, then the UTC time the server received the upload, to the millisecond.
+ * number, then the UTC time the upload started, to the millisecond. Both are assigned when the
+ * upload starts, so a slow upload of older data can never end up sorting after a newer one.
  *
  * The sequence comes first, so sorting ids as strings sorts them in upload order even if the
  * server clock was wrong for a while (a clock that jumped ahead can never pin later ids to the
@@ -64,17 +65,7 @@ export function isVersionId(value: string): boolean {
   return parseVersionId(value) !== null;
 }
 
-/**
- * The id for a new upload: the next sequence number after the account's newest version, stamped
- * with the current time. Callers must hold the account lock so two uploads never get the same
- * sequence number.
- */
-export function nextVersionId(
-  nowMs: number,
-  newestExisting: string | undefined,
-): { version: string; sequence: number; createdAtMs: number } {
-  const previous = newestExisting === undefined ? null : parseVersionId(newestExisting);
-  const sequence = (previous?.sequence ?? 0) + 1;
-  const createdAtMs = Math.floor(nowMs);
-  return { version: formatVersionId(sequence, createdAtMs), sequence, createdAtMs };
+/** Sort comparator: newest (highest sequence) first. */
+export function compareNewestFirst(a: { version: string }, b: { version: string }): number {
+  return a.version < b.version ? 1 : a.version > b.version ? -1 : 0;
 }

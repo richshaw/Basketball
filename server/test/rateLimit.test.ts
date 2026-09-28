@@ -1,34 +1,50 @@
 import { describe, expect, it } from 'vitest';
+import type { Charge } from '../src/rateLimit.js';
 import { FixedWindowRateLimiter, rateLimitKeyForAddress } from '../src/rateLimit.js';
+
+function charged(limiter: FixedWindowRateLimiter, key: string): Charge {
+  const decision = limiter.hit(key);
+  if (!decision.allowed) throw new Error(`expected ${key} to be allowed`);
+  return decision.charge;
+}
 
 describe('FixedWindowRateLimiter', () => {
   it('allows `limit` hits per window, then rejects with Retry-After, then resets', () => {
     let now = 1_000_000;
     const limiter = new FixedWindowRateLimiter(3, 60_000, () => now);
-    expect(limiter.hit('a')).toEqual({ allowed: true });
-    expect(limiter.hit('a')).toEqual({ allowed: true });
-    expect(limiter.hit('a')).toEqual({ allowed: true });
+    expect(limiter.hit('a').allowed).toBe(true);
+    expect(limiter.hit('a').allowed).toBe(true);
+    expect(limiter.hit('a').allowed).toBe(true);
     expect(limiter.hit('a')).toEqual({ allowed: false, retryAfterSeconds: 60 });
     now += 45_500;
     expect(limiter.hit('a')).toEqual({ allowed: false, retryAfterSeconds: 15 });
-    expect(limiter.hit('b')).toEqual({ allowed: true }); // other keys are independent
+    expect(limiter.hit('b').allowed).toBe(true); // other keys are independent
     now += 14_500;
-    expect(limiter.hit('a')).toEqual({ allowed: true });
+    expect(limiter.hit('a').allowed).toBe(true);
   });
 
-  it('can refund a hit within the same window, but not into a new one', () => {
+  it('refunds a charge within the window it was made in', () => {
+    const limiter = new FixedWindowRateLimiter(1, 60_000, () => 0);
+    const charge = charged(limiter, 'a');
+    expect(limiter.hit('a').allowed).toBe(false);
+    limiter.refund(charge);
+    expect(limiter.hit('a').allowed).toBe(true);
+    expect(limiter.hit('a').allowed).toBe(false);
+  });
+
+  it("never lets a late refund cancel a newer window's charge", () => {
     let now = 0;
     const limiter = new FixedWindowRateLimiter(1, 60_000, () => now);
-    expect(limiter.hit('a')).toEqual({ allowed: true });
-    limiter.refund('a');
-    expect(limiter.hit('a')).toEqual({ allowed: true });
-    expect(limiter.hit('a').allowed).toBe(false);
+    const old = charged(limiter, 'a'); // e.g. an upload that later times out
 
-    now += 60_000; // new window: a late refund must not create extra allowance
-    limiter.refund('a');
-    expect(limiter.hit('a')).toEqual({ allowed: true });
-    expect(limiter.hit('a').allowed).toBe(false);
-    limiter.refund('unknown-key'); // harmless
+    now += 60_000; // new window; someone else's upload is charged in it
+    charged(limiter, 'a');
+    limiter.refund(old); // the old upload finally fails
+    expect(limiter.hit('a').allowed).toBe(false); // the new charge still stands
+
+    now += 60_000;
+    limiter.refund(old); // also harmless once its window has expired
+    expect(limiter.hit('a').allowed).toBe(true);
   });
 
   it('forgets idle keys', () => {

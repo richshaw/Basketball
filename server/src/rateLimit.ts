@@ -1,11 +1,18 @@
 import { isIPv4, isIPv6 } from 'node:net';
 
-export type RateLimitDecision = { allowed: true } | { allowed: false; retryAfterSeconds: number };
-
 interface Bucket {
   count: number;
   resetAt: number;
 }
+
+/** Proof of one counted hit, for {@link FixedWindowRateLimiter.refund}. */
+export interface Charge {
+  readonly key: string;
+  readonly bucket: object;
+}
+
+export type RateLimitDecision =
+  { allowed: true; charge: Charge } | { allowed: false; retryAfterSeconds: number };
 
 /**
  * Minimal in-memory fixed-window counter: at most `limit` hits per key per `windowMs`.
@@ -41,16 +48,17 @@ export class FixedWindowRateLimiter {
       };
     }
     bucket.count += 1;
-    return { allowed: true };
+    return { allowed: true, charge: { key, bucket } };
   }
 
   /**
-   * Gives back one hit for `key`, e.g. for an upload that failed through no fault of the client
-   * (signal dropped mid-upload). No-op if the window that was charged has already ended.
+   * Gives back a counted hit, e.g. for an upload that failed through no fault of the client
+   * (signal dropped mid-upload). Only refunds into the window that was charged: once that
+   * window has ended, the refund is a no-op (it must not cancel a newer window's hits).
    */
-  refund(key: string): void {
-    const bucket = this.#buckets.get(key);
-    if (bucket !== undefined && bucket.count > 0 && this.#now() < bucket.resetAt) {
+  refund(charge: Charge): void {
+    const bucket = this.#buckets.get(charge.key);
+    if (bucket === charge.bucket && bucket.count > 0 && this.#now() < bucket.resetAt) {
       bucket.count -= 1;
     }
   }

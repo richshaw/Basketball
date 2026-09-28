@@ -27,6 +27,13 @@ function game(lastMs: number, count: number): VersionStamp[] {
   return Array.from({ length: count }, (_, i) => stamp(lastMs - (count - 1 - i) * MINUTE));
 }
 
+/** One upload at 20:00 UTC on each of `days` days, `gapDays` apart, oldest first. */
+function dailyUploads(firstDayStart: number, days: number, gapDays = 1): VersionStamp[] {
+  return Array.from({ length: days }, (_, i) =>
+    stamp(firstDayStart + i * gapDays * DAY + 20 * HOUR),
+  );
+}
+
 /** Deterministic PRNG so the randomized test is reproducible. */
 function seededRandom(seed: number): () => number {
   let state = seed;
@@ -47,19 +54,19 @@ function shuffled<T>(items: readonly T[], random: () => number): T[] {
 
 describe('planRetention', () => {
   it('keeps nothing and removes nothing for an empty list', () => {
-    expect(planRetention([], NOW, POLICY)).toEqual({ keep: [], remove: [] });
+    expect(planRetention([], POLICY)).toEqual({ keep: [], remove: [] });
   });
 
   it('keeps every version while there are no more than keepRecent, however old', () => {
     const ancient = Array.from({ length: 20 }, (_, i) => stamp(NOW - (1019 - i) * DAY));
-    const plan = planRetention(ancient, NOW, POLICY);
+    const plan = planRetention(ancient, POLICY);
     expect(plan.remove).toEqual([]);
     expect(plan.keep).toHaveLength(20);
   });
 
   it('collapses a single game day to the 20 most recent uploads', () => {
     const uploads = game(NOW - HOUR, 100); // every minute for 100 minutes, all today
-    const plan = planRetention(uploads, NOW, POLICY);
+    const plan = planRetention(uploads, POLICY);
     expect(ids(plan.keep)).toEqual(ids(uploads.slice(-20).reverse()));
     expect(ids(plan.remove)).toEqual(ids(uploads.slice(0, 80).reverse()));
   });
@@ -68,7 +75,7 @@ describe('planRetention', () => {
     const twoDaysAgo = game(TODAY_START - DAY - 2 * HOUR, 30);
     const yesterday = game(TODAY_START - 2 * HOUR, 30);
     const today = game(NOW - HOUR, 30);
-    const plan = planRetention([...twoDaysAgo, ...yesterday, ...today], NOW, POLICY);
+    const plan = planRetention([...twoDaysAgo, ...yesterday, ...today], POLICY);
 
     expect(ids(plan.keep)).toEqual([
       ...ids(today.slice(-20).reverse()),
@@ -78,77 +85,69 @@ describe('planRetention', () => {
     expect(plan.remove).toHaveLength(90 - 22);
   });
 
-  it('counts today as the first of the 180 days: day -179 is kept, day -180 is not', () => {
-    const day180 = stamp(TODAY_START - 180 * DAY + 12 * HOUR);
-    const day179 = stamp(TODAY_START - 179 * DAY + 12 * HOUR);
-    const recent = game(NOW - HOUR, 20); // fills the "recent" slots so only the daily rule applies
-    const plan = planRetention([day180, day179, ...recent], NOW, POLICY);
-    expect(ids(plan.keep)).toContain(day179.version);
-    expect(ids(plan.remove)).toEqual([day180.version]);
+  it('keeps the newest version of each of the last 180 days that have uploads', () => {
+    const uploads = dailyUploads(TODAY_START - 199 * DAY, 200); // 200 consecutive days
+    const plan = planRetention(uploads, POLICY);
+    expect(ids(plan.keep)).toEqual(ids(uploads.slice(-180).reverse()));
+    expect(ids(plan.remove)).toEqual(ids(uploads.slice(0, 20).reverse()));
   });
 
-  it('uses UTC day boundaries', () => {
-    const earlierOnDay5 = stamp(TODAY_START - 4 * DAY - 2 * HOUR); // 22:00 on day -5
-    const lateOnDay5 = stamp(TODAY_START - 4 * DAY - 1); // 23:59:59.999 on day -5
-    const earlyOnDay4 = stamp(TODAY_START - 4 * DAY); // 00:00:00.000 on day -4
-    const recent = game(NOW - HOUR, 20);
-    const plan = planRetention([earlierOnDay5, lateOnDay5, earlyOnDay4, ...recent], NOW, POLICY);
-    // Each is the newest of its own UTC day, so both survive; the earlier day -5 one does not.
-    expect(ids(plan.keep)).toEqual(
-      expect.arrayContaining([lateOnDay5.version, earlyOnDay4.version]),
-    );
-    expect(ids(plan.remove)).toEqual([earlierOnDay5.version]);
+  it('counts days that have uploads, not calendar days', () => {
+    // Every other day for two years: 365 upload days spread over 730 calendar days. Each of the
+    // 180 most recent upload days keeps its snapshot, and nothing else survives.
+    const uploads = dailyUploads(TODAY_START - 729 * DAY, 365, 2);
+    const plan = planRetention(uploads, POLICY);
+    expect(plan.keep).toHaveLength(180);
+    expect(ids(plan.keep)).toEqual(ids(uploads.slice(-180).reverse()));
   });
 
-  it('keeps one snapshot per day across six months of daily use, then drops older days', () => {
+  it('removes nothing just because it is old (no clock involved)', () => {
+    const lastSeason = dailyUploads(TODAY_START - 800 * DAY, 10);
+    const afterTwoYears = stamp(NOW);
+    const plan = planRetention([...lastSeason, afterTwoYears], POLICY);
+    expect(plan.remove).toEqual([]);
+  });
+
+  it('never holds more than keepRecent + keepDailyDays versions', () => {
     const history: VersionStamp[] = [];
     for (let day = 250; day >= 1; day -= 1) {
       // Three uploads per day at 18:00, 19:00 and 20:00 UTC.
       for (const hour of [18, 19, 20]) history.push(stamp(TODAY_START - day * DAY + hour * HOUR));
     }
     const todayGame = game(NOW - HOUR, 25);
-    const plan = planRetention([...history, ...todayGame], NOW, POLICY);
+    const plan = planRetention([...history, ...todayGame], POLICY);
 
     const kept = new Set(ids(plan.keep));
     // The 20 most recent (all from today's game)...
     for (const v of todayGame.slice(-20)) expect(kept.has(v.version)).toBe(true);
-    // ...plus the 20:00 snapshot of each of the previous 179 days...
+    // ...plus the 20:00 snapshot of the 179 days before today (today is the 180th)...
     for (let day = 1; day <= 179; day += 1) {
       const evening = history.find((v) => v.createdAtMs === TODAY_START - day * DAY + 20 * HOUR);
       expect(evening !== undefined && kept.has(evening.version)).toBe(true);
     }
     // ...and nothing else.
     expect(plan.keep).toHaveLength(20 + 179);
-    expect(plan.remove).toHaveLength(history.length + todayGame.length - (20 + 179));
   });
 
-  it('never removes the newest version, even after a long break', () => {
-    const lastSeason = game(NOW - 400 * DAY, 50);
-    const plan = planRetention(lastSeason, NOW, POLICY);
-    expect(plan.keep[0]?.version).toBe(lastSeason[49]?.version);
-    expect(plan.keep).toHaveLength(20);
-  });
-
-  it('returns the same plan, newest first, regardless of input order', () => {
-    const uploads = [...game(NOW - 3 * DAY, 10), ...game(NOW - HOUR, 30)];
-    const mixed = shuffled(uploads, seededRandom(7));
-    expect(ids(mixed)).not.toEqual(ids(uploads));
-
-    const fromOrdered = planRetention(uploads, NOW, POLICY);
-    const fromMixed = planRetention(mixed, NOW, POLICY);
-    expect(ids(fromMixed.keep)).toEqual(ids(fromOrdered.keep));
-    expect(ids(fromMixed.remove)).toEqual(ids(fromOrdered.remove));
-    const keptIds = ids(fromOrdered.keep);
-    expect(keptIds).toEqual([...keptIds].sort().reverse());
+  it('lets a clock that jumps ahead push out at most one day', () => {
+    const history = dailyUploads(TODAY_START - 199 * DAY, 200);
+    const jumped = [stamp(NOW + 5 * 365 * DAY), stamp(NOW + 5 * 365 * DAY + MINUTE)];
+    const plan = planRetention([...history, ...jumped], POLICY);
+    // The invented day takes one of the 180 day slots; everything else stays.
+    expect(ids(plan.keep)).toEqual([
+      ...ids(jumped).reverse(),
+      ...ids(history.slice(-179).reverse()),
+    ]);
+    expect(ids(plan.remove)).toEqual(ids(history.slice(0, 21).reverse()));
   });
 
   it('orders by upload sequence, not by timestamp (clock that jumped and came back)', () => {
     const before = [stamp(NOW - 10 * DAY), stamp(NOW - 10 * DAY + HOUR)];
     const jumped = [stamp(NOW + 400 * DAY), stamp(NOW + 400 * DAY + MINUTE)];
     const corrected = game(NOW - HOUR, 20);
-    const plan = planRetention([...before, ...jumped, ...corrected], NOW, POLICY);
-    // The 20 latest uploads are the corrected ones, even though two older uploads carry
-    // later timestamps; each day keeps its last upload, the future day included.
+    const plan = planRetention([...before, ...jumped, ...corrected], POLICY);
+    // The 20 latest uploads are the corrected ones, even though two older uploads carry later
+    // timestamps; each day keeps its last upload.
     expect(ids(plan.keep)).toEqual([
       ...ids(corrected).reverse(),
       jumped[1]?.version,
@@ -157,37 +156,41 @@ describe('planRetention', () => {
     expect(ids(plan.remove)).toEqual([jumped[0]?.version, before[0]?.version]);
   });
 
-  it('treats future-dated days (clock skew) as inside the daily window', () => {
-    const nearFuture = stamp(NOW + 3 * DAY);
-    const farFuture = game(NOW + 5 * DAY, 20); // takes all 20 "recent" slots
-    const plan = planRetention([nearFuture, ...farFuture], NOW, POLICY);
-    expect(ids(plan.keep)).toContain(nearFuture.version);
+  it('uses UTC day boundaries', () => {
+    const earlierOnDay5 = stamp(TODAY_START - 4 * DAY - 2 * HOUR); // 22:00 on day -5
+    const lateOnDay5 = stamp(TODAY_START - 4 * DAY - 1); // 23:59:59.999 on day -5
+    const earlyOnDay4 = stamp(TODAY_START - 4 * DAY); // 00:00:00.000 on day -4
+    const recent = game(NOW - HOUR, 20);
+    const plan = planRetention([earlierOnDay5, lateOnDay5, earlyOnDay4, ...recent], POLICY);
+    // Each is the newest of its own UTC day, so both survive; the earlier day -5 one does not.
+    expect(ids(plan.keep)).toEqual(
+      expect.arrayContaining([lateOnDay5.version, earlyOnDay4.version]),
+    );
+    expect(ids(plan.remove)).toEqual([earlierOnDay5.version]);
   });
 
-  it('keeps every day, however old, when pruning by age is switched off', () => {
-    const oldDays = [stamp(NOW - 300 * DAY), stamp(NOW - 200 * DAY)];
-    const sameDayExtra = stamp(NOW - 200 * DAY + MINUTE);
-    const recent = game(NOW - HOUR, 20);
-    const all = [...oldDays, sameDayExtra, ...recent];
+  it('returns the same plan, newest first, regardless of input order', () => {
+    const uploads = [...game(NOW - 3 * DAY, 10), ...game(NOW - HOUR, 30)];
+    const mixed = shuffled(uploads, seededRandom(7));
+    expect(ids(mixed)).not.toEqual(ids(uploads));
 
-    expect(ids(planRetention(all, NOW, POLICY).remove)).toEqual(
-      ids([sameDayExtra, ...oldDays].sort((a, b) => (a.version < b.version ? 1 : -1))),
-    );
-    const plan = planRetention(all, NOW, POLICY, { pruneByAge: false });
-    // Only the non-final upload of a day goes; nothing is dropped for being old.
-    expect(ids(plan.remove)).toEqual([oldDays[1]?.version]);
-    expect(ids(plan.keep)).toEqual(expect.arrayContaining([oldDays[0]?.version ?? '']));
+    const fromOrdered = planRetention(uploads, POLICY);
+    const fromMixed = planRetention(mixed, POLICY);
+    expect(ids(fromMixed.keep)).toEqual(ids(fromOrdered.keep));
+    expect(ids(fromMixed.remove)).toEqual(ids(fromOrdered.remove));
+    const keptIds = ids(fromOrdered.keep);
+    expect(keptIds).toEqual([...keptIds].sort().reverse());
   });
 
   it('always keeps at least the newest version, even with keepRecent below 1', () => {
     const uploads = game(NOW - 400 * DAY, 5);
-    const plan = planRetention(uploads, NOW, { keepRecent: 0, keepDailyDays: 0 });
+    const plan = planRetention(uploads, { keepRecent: 0, keepDailyDays: 0 });
     expect(ids(plan.keep)).toEqual([uploads[4]?.version]);
   });
 
   it('applies only the recent rule when keepDailyDays is 0', () => {
     const uploads = [stamp(NOW - 3 * DAY), stamp(NOW - 2 * DAY), stamp(NOW - DAY)];
-    const plan = planRetention(uploads, NOW, { keepRecent: 2, keepDailyDays: 0 });
+    const plan = planRetention(uploads, { keepRecent: 2, keepDailyDays: 0 });
     expect(ids(plan.remove)).toEqual([uploads[0]?.version]);
   });
 
@@ -199,31 +202,28 @@ describe('planRetention', () => {
         keepDailyDays: Math.floor(random() * 200),
       };
       const count = Math.floor(random() * 400);
-      // Upload times spread over the past year plus a little clock skew into tomorrow; ids are
-      // assigned in time order, as the server would.
-      const times = Array.from(
-        { length: count },
-        () => NOW - Math.floor(random() * 366 * DAY) + DAY,
-      ).sort((a, b) => a - b);
-      const versions = times.map((t) => stamp(t));
-      const { keep, remove } = planRetention(shuffled(versions, random), NOW, policy);
+      // Upload times over the past year, including some out of order (a wrong clock).
+      const versions = Array.from({ length: count }, () =>
+        stamp(NOW - Math.floor(random() * 366 * DAY) + DAY),
+      );
+      const { keep, remove } = planRetention(shuffled(versions, random), policy);
 
       // Partition: every input lands in exactly one list.
       expect(keep.length + remove.length).toBe(count);
       expect(new Set([...ids(keep), ...ids(remove)]).size).toBe(count);
+      expect(keep.length).toBeLessThanOrEqual(
+        Math.max(1, policy.keepRecent) + policy.keepDailyDays,
+      );
 
       // Reference implementation of the rules, written independently.
-      const newestFirst = [...versions].reverse();
+      const newestFirst = [...versions].reverse(); // stamps were made in upload order
       const recent = ids(newestFirst.slice(0, policy.keepRecent));
-      const today = Math.floor(NOW / DAY);
-      const newestPerDay = new Map<number, string>();
+      const newestPerDay = new Map<number, string>(); // insertion order: most recent day first
       for (const v of newestFirst) {
         const day = Math.floor(v.createdAtMs / DAY);
         if (!newestPerDay.has(day)) newestPerDay.set(day, v.version);
       }
-      const daily = [...newestPerDay]
-        .filter(([day]) => policy.keepDailyDays > 0 && today - day < policy.keepDailyDays)
-        .map(([, id]) => id);
+      const daily = [...newestPerDay.values()].slice(0, policy.keepDailyDays);
 
       expect(new Set(ids(keep))).toEqual(new Set([...recent, ...daily]));
       if (count > 0) expect(keep[0]?.version).toBe(newestFirst[0]?.version);

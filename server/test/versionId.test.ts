@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_SEQUENCE,
+  compareNewestFirst,
   formatVersionId,
   isVersionId,
-  nextVersionId,
   parseVersionId,
 } from '../src/versionId.js';
 
@@ -57,18 +57,13 @@ describe('version ids', () => {
     expect(parseVersionId(value)).toBeNull();
   });
 
-  it('numbers new versions after the newest one and stamps them with the clock as is', () => {
-    const newest = formatVersionId(7, t);
-    expect(nextVersionId(t + 5, newest)).toEqual({
-      version: formatVersionId(8, t + 5),
-      sequence: 8,
-      createdAtMs: t + 5,
-    });
-    expect(nextVersionId(t, undefined).sequence).toBe(1);
-    // A clock that went backwards (or a newest version stamped in the future) no longer pins
-    // new timestamps: the sequence alone keeps the order.
-    const afterJump = nextVersionId(t - 86_400_000, formatVersionId(8, t + 365 * 86_400_000));
-    expect(afterJump.createdAtMs).toBe(t - 86_400_000);
-    expect(afterJump.version > formatVersionId(8, t + 365 * 86_400_000)).toBe(true);
+  it('compares newest (highest sequence) first', () => {
+    const refs = [3, 1, 12, 2].map((seq) => ({ version: formatVersionId(seq, t) }));
+    expect(refs.sort(compareNewestFirst).map((r) => r.version.slice(0, 10))).toEqual([
+      '0000000012',
+      '0000000003',
+      '0000000002',
+      '0000000001',
+    ]);
   });
 });

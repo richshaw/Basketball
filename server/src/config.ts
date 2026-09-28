@@ -18,6 +18,15 @@ export interface Limits {
   minFreeDiskPercent: number;
   /** Uploads being received at the same time, across all clients. */
   maxConcurrentUploads: number;
+  /**
+   * Of those, first uploads to account ids that don't exist yet (anyone can send those). Must be
+   * below maxConcurrentUploads, so existing accounts always have slots left.
+   */
+  maxConcurrentNewAccountUploads: number;
+  /** Uploads being received at the same time from one client IP. */
+  maxConcurrentUploadsPerIp: number;
+  /** An upload whose body makes no progress for this long is dropped (408). */
+  uploadStallTimeoutMs: number;
   /** Requests per client IP per minute (all endpoints except /health and CORS preflights). */
   requestsPerIpPerMinute: number;
   /** Uploads per account per minute. */
@@ -55,6 +64,9 @@ export const DEFAULT_LIMITS: Readonly<Limits> = {
   maxNewAccountsPerDay: 3,
   minFreeDiskPercent: 20,
   maxConcurrentUploads: 4,
+  maxConcurrentNewAccountUploads: 1,
+  maxConcurrentUploadsPerIp: 2,
+  uploadStallTimeoutMs: 10_000,
   requestsPerIpPerMinute: 120,
   writesPerAccountPerMinute: 20,
   downloadsPerAccountPerMinute: 30,
@@ -116,7 +128,28 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     maxAccounts: readInt(env, 'MAX_ACCOUNTS', d.maxAccounts, 1, 1_000_000),
     maxNewAccountsPerDay: readInt(env, 'MAX_NEW_ACCOUNTS_PER_DAY', d.maxNewAccountsPerDay, 1, 1e6),
     minFreeDiskPercent: readInt(env, 'MIN_FREE_DISK_PERCENT', d.minFreeDiskPercent, 0, 99),
-    maxConcurrentUploads: readInt(env, 'MAX_CONCURRENT_UPLOADS', d.maxConcurrentUploads, 1, 1000),
+    maxConcurrentUploads: readInt(env, 'MAX_CONCURRENT_UPLOADS', d.maxConcurrentUploads, 2, 1000),
+    maxConcurrentNewAccountUploads: readInt(
+      env,
+      'MAX_CONCURRENT_NEW_ACCOUNT_UPLOADS',
+      d.maxConcurrentNewAccountUploads,
+      1,
+      1000,
+    ),
+    maxConcurrentUploadsPerIp: readInt(
+      env,
+      'MAX_CONCURRENT_UPLOADS_PER_IP',
+      d.maxConcurrentUploadsPerIp,
+      1,
+      1000,
+    ),
+    uploadStallTimeoutMs: readInt(
+      env,
+      'UPLOAD_STALL_TIMEOUT_MS',
+      d.uploadStallTimeoutMs,
+      1000,
+      3_600_000,
+    ),
     requestsPerIpPerMinute: readInt(
       env,
       'RATE_LIMIT_PER_IP_PER_MINUTE',
@@ -141,6 +174,12 @@ export function loadConfig(env: Env = process.env): ServerConfig {
   };
   if (limits.maxAccountBytes < limits.maxBodyBytes) {
     throw new ConfigError('MAX_ACCOUNT_BYTES must be at least MAX_BODY_BYTES');
+  }
+  if (limits.maxConcurrentNewAccountUploads >= limits.maxConcurrentUploads) {
+    throw new ConfigError(
+      'MAX_CONCURRENT_NEW_ACCOUNT_UPLOADS must be below MAX_CONCURRENT_UPLOADS, ' +
+        'so existing accounts always have upload slots left',
+    );
   }
   return {
     port: readInt(env, 'PORT', 8080, 1, 65535),

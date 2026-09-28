@@ -20,13 +20,22 @@ import {
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+// For tests that simulate months of use with hundreds of sequential uploads.
+const LONG_TEST_MS = 30_000;
 
 let h: Harness;
 let accountId: string;
 let token: string;
 
 beforeEach(async () => {
-  h = await createHarness({ limits: { maxConcurrentUploads: 20 } });
+  // Generous upload slots: these tests race uploads on purpose (slots are tested elsewhere).
+  h = await createHarness({
+    limits: {
+      maxConcurrentUploads: 20,
+      maxConcurrentNewAccountUploads: 10,
+      maxConcurrentUploadsPerIp: 20,
+    },
+  });
   accountId = hex64();
   token = hex64();
 });
@@ -43,27 +52,43 @@ async function listedVersions(): Promise<string[]> {
   return body.versions.map((v) => v.version);
 }
 
-/** An upload body that sends a few bytes, then waits until `release()` before finishing. */
-function gatedBody() {
+/**
+ * Starts an upload whose body sends a few bytes, then waits for `release()` before finishing
+ * (a phone on a slow connection). Resolves once the upload is under way.
+ */
+async function startSlowUpload(id: string, tok: string, fill: number) {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
-  const stream = new ReadableStream<Uint8Array>({
+  const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(bytes(10, 9));
+      controller.enqueue(bytes(10, fill));
     },
     async pull(controller) {
       await gate;
       controller.close();
     },
   });
-  return { stream, release };
-}
-
-async function waitForIncomingUpload(): Promise<void> {
-  for (let i = 0; (await listDir(path.join(h.dataDir, 'incoming'))).length === 0; i += 1) {
+  const incoming = path.join(h.dataDir, 'incoming');
+  const before = (await listDir(incoming)).length;
+  const response = Promise.resolve(
+    h.app.request(`/v1/backups/${id}`, {
+      method: 'PUT',
+      body,
+      duplex: 'half',
+      headers: auth(tok),
+    }),
+  );
+  for (let i = 0; (await listDir(incoming)).length <= before; i += 1) {
     if (i > 400) throw new Error('upload never started');
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+  return { response, release };
+}
+
+function deleteAccount(id: string, tok: string): Promise<Response> {
+  return Promise.resolve(
+    h.app.request(`/v1/backups/${id}`, { method: 'DELETE', headers: auth(tok) }),
+  );
 }
 
 describe('retention (integration)', () => {
@@ -86,118 +111,201 @@ describe('retention (integration)', () => {
     );
   });
 
-  it('keeps one snapshot per day for 180 days plus the 20 most recent', async () => {
-    const start = Date.parse('2026-01-01T00:00:00.000Z');
-    const byDay = new Map<number, UploadResponse[]>();
-    const record = (day: number, upload: UploadResponse): void => {
-      byDay.set(day, [...(byDay.get(day) ?? []), upload]);
-    };
+  it(
+    'keeps one snapshot per upload day for 180 days plus the 20 most recent',
+    async () => {
+      const { app, clock } = h;
+      const [id, tok] = [accountId, token];
+      const start = Date.parse('2026-01-01T00:00:00.000Z');
+      const byDay = new Map<number, UploadResponse[]>();
+      const record = (day: number, upload: UploadResponse): void => {
+        byDay.set(day, [...(byDay.get(day) ?? []), upload]);
+      };
 
-    // 200 days of use: two uploads most evenings, and a burst of 25 on the final day.
-    for (let day = 0; day < 200; day += 1) {
-      for (const hour of day % 3 === 0 ? [20] : [19, 21]) {
-        h.clock.ms = start + day * DAY + hour * HOUR;
-        record(day, await uploadOk(h.app, accountId, token, bytes(8, day % 256)));
+      // 200 days of use: two uploads most evenings, and a burst of 25 on the final day.
+      for (let day = 0; day < 200; day += 1) {
+        for (const hour of day % 3 === 0 ? [20] : [19, 21]) {
+          clock.ms = start + day * DAY + hour * HOUR;
+          record(day, await uploadOk(app, id, tok, bytes(8, day % 256)));
+        }
       }
-    }
-    const finalDay = 200;
-    for (let i = 0; i < 25; i += 1) {
-      h.clock.ms = start + finalDay * DAY + 18 * HOUR + i * MINUTE;
-      record(finalDay, await uploadOk(h.app, accountId, token, bytes(8)));
-    }
+      const finalDay = 200;
+      for (let i = 0; i < 25; i += 1) {
+        clock.ms = start + finalDay * DAY + 18 * HOUR + i * MINUTE;
+        record(finalDay, await uploadOk(app, id, tok, bytes(8)));
+      }
 
-    // Expected, computed straight from the rules: the 20 newest uploads, plus the newest upload
-    // of each UTC day from finalDay - 179 to finalDay.
-    const all = [...byDay.values()].flat();
-    const recent = all.slice(-20).map((u) => u.version);
-    const daily: string[] = [];
-    for (let day = finalDay - 179; day <= finalDay; day += 1) {
-      const uploads = byDay.get(day);
-      const newest = uploads?.[uploads.length - 1];
-      if (newest) daily.push(newest.version);
-    }
-    const expected = [...new Set([...recent, ...daily])].sort().reverse();
+      // Expected, computed straight from the rules: the 20 newest uploads, plus the newest upload
+      // of each of the last 180 upload days (finalDay - 179 to finalDay).
+      const all = [...byDay.values()].flat();
+      const recent = all.slice(-20).map((u) => u.version);
+      const daily: string[] = [];
+      for (let day = finalDay - 179; day <= finalDay; day += 1) {
+        const uploads = byDay.get(day);
+        const newest = uploads?.[uploads.length - 1];
+        if (newest) daily.push(newest.version);
+      }
+      const expected = [...new Set([...recent, ...daily])].sort().reverse();
 
-    const listed = await listedVersions();
-    expect(listed).toEqual(expected);
-    expect(listed).toHaveLength(20 + 179);
-    expect(await listDir(versionsDir())).toHaveLength(20 + 179);
+      const listed = await listedVersions();
+      expect(listed).toEqual(expected);
+      expect(listed).toHaveLength(20 + 179);
+      expect(await listDir(versionsDir())).toHaveLength(20 + 179);
+    },
+    LONG_TEST_MS,
+  );
+
+  it(
+    'survives a clock that jumps ahead: one day at most, no matter how many uploads',
+    async () => {
+      const { app, clock } = h;
+      const [id, tok] = [accountId, token];
+      const start = Date.parse('2026-01-01T20:00:00.000Z');
+      for (let day = 0; day < 200; day += 1) {
+        clock.ms = start + day * DAY;
+        await uploadOk(app, id, tok, bytes(8));
+      }
+      const before = await listedVersions();
+      expect(before).toHaveLength(180); // days 20..199
+
+      // The clock jumps five years ahead, and a game's worth of uploads happen there.
+      h.clock.ms = start + 199 * DAY + 5 * 365 * DAY;
+      const jumped: UploadResponse[] = [];
+      for (let i = 0; i < 5; i += 1) {
+        jumped.push(await uploadOk(h.app, accountId, token, bytes(8, 1)));
+        h.clock.advance(MINUTE);
+      }
+      // The invented day took one day slot (day 20's); the other 179 days are all still there.
+      const jumpedIds = jumped.map((u) => u.version).reverse();
+      expect(await listedVersions()).toEqual([...jumpedIds, ...before.slice(0, -1)]);
+
+      // The clock is corrected. New uploads carry the real time and still sort after the jump.
+      h.clock.ms = start + 200 * DAY - 6 * HOUR;
+      const corrected = await uploadOk(h.app, accountId, token, bytes(8, 2));
+      expect(corrected.createdAt).toBe(new Date(h.clock.ms).toISOString());
+      expect(corrected.version > (jumped[4]?.version ?? '')).toBe(true);
+      const latest = await getWithToken(h.app, `/v1/backups/${accountId}/latest`, token);
+      expect(latest.headers.get('X-Backup-Version')).toBe(corrected.version);
+      expect(new Uint8Array(await latest.arrayBuffer())).toEqual(bytes(8, 2));
+      // A new upload day pushes out the oldest one, as usual.
+      expect(await listedVersions()).toEqual([
+        corrected.version,
+        ...jumpedIds,
+        ...before.slice(0, -2),
+      ]);
+    },
+    LONG_TEST_MS,
+  );
+
+  it(
+    'caps an account that uploads every other day (400 days of history)',
+    async () => {
+      const { app, clock } = h;
+      const [id, tok] = [accountId, token];
+      const start = Date.parse('2025-01-01T20:00:00.000Z');
+      const uploads: UploadResponse[] = [];
+      for (let i = 0; i < 200; i += 1) {
+        clock.ms = start + i * 2 * DAY;
+        uploads.push(await uploadOk(app, id, tok, bytes(8)));
+      }
+      // The 180 most recent upload days, each with its snapshot, and nothing older.
+      expect(await listedVersions()).toEqual(
+        uploads
+          .slice(-180)
+          .map((u) => u.version)
+          .reverse(),
+      );
+    },
+    LONG_TEST_MS,
+  );
+});
+
+describe('upload order', () => {
+  it('never lets a slow upload of older data become latest', async () => {
+    await uploadOk(h.app, accountId, token, bytes(8, 0));
+    // S1 starts with older data, then the phone's connection crawls...
+    const s1 = await startSlowUpload(accountId, token, 1);
+    h.clock.advance(1000);
+    // ...while S2, started later with newer data, finishes first.
+    const s2 = await uploadOk(h.app, accountId, token, bytes(8, 2));
+    s1.release();
+    const s1Result = (await (await s1.response).json()) as UploadResponse;
+
+    // Versions are numbered by when the upload started, not when it finished.
+    expect(s1Result.version < s2.version).toBe(true);
+    expect(Date.parse(s1Result.createdAt)).toBeLessThan(Date.parse(s2.createdAt));
+    const latest = await getWithToken(h.app, `/v1/backups/${accountId}/latest`, token);
+    expect(latest.headers.get('X-Backup-Version')).toBe(s2.version);
+    expect(new Uint8Array(await latest.arrayBuffer())).toEqual(bytes(8, 2));
+    expect((await listedVersions()).slice(0, 2)).toEqual([s2.version, s1Result.version]);
   });
 
-  it('survives a clock that jumps ahead: no history wiped, later ids not pinned', async () => {
-    const start = Date.parse('2026-01-01T20:00:00.000Z');
-    for (let day = 0; day < 200; day += 1) {
-      h.clock.ms = start + day * DAY;
-      await uploadOk(h.app, accountId, token, bytes(8));
-    }
-    const before = await listedVersions();
-    expect(before).toHaveLength(180); // days 20..199
-
-    // The clock jumps five years ahead for one upload...
-    h.clock.ms = start + 199 * DAY + 5 * 365 * DAY;
-    const jumped = await uploadOk(h.app, accountId, token, bytes(8, 1));
-    expect(await listedVersions()).toEqual([jumped.version, ...before]);
-    expect(h.logs.join('\n')).toContain('skipping age-based pruning');
-
-    // ...then is corrected. New uploads carry the real time and still sort after the jump.
-    h.clock.ms = start + 200 * DAY - 6 * HOUR;
-    const corrected = await uploadOk(h.app, accountId, token, bytes(8, 2));
-    expect(corrected.createdAt).toBe(new Date(h.clock.ms).toISOString());
-    expect(corrected.version > jumped.version).toBe(true);
-    const latest = await getWithToken(h.app, `/v1/backups/${accountId}/latest`, token);
-    expect(latest.headers.get('X-Backup-Version')).toBe(corrected.version);
-    expect(new Uint8Array(await latest.arrayBuffer())).toEqual(bytes(8, 2));
-    // Normal aging resumed: only day 20 aged out of the window.
-    const after = await listedVersions();
-    expect(after).toEqual([corrected.version, jumped.version, ...before.slice(0, -1)]);
+  it('does not hold the account while a slow upload is still arriving', async () => {
+    await uploadOk(h.app, accountId, token, bytes(8, 1));
+    const slow = await startSlowUpload(accountId, token, 3);
+    // Another upload, and a download, for the same account go straight through.
+    await uploadOk(h.app, accountId, token, bytes(8, 2));
+    expect(await statusOf(getWithToken(h.app, `/v1/backups/${accountId}/latest`, token))).toBe(200);
+    slow.release();
+    expect((await slow.response).status).toBe(201);
+    expect(await listedVersions()).toHaveLength(3);
   });
 });
 
-describe('uploads and the account lock', () => {
-  it('does not hold the account while a slow upload is still arriving', async () => {
+describe('deleting while uploads are in flight', () => {
+  it('drops an upload that was arriving when its account was deleted (409)', async () => {
     await uploadOk(h.app, accountId, token, bytes(8, 1));
-    const slow = gatedBody();
-    const stalled = Promise.resolve(
-      h.app.request(`/v1/backups/${accountId}`, {
-        method: 'PUT',
-        body: slow.stream,
-        duplex: 'half',
-        headers: auth(token),
-      }),
-    );
-    await waitForIncomingUpload();
-
-    // Another upload for the same account goes straight through.
-    const quick = await uploadOk(h.app, accountId, token, bytes(8, 2));
-    slow.release();
-    const late = (await (await stalled).json()) as UploadResponse;
-    expect(late.version > quick.version).toBe(true);
-    expect(await listedVersions()).toEqual([late.version, quick.version, expect.any(String)]);
-  });
-
-  it('does not bring back an account deleted while an upload was arriving', async () => {
-    await uploadOk(h.app, accountId, token, bytes(8, 1));
-    const slow = gatedBody();
-    const stalled = Promise.resolve(
-      h.app.request(`/v1/backups/${accountId}`, {
-        method: 'PUT',
-        body: slow.stream,
-        duplex: 'half',
-        headers: auth(token),
-      }),
-    );
-    await waitForIncomingUpload();
-
-    const deleted = await h.app.request(`/v1/backups/${accountId}`, {
-      method: 'DELETE',
-      headers: auth(token),
-    });
-    expect(deleted.status).toBe(204); // not blocked by the upload
+    const slow = await startSlowUpload(accountId, token, 2);
+    expect((await deleteAccount(accountId, token)).status).toBe(204); // not blocked by it
 
     slow.release();
-    expect((await stalled).status).toBe(401);
+    const late = await slow.response;
+    expect(late.status).toBe(409);
+    expect(await late.json()).toEqual({ error: 'account_deleted' });
     expect(await listDir(path.join(h.dataDir, 'accounts'))).toEqual([]);
     expect(await listDir(path.join(h.dataDir, 'incoming'))).toEqual([]);
+  });
+
+  it('(a) a slow first upload cannot re-create an account deleted after a faster one', async () => {
+    const slow = await startSlowUpload(accountId, token, 1);
+    await uploadOk(h.app, accountId, token, bytes(8, 2)); // creates the account
+    expect((await deleteAccount(accountId, token)).status).toBe(204);
+
+    slow.release();
+    expect((await slow.response).status).toBe(409);
+    expect(await listDir(path.join(h.dataDir, 'accounts'))).toEqual([]);
+  });
+
+  it('(b) a DELETE during the very first upload stops it from creating the account', async () => {
+    const slow = await startSlowUpload(accountId, token, 1);
+    // Nothing exists yet, so the DELETE itself is a 401, like for any unknown account...
+    expect((await deleteAccount(accountId, token)).status).toBe(401);
+
+    slow.release();
+    // ...but the upload that was in flight no longer lands.
+    expect((await slow.response).status).toBe(409);
+    expect(await listDir(path.join(h.dataDir, 'accounts'))).toEqual([]);
+  });
+
+  it('(c) an upload from before a DELETE never lands in the re-created account', async () => {
+    await uploadOk(h.app, accountId, token, bytes(8, 1));
+    const slow = await startSlowUpload(accountId, token, 2);
+    expect((await deleteAccount(accountId, token)).status).toBe(204);
+    const fresh = await uploadOk(h.app, accountId, token, bytes(8, 3)); // backup turned on again
+
+    slow.release();
+    expect((await slow.response).status).toBe(409);
+    expect(await listedVersions()).toEqual([fresh.version]);
+    const latest = await getWithToken(h.app, `/v1/backups/${accountId}/latest`, token);
+    expect(new Uint8Array(await latest.arrayBuffer())).toEqual(bytes(8, 3));
+  });
+
+  it('does not let a wrong token cancel uploads in flight', async () => {
+    await uploadOk(h.app, accountId, token, bytes(8, 1));
+    const slow = await startSlowUpload(accountId, token, 2);
+    expect((await deleteAccount(accountId, hex64())).status).toBe(401);
+    slow.release();
+    expect((await slow.response).status).toBe(201);
   });
 });
 
@@ -244,7 +352,13 @@ describe('durability and crash leftovers', () => {
     },
   );
 
-  it('starts without writing anything: clears trash/ and incoming/, keeps accounts', async () => {
+  it('creates trash/ with the first account, so deleting works even once the disk is full', async () => {
+    expect(await listDir(h.dataDir)).toEqual([]);
+    await uploadOk(h.app, accountId, token, bytes(8));
+    expect(await listDir(h.dataDir)).toContain('trash');
+  });
+
+  it('starts without needing space: clears trash/ and incoming/, keeps accounts', async () => {
     const dataDir = path.join(h.dataDir, 'existing');
     await mkdir(path.join(dataDir, 'trash', 'half-deleted-account', 'versions'), {
       recursive: true,
@@ -262,10 +376,10 @@ describe('durability and crash leftovers', () => {
     expect(await listDir(path.join(dataDir, 'accounts', accountId))).toEqual(['auth.json']);
   });
 
-  it('creates a missing data directory on first start', async () => {
+  it('creates a missing data directory (and its trash/) on first start', async () => {
     const dataDir = path.join(await makeTempDir(), 'new', 'data');
     await prepareDataDir(dataDir);
-    expect(await listDir(dataDir)).toEqual([]);
+    expect(await listDir(dataDir)).toEqual(['trash']);
   });
 
   it('fails startup clearly when the data directory is unusable', async () => {
@@ -283,7 +397,7 @@ describe('concurrency', () => {
       Array.from({ length: 10 }, (_, i) => uploadOk(h.app, accountId, token, bytes(32, i))),
     );
     const versions = results.map((r) => r.version);
-    // Without the account lock, concurrent commits pick the same sequence number and
+    // Without the account lock, simultaneous uploads get the same sequence number and
     // overwrite each other's files.
     expect(new Set(versions).size).toBe(10);
     expect(versions.map((v) => Number(v.slice(0, 10))).sort((a, b) => a - b)).toEqual([

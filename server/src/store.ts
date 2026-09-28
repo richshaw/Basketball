@@ -15,9 +15,10 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import type { ReadableStreamReadResult } from 'node:stream/web';
 import { isHex64 } from './auth.js';
 import { KeyedMutex } from './keyedMutex.js';
-import { isVersionId, parseVersionId } from './versionId.js';
+import { compareNewestFirst, isVersionId, parseVersionId } from './versionId.js';
 
 /**
  * Filesystem layout under DATA_DIR:
@@ -62,6 +63,11 @@ export interface DiskSpace {
 /** The request body stream failed, usually because the client went away mid-upload. */
 export class BodyReadError extends Error {
   override name = 'BodyReadError';
+}
+
+/** The client stopped sending the body (no bytes for the stall timeout). */
+export class UploadStalledError extends BodyReadError {
+  override name = 'UploadStalledError';
 }
 
 const ACCOUNTS_DIR = 'accounts';
@@ -143,8 +149,30 @@ async function emptyDirectory(dir: string): Promise<void> {
   }
 }
 
-function newestFirst(a: VersionRef, b: VersionRef): number {
-  return a.version < b.version ? 1 : a.version > b.version ? -1 : 0;
+/**
+ * Reads the next chunk, or fails with UploadStalledError if none arrives within `stallMs`
+ * (the caller cancels the reader), or with BodyReadError if the stream breaks.
+ */
+async function readChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  stallMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: NodeJS.Timeout | undefined;
+  const stalled = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new UploadStalledError(`no upload data for ${stallMs} ms`));
+    }, stallMs);
+  });
+  try {
+    return await Promise.race([
+      reader.read().catch((err: unknown) => {
+        throw new BodyReadError('request body could not be read', { cause: err });
+      }),
+      stalled,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export class BackupStore {
@@ -247,6 +275,9 @@ export class BackupStore {
   /** Creates the account directory and auth record, and notes the creation time. */
   async createAccount(accountId: string, record: AuthRecord, nowMs: number): Promise<void> {
     await mkdir(this.#versionsDir(accountId), { recursive: true, mode: 0o700 });
+    // DELETE renames accounts into trash/; make sure it exists while there is room, so deleting
+    // still works once the disk is full (creating a directory can need a free block).
+    await mkdir(this.#trashDir, { recursive: true, mode: 0o700 });
     await atomicWriteFile(
       path.join(this.#accountDir(accountId), 'auth.json'),
       `${JSON.stringify(record)}\n`,
@@ -267,7 +298,13 @@ export class BackupStore {
       const parsed = parseVersionId(version);
       if (parsed !== null) refs.push({ version, createdAtMs: parsed.createdAtMs });
     }
-    return refs.sort(newestFirst);
+    return refs.sort(compareNewestFirst);
+  }
+
+  /** Sequence number of the newest stored version, or 0 if there is none. */
+  async highestSequence(accountId: string): Promise<number> {
+    const [newest] = await this.listVersionRefs(accountId);
+    return newest === undefined ? 0 : (parseVersionId(newest.version)?.sequence ?? 0);
   }
 
   /** Versions with their sizes, newest first. */
@@ -293,9 +330,15 @@ export class BackupStore {
 
   /**
    * Opens a version for streaming. The file handle pins the data, so the full size is served
-   * even if the version is pruned meanwhile; it is closed when the stream ends or is cancelled.
+   * even if the version is pruned meanwhile. It is closed when the stream ends, is cancelled,
+   * or `signal` aborts: a client that disconnects before the response starts never reads or
+   * cancels the stream, and the file would otherwise stay open until garbage collection.
    */
-  async openVersion(accountId: string, version: string): Promise<OpenedVersion | null> {
+  async openVersion(
+    accountId: string,
+    version: string,
+    signal?: AbortSignal,
+  ): Promise<OpenedVersion | null> {
     let handle: FileHandle;
     try {
       handle = await open(this.#versionPath(accountId, version), 'r');
@@ -305,8 +348,17 @@ export class BackupStore {
     }
     try {
       const { size } = await handle.stat();
-      const stream = Readable.toWeb(handle.createReadStream()) as ReadableStream<Uint8Array>;
-      return { stream, size };
+      const file = handle.createReadStream(); // closes the handle when done or destroyed
+      if (signal !== undefined) {
+        const abort = (): void => void file.destroy();
+        if (signal.aborted) {
+          abort();
+        } else {
+          signal.addEventListener('abort', abort, { once: true });
+          file.once('close', () => signal.removeEventListener('abort', abort));
+        }
+      }
+      return { stream: Readable.toWeb(file) as ReadableStream<Uint8Array>, size };
     } catch (err) {
       await handle.close();
       throw err;
@@ -315,12 +367,14 @@ export class BackupStore {
 
   /**
    * Streams a request body into incoming/, stopping as soon as it exceeds `maxBytes` (so an
-   * oversized upload is never buffered or stored in full). Takes no lock. On success the caller
+   * oversized upload is never buffered or stored in full), and giving up with
+   * UploadStalledError if no bytes arrive for `stallMs`. Takes no lock. On success the caller
    * must `commitUpload` or `discardUpload` the temp file.
    */
   async receiveUpload(
     body: ReadableStream<Uint8Array> | null,
     maxBytes: number,
+    stallMs: number,
   ): Promise<UploadResult> {
     await mkdir(this.#incomingDir, { recursive: true, mode: 0o700 });
     const tempPath = path.join(this.#incomingDir, `${randomName(12)}.part`);
@@ -333,9 +387,13 @@ export class BackupStore {
           const reader = body.getReader();
           try {
             for (;;) {
-              const chunk = await reader.read().catch((err: unknown) => {
-                throw new BodyReadError('request body could not be read', { cause: err });
-              });
+              let chunk: ReadableStreamReadResult<Uint8Array>;
+              try {
+                chunk = await readChunk(reader, stallMs);
+              } catch (err) {
+                await reader.cancel().catch(() => undefined); // e.g. the stalled read
+                throw err;
+              }
               if (chunk.done) break;
               size += chunk.value.byteLength;
               if (size > maxBytes) {
@@ -416,15 +474,20 @@ export class BackupStore {
 }
 
 /**
- * Startup check. Writes nothing, so the server still starts (and restores keep working) when
- * the disk is completely full: it makes sure the data directory exists and is accessible
+ * Startup check. Needs no free space, so the server still starts (and restores keep working)
+ * when the disk is completely full: it makes sure the data directory exists and is accessible
  * (failing fast on e.g. a volume mounted with the wrong ownership), then finishes deletions
  * interrupted by a restart and drops half-received uploads, both of which only free space.
- * Subdirectories are created on demand.
+ * The one thing it may create is trash/ (so DELETE works on a full disk), and only if there is
+ * room; other subdirectories are created on demand.
  */
 export async function prepareDataDir(dataDir: string): Promise<void> {
   await mkdir(dataDir, { recursive: true });
   await access(dataDir, fsConstants.R_OK | fsConstants.W_OK | fsConstants.X_OK);
-  await emptyDirectory(path.join(dataDir, TRASH_DIR));
+  const trash = path.join(dataDir, TRASH_DIR);
+  await emptyDirectory(trash);
+  await mkdir(trash, { recursive: true, mode: 0o700 }).catch((err: unknown) => {
+    if (!isErrno(err, 'ENOSPC')) throw err;
+  });
   await emptyDirectory(path.join(dataDir, INCOMING_DIR));
 }

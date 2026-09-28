@@ -4,6 +4,7 @@ import { hashToken, isHex64, parseBearer, tokenMatches } from './auth.js';
 import type { AppConfig, Limits } from './config.js';
 import { DEFAULT_LIMITS, DEFAULT_RETENTION } from './config.js';
 import {
+  clientKey,
   cors,
   describeError,
   ipRateLimit,
@@ -12,12 +13,15 @@ import {
   securityHeaders,
   tooManyRequests,
 } from './middleware.js';
+import type { Charge } from './rateLimit.js';
 import { FixedWindowRateLimiter } from './rateLimit.js';
-import type { RetentionPolicy, SizedVersionStamp } from './retention.js';
+import type { RetentionPolicy } from './retention.js';
 import { DAY_MS, capTotalSize, planRetention } from './retention.js';
-import type { DiskSpace, StoredVersion, UploadResult, VersionRef } from './store.js';
-import { BackupStore, BodyReadError, isErrno, readDiskSpace } from './store.js';
-import { nextVersionId, parseVersionId } from './versionId.js';
+import type { DiskSpace, UploadResult, VersionRef } from './store.js';
+import { BackupStore, BodyReadError, UploadStalledError, isErrno, readDiskSpace } from './store.js';
+import type { UploadTicket } from './uploads.js';
+import { UploadSlots, UploadTracker } from './uploads.js';
+import { formatVersionId, parseVersionId } from './versionId.js';
 
 /** Options for {@link createApp}. Only `dataDir` is required; the rest have production defaults. */
 export interface AppOptions {
@@ -38,6 +42,8 @@ type ErrorCode =
   | 'unauthorized'
   | 'empty_body'
   | 'body_read_failed'
+  | 'upload_stalled'
+  | 'account_deleted'
   | 'payload_too_large'
   | 'not_found'
   | 'server_busy'
@@ -45,7 +51,7 @@ type ErrorCode =
   | 'insufficient_storage'
   | 'internal_error';
 
-type ErrorStatus = 400 | 401 | 404 | 413 | 500 | 503 | 507;
+type ErrorStatus = 400 | 401 | 404 | 408 | 409 | 413 | 500 | 503 | 507;
 
 const MINUTE_MS = 60_000;
 const BUSY_RETRY_AFTER_SECONDS = 5;
@@ -59,7 +65,6 @@ function fail(c: Context, status: ErrorStatus, error: ErrorCode): Response {
 }
 
 const toIso = (ms: number): string => new Date(ms).toISOString();
-const shortId = (accountId: string): string => `${accountId.slice(0, 8)}...`;
 
 type Credentials =
   { ok: true; accountId: string; token: string } | { ok: false; response: Response };
@@ -73,6 +78,9 @@ function readCredentials(c: Context, accountId: string): Credentials {
   return { ok: true, accountId, token: bearer.token };
 }
 
+/** An upload's reserved identity: sequence number and time are fixed when it starts. */
+type Reservation = UploadTicket & { createdAtMs: number };
+
 export function createApp(options: AppOptions): Hono {
   const config: AppConfig = {
     dataDir: options.dataDir,
@@ -85,6 +93,12 @@ export function createApp(options: AppOptions): Hono {
   };
   const { limits } = config;
   const store = new BackupStore(config.dataDir);
+  const tracker = new UploadTracker();
+  const slots = new UploadSlots({
+    total: limits.maxConcurrentUploads,
+    newAccounts: limits.maxConcurrentNewAccountUploads,
+    perClient: limits.maxConcurrentUploadsPerIp,
+  });
   const ipLimiter = new FixedWindowRateLimiter(
     limits.requestsPerIpPerMinute,
     MINUTE_MS,
@@ -100,7 +114,6 @@ export function createApp(options: AppOptions): Hono {
     MINUTE_MS,
     config.now,
   );
-  let uploadsInFlight = 0;
 
   /**
    * Enumeration-safe check: an unknown account and a wrong token are indistinguishable (both
@@ -143,27 +156,10 @@ export function createApp(options: AppOptions): Hono {
    * Retention after a successful upload. Pruning is housekeeping: failures are logged, never
    * reported to the client, whose upload is already safely stored.
    */
-  async function prune(
-    accountId: string,
-    created: SizedVersionStamp,
-    previous: StoredVersion[],
-    now: number,
-  ): Promise<void> {
+  async function prune(accountId: string): Promise<void> {
     try {
-      // If the previous upload looks more than a day old, the clock may have jumped ahead;
-      // pruning by age now could wipe months of daily snapshots. Skip it this time: the next
-      // upload (normally minutes later during a game) prunes as usual.
-      const newestBefore = previous[0];
-      const pruneByAge = newestBefore === undefined || now - newestBefore.createdAtMs <= DAY_MS;
-      if (!pruneByAge && newestBefore !== undefined) {
-        const days = ((now - newestBefore.createdAtMs) / DAY_MS).toFixed(1);
-        config.log(
-          `retention: previous upload for ${shortId(accountId)} is ${days} days old; ` +
-            'skipping age-based pruning for this upload',
-        );
-      }
-      const all = [created, ...previous];
-      const plan = planRetention(all, now, config.retention, { pruneByAge });
+      const versions = await store.listVersions(accountId);
+      const plan = planRetention(versions, config.retention);
       const capped = capTotalSize(plan.keep, limits.maxAccountBytes);
       const doomed = [...plan.remove, ...capped.remove].map((v) => v.version);
       await store.deleteVersions(accountId, doomed);
@@ -174,22 +170,26 @@ export function createApp(options: AppOptions): Hono {
 
   /**
    * Second half of an upload, run under the account lock once the body is safely in
-   * incoming/: re-check the account, create it if needed, assign the version id, move the file
-   * into place and prune. The temp file is discarded on every path that doesn't store it.
+   * incoming/: re-check the account, create it if needed, move the file into place under its
+   * reserved version id and prune. The temp file is discarded on every path that doesn't store
+   * it.
    */
   async function commit(
     c: Context,
     accountId: string,
     token: string,
     hadAccount: boolean,
+    reservation: Reservation,
     upload: { tempPath: string; size: number },
   ): Promise<Response> {
     let stored = false;
     try {
+      // Deleted after this upload started ("turn off backup"): drop the upload instead of
+      // bringing the account, or old data, back.
+      if (!tracker.isCurrent(accountId, reservation)) return fail(c, 409, 'account_deleted');
       const auth = await store.readAuth(accountId);
       if (auth === null) {
-        // Deleted while the body was arriving ("turn off backup"): don't bring it back.
-        if (hadAccount) return fail(c, 401, 'unauthorized');
+        if (hadAccount) return fail(c, 409, 'account_deleted'); // e.g. removed by hand
         const refusal = await store.withCreationLock(async () => {
           const reason = await newAccountRefusal(c);
           if (reason === null) {
@@ -208,16 +208,11 @@ export function createApp(options: AppOptions): Hono {
       }
 
       await store.removeStaleTempFiles(accountId);
-      const previous = await store.listVersions(accountId);
-      const now = config.now();
-      const created = nextVersionId(now, previous[0]?.version);
-      await store.commitUpload(accountId, upload.tempPath, created.version);
+      const version = formatVersionId(reservation.sequence, reservation.createdAtMs);
+      await store.commitUpload(accountId, upload.tempPath, version);
       stored = true;
-      await prune(accountId, { ...created, size: upload.size }, previous, now);
-      return c.json(
-        { version: created.version, createdAt: toIso(created.createdAtMs), size: upload.size },
-        201,
-      );
+      await prune(accountId);
+      return c.json({ version, createdAt: toIso(reservation.createdAtMs), size: upload.size }, 201);
     } finally {
       if (!stored) await store.discardUpload(upload.tempPath);
     }
@@ -235,7 +230,8 @@ export function createApp(options: AppOptions): Hono {
       if (size === null) return fail(c, 404, 'not_found');
       return c.body(null, 200, { ...headers, 'Content-Length': String(size) });
     }
-    const opened = await store.openVersion(accountId, ref.version);
+    // The request's signal aborts if the client goes away, which closes the file right away.
+    const opened = await store.openVersion(accountId, ref.version, c.req.raw.signal);
     if (opened === null) return fail(c, 404, 'not_found');
     return c.body(opened.stream, 200, { ...headers, 'Content-Length': String(opened.size) });
   }
@@ -256,7 +252,7 @@ export function createApp(options: AppOptions): Hono {
     const { accountId, token } = creds;
 
     // Everything that can refuse the upload runs before a single body byte is read, and
-    // without taking the account lock.
+    // without holding the account lock while the body arrives.
     if (Number(c.req.header('Content-Length')) > limits.maxBodyBytes) {
       return fail(c, 413, 'payload_too_large');
     }
@@ -264,42 +260,68 @@ export function createApp(options: AppOptions): Hono {
     if (auth !== null && !tokenMatches(token, auth.tokenSha256)) {
       return fail(c, 401, 'unauthorized');
     }
-    if (auth === null) {
+    const newAccount = auth === null;
+    if (newAccount) {
       const refusal = await newAccountRefusal(c);
       if (refusal !== null) return refusal;
     }
     if (await lowOnDisk()) return fail(c, 507, 'insufficient_storage');
-    if (uploadsInFlight >= limits.maxConcurrentUploads) return fail(c, 503, 'server_busy');
-    const decision = writeLimiter.hit(accountId);
-    if (!decision.allowed) return tooManyRequests(c, decision.retryAfterSeconds);
+    const slot = slots.acquire(clientKey(c), newAccount);
+    if (!slot.ok) {
+      return slot.reason === 'client_busy'
+        ? tooManyRequests(c, BUSY_RETRY_AFTER_SECONDS)
+        : fail(c, 503, 'server_busy');
+    }
 
-    // Receive the body into incoming/ with no lock held: a phone that loses signal mid-upload
-    // must not block its own next upload (or a delete) until the request times out.
-    uploadsInFlight += 1;
+    let charge: Charge | undefined;
     let keepCharge = false; // refund the write allowance unless the attempt counts against it
     try {
-      let upload: UploadResult;
-      try {
-        upload = await store.receiveUpload(c.req.raw.body, limits.maxBodyBytes);
-      } catch (err) {
-        if (err instanceof BodyReadError) return fail(c, 400, 'body_read_failed');
-        throw err;
-      }
-      if (upload.kind !== 'received') {
-        keepCharge = true; // the client sent a bad body; that attempt counts
-        return upload.kind === 'too_large'
-          ? fail(c, 413, 'payload_too_large')
-          : fail(c, 400, 'empty_body');
-      }
-      const received = upload;
-      const response = await store.withAccountLock(accountId, () =>
-        commit(c, accountId, token, auth !== null, received),
+      const decision = writeLimiter.hit(accountId);
+      if (!decision.allowed) return tooManyRequests(c, decision.retryAfterSeconds);
+      charge = decision.charge;
+
+      // Reserve the version's sequence number and timestamp now, so versions sort by when their
+      // upload started: a slow upload of older data can't become "latest" over newer data.
+      const reservation = await store.withAccountLock(
+        accountId,
+        async (): Promise<Reservation> => ({
+          ...(await tracker.begin(accountId, () => store.highestSequence(accountId))),
+          createdAtMs: Math.floor(config.now()),
+        }),
       );
-      keepCharge = response.status === 201;
-      return response;
+      try {
+        // Receive the body into incoming/ with no lock held: a phone that loses signal
+        // mid-upload must not block its own next upload, or a delete.
+        let upload: UploadResult;
+        try {
+          upload = await store.receiveUpload(
+            c.req.raw.body,
+            limits.maxBodyBytes,
+            limits.uploadStallTimeoutMs,
+          );
+        } catch (err) {
+          if (err instanceof UploadStalledError) return fail(c, 408, 'upload_stalled');
+          if (err instanceof BodyReadError) return fail(c, 400, 'body_read_failed');
+          throw err;
+        }
+        if (upload.kind !== 'received') {
+          keepCharge = true; // the client sent a bad body; that attempt counts
+          return upload.kind === 'too_large'
+            ? fail(c, 413, 'payload_too_large')
+            : fail(c, 400, 'empty_body');
+        }
+        const received = upload;
+        const response = await store.withAccountLock(accountId, () =>
+          commit(c, accountId, token, !newAccount, reservation, received),
+        );
+        keepCharge = response.status === 201;
+        return response;
+      } finally {
+        tracker.end(accountId);
+      }
     } finally {
-      uploadsInFlight -= 1;
-      if (!keepCharge) writeLimiter.refund(accountId);
+      slot.release();
+      if (charge !== undefined && !keepCharge) writeLimiter.refund(charge);
     }
   });
 
@@ -349,7 +371,13 @@ export function createApp(options: AppOptions): Hono {
     if (!creds.ok) return creds.response;
     const { accountId, token } = creds;
     return store.withAccountLock(accountId, async () => {
-      if (!(await isAuthorized(accountId, token))) return fail(c, 401, 'unauthorized');
+      const auth = await store.readAuth(accountId);
+      const authorized = tokenMatches(token, auth?.tokenSha256 ?? null);
+      // Uploads still arriving for this account must not land after the delete. That includes
+      // the account's very first upload, before the account exists (then there is no token to
+      // check: the unguessable id is the proof).
+      if (authorized || auth === null) tracker.accountDeleted(accountId);
+      if (!authorized) return fail(c, 401, 'unauthorized');
       await store.deleteAccount(accountId);
       return c.body(null, 204);
     });
