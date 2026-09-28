@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { getGame, getGameEvents } from '@/data/repo';
+import { deleteStat, getGame, getGameEvents } from '@/data/repo';
 import { computeStatLine, percentage, statLinesByPeriod } from '@/data/stats';
 import { EXPORT_APP, EXPORT_SCHEMA_VERSION, importAll } from '@/data/transfer';
 import type { Game, Player, StatEvent, StatType } from '@/data/types';
@@ -325,6 +325,21 @@ describe('GameReportScreen', () => {
     expect(await getGameEvents('g1')).toHaveLength(PLAYS.length - 1);
     await waitFor(() => expect(tile('Game totals', 'Points').value).toBe('5'));
     expect(notifications()).toHaveTextContent('Deleted 3PT Made');
+  });
+
+  it('says so when the play was deleted elsewhere in the meantime', async () => {
+    await seed();
+    const { user } = await renderReport();
+
+    await user.click(screen.getByRole('button', { name: /6:08.*3PT Made/ }));
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete this stat?' });
+    await deleteStat('e04');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete stat' }));
+
+    expect(
+      await within(notifications()).findByText('That stat was already deleted'),
+    ).toBeInTheDocument();
+    expect(await getGameEvents('g1')).toHaveLength(PLAYS.length - 1);
   });
 
   it('keeps a play when the deletion is cancelled', async () => {

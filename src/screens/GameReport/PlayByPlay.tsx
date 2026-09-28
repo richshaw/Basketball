@@ -35,8 +35,8 @@ export function PlayByPlay({ game, events }: PlayByPlayProps) {
     });
     if (!confirmed) return;
     try {
-      await deleteStat(play.event.id);
-      toast.show({ message: `Deleted ${label}` });
+      const removed = await deleteStat(play.event.id);
+      toast.show({ message: removed ? `Deleted ${label}` : 'That stat was already deleted' });
     } catch (error) {
       console.error('Deleting a stat failed', error);
       toast.show({ message: "Couldn't delete the stat. Try again." });
