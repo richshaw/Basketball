@@ -338,7 +338,9 @@ describe('Settings: cloud backup paused or stopped', () => {
     await user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
 
     await expectToast('Restored 10 games. This phone now backs up with this code.');
-    expect(router.state.location.pathname).toBe(paths.home);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(paths.home);
+    });
     expect(await listGames()).toHaveLength(10);
     expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
   });
@@ -402,7 +404,9 @@ describe('Settings: cloud backup paused or stopped', () => {
     await expectToast(
       'Restored 1 game · 10 already up to date. This phone now backs up with this code.',
     );
-    expect(router.state.location.pathname).toBe(paths.home);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(paths.home);
+    });
     expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
     // This phone's, the other phone's, then both phones' games together.
     expect(cloud.server.uploads).toHaveLength(3);

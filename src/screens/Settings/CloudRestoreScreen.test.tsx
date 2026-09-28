@@ -5,6 +5,7 @@ import { resetDatabase } from '@/test/db';
 import { createBackupApi } from '@/data/backup/api';
 import {
   backUpNow,
+  enableCloudBackupWithCode,
   fetchCloudBackup,
   getBackupCode,
   type CloudBackup,
@@ -12,9 +13,10 @@ import {
 import { BackupCodeError, generateBackupCode, parseBackupCode } from '@/data/backup/code';
 import { errorMessage } from '@/data/backup/errors';
 import { deriveBackupKeys } from '@/data/backup/keys';
+import type { DemoOptions } from '@/data/demo';
 import { createGame, deleteGame, getPlayer, listGames } from '@/data/repo';
 import { paths } from '@/routes';
-import { realGameId, TEST_API_URL } from '@/test/backupHarness';
+import { REAL_LIVE_GAME_ID, realGameId, TEST_API_URL } from '@/test/backupHarness';
 import {
   seedOwnGames,
   settledStatus,
@@ -23,6 +25,16 @@ import {
 } from '@/test/cloudBackupApp';
 import { renderRoute } from '@/test/render';
 import { cloudBackupSummary } from './cloudBackupText';
+import type * as CloudBackupModule from '@/data/backup/cloudBackup';
+
+// The real API, but a test can hold back turning backup on after a restore.
+vi.mock('@/data/backup/cloudBackup', async (importOriginal) => {
+  const actual = await importOriginal<typeof CloudBackupModule>();
+  return {
+    ...actual,
+    enableCloudBackupWithCode: vi.fn(actual.enableCloudBackupWithCode),
+  };
+});
 
 const cloud = setUpFakeCloudBackup();
 
@@ -35,8 +47,10 @@ async function expectToast(message: string) {
 }
 
 /** A phone backs up its ten games; then it's a new phone: nothing on it, not even the code. */
-async function backUpThenNewPhone(): Promise<{ code: string; backup: CloudBackup }> {
-  await seedOwnGames();
+async function backUpThenNewPhone(
+  options: DemoOptions = {},
+): Promise<{ code: string; backup: CloudBackup }> {
+  await seedOwnGames(options);
   const code = await turnOnCloudBackup();
   const fetched = await fetchCloudBackup(code);
   if (!fetched.ok) throw new Error(fetched.error.message);
@@ -55,6 +69,13 @@ async function find(view: Awaited<ReturnType<typeof renderRestore>>, code: strin
   await view.user.clear(view.field);
   await view.user.type(view.field, code);
   await view.user.click(screen.getByRole('button', { name: 'Find backup' }));
+}
+
+/** After a restore: backup is on with the code once the screen has gone on to Games. */
+async function expectGames(view: Awaited<ReturnType<typeof renderRestore>>) {
+  await waitFor(() => {
+    expect(view.router.state.location.pathname).toBe(paths.home);
+  });
 }
 
 /** What the engine says about a code that can't be right (checked here, offline). */
@@ -153,7 +174,7 @@ describe('Restore from a backup code', () => {
     await view.user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
 
     await expectToast('Restored 10 games. This phone now backs up with this code.');
-    expect(view.router.state.location.pathname).toBe(paths.home);
+    await expectGames(view);
     expect(await screen.findByRole('heading', { level: 1, name: 'Games' })).toBeVisible();
     expect(await listGames()).toHaveLength(10);
     expect(await getPlayer()).toMatchObject({ name: 'Ava', jerseyNumber: '12' });
@@ -176,6 +197,7 @@ describe('Restore from a backup code', () => {
     );
 
     await expectToast('Restored 10 games. This phone now backs up with this code.');
+    await expectGames(view);
     expect(await listGames()).toHaveLength(11);
     expect(await getBackupCode()).toBe(code);
     expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
@@ -196,6 +218,7 @@ describe('Restore from a backup code', () => {
     await view.user.click(within(question).getByRole('button', { name: 'Replace everything' }));
 
     await expectToast('Restored 10 games. This phone now backs up with this code.');
+    await expectGames(view);
     const games = await listGames();
     expect(games).toHaveLength(10);
     expect(games.map((game) => game.opponent)).not.toContain('Hillcrest');
@@ -253,6 +276,7 @@ describe('Restore from a backup code', () => {
     await view.user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
 
     await expectToast('Restored 10 games. This phone now backs up with this code.');
+    await expectGames(view);
     expect(await listGames()).toHaveLength(10);
     // Not taken for another phone's backup: it backed up the ten games as the newest.
     expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
@@ -307,5 +331,81 @@ describe('Restore from a backup code', () => {
       'href',
       paths.settings,
     );
+  });
+});
+
+describe('Restore from a backup code: after the restore', () => {
+  it('closes and says so as soon as the stats are on the phone, even without signal', async () => {
+    // A phone backed up its games, including a live one; then a new phone.
+    const { code } = await backUpThenNewPhone({ liveGame: true });
+    const view = await renderRestore(paths.restoreBackup('games'));
+    await find(view, code);
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+
+    // Bad signal in the gym: the server doesn't answer now.
+    const release = cloud.server.hold();
+    await view.user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+
+    await expectToast('Restored 11 games. This phone now backs up with this code.');
+    await expectGames(view);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(await getBackupCode()).toBe(code);
+    release();
+    expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
+  });
+
+  it('never leaves the screen the parent has gone to meanwhile', async () => {
+    const { code } = await backUpThenNewPhone({ liveGame: true });
+    const view = await renderRestore(paths.restoreBackup('games'));
+    await find(view, code);
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    // Turning backup on takes its time (it waits for a turn-off still going, say).
+    let finish = () => Promise.resolve();
+    const actual = vi.mocked(enableCloudBackupWithCode).getMockImplementation();
+    vi.mocked(enableCloudBackupWithCode).mockImplementationOnce(
+      (...args) =>
+        new Promise((resolve) => {
+          finish = async () => {
+            if (actual) resolve(await actual(...args));
+          };
+        }),
+    );
+    await view.user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+    await expectToast('Restored 11 games. This phone now backs up with this code.');
+
+    // She heads for the live game before it's done.
+    await view.router.navigate(paths.trackGame(REAL_LIVE_GAME_ID));
+    await finish();
+    expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
+    expect(view.router.state.location.pathname).toBe(paths.trackGame(REAL_LIVE_GAME_ID));
+  });
+
+  it('restores an older backup without asking the server for the newest', async () => {
+    await seedOwnGames();
+    const code = await turnOnCloudBackup();
+    await deleteGame(realGameId(1));
+    expect((await backUpNow()).ok).toBe(true);
+    await resetDatabase();
+    const view = await renderRestore();
+    await find(view, code);
+    const newest = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await view.user.click(within(newest).getByRole('button', { name: 'Close' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    const older = screen.getByRole('list', { name: 'Older backups' });
+    await view.user.click(within(older).getByRole('button', { name: 'Show older backups' }));
+    await view.user.click((await within(older).findAllByRole('button'))[0] as HTMLElement);
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+
+    // The server can't say which backup is the newest just now: nothing needs it to.
+    cloud.server.failNext({ status: 503, error: 'server_busy', method: 'HEAD' });
+    await view.user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+    await expectGames(view);
+    expect(await listGames()).toHaveLength(10);
+    // Not taken for another phone's backup: the older one's ten games went up as the newest.
+    expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
+    const latest = await fetchCloudBackup(code);
+    expect(latest.ok && latest.value.games).toBe(10);
   });
 });

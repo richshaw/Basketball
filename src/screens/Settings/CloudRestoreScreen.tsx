@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Button } from '@/components/Button/Button';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
@@ -6,6 +6,7 @@ import { ListRow } from '@/components/GroupedList/ListRow';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { TextField } from '@/components/TextField/TextField';
+import { useToast } from '@/components/Toast/toastContext';
 import {
   enableCloudBackupWithCode,
   fetchCloudBackup,
@@ -14,6 +15,7 @@ import {
   type BackupVersion,
   type CloudBackup,
   type CloudBackupErrorKind,
+  type CloudResult,
 } from '@/data/backup/cloudBackup';
 import { useGames } from '@/data/hooks';
 import { paths } from '@/routes';
@@ -41,9 +43,17 @@ const BACKUP_PROBLEMS: ReadonlySet<CloudBackupErrorKind> = new Set([
 interface Found {
   code: string;
   backup: CloudBackup;
-  /** When `backup` is an older backup: the newest one's version, as listed (see `turnOnBackup`). */
+  /**
+   * The server's newest version as this screen saw it: `backup`'s own, or the first of
+   * the older backups' list. Turning backup on with it needs no request (see
+   * enableCloudBackupWithCode).
+   */
   newestVersion?: string;
 }
+
+const NOW_BACKS_UP = 'This phone now backs up with this code.';
+/** Long enough to read the engine's reason. */
+const MESSAGE_TOAST_MS = 6000;
 
 /**
  * Restore from a backup code (full screen): on a new phone, after "Erase all data", or
@@ -57,10 +67,21 @@ export function CloudRestoreScreen() {
   const [searchParams] = useSearchParams();
   const fromGames = searchParams.get('from') === 'games';
   const navigate = useNavigate();
+  const toast = useToast();
   const games = useGames();
   const phoneCode = useBackupCode();
   const available = isCloudBackupAvailable();
   const inputRef = useRef<HTMLInputElement>(null);
+  // Nothing happens here once the parent has left the screen (for the live game, say).
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  // Turning backup on after the last restore, which Games waits for (see `restored`).
+  const turningOn = useRef<Promise<CloudResult<void>> | null>(null);
 
   // What's in the field: this phone's own code, until the parent types.
   const [typed, setTyped] = useState<string | null>(null);
@@ -118,7 +139,7 @@ export function CloudRestoreScreen() {
     setFinding(false);
     if (result.ok) {
       setOlderFor(code);
-      preview({ code, backup: result.value });
+      preview({ code, backup: result.value, newestVersion: result.value.version });
       return;
     }
     const { kind, message } = result.error;
@@ -156,32 +177,40 @@ export function CloudRestoreScreen() {
       setProblem(result.error.message);
       return;
     }
-    const newest = versions?.[0]?.version;
     preview({
       code: olderFor,
       backup: result.value,
-      newestVersion: newest === version.version ? undefined : newest,
+      newestVersion: versions?.[0]?.version ?? result.value.version,
     });
   };
 
-  /** After the import: this phone carries on backing up with the code. Never rejects. */
-  const turnOnBackup = async (): Promise<string | undefined> => {
+  /**
+   * Right after the import: this phone carries on backing up with the code. It needs no
+   * signal (the newest version is known), and nothing waits for it but going to Games.
+   */
+  const turnOnBackup = (): string | undefined => {
     if (!found) return undefined;
-    // The engine carries on from the server's newest version, so an older backup isn't
-    // taken for another phone's later. If it can't ask the server just then, it falls
-    // back to the backup's own version: give it the newest this screen listed instead.
-    const backup = found.newestVersion
-      ? { ...found.backup, version: found.newestVersion }
-      : found.backup;
-    try {
-      const result = await enableCloudBackupWithCode(found.code, { backup });
-      return result.ok
-        ? 'This phone now backs up with this code.'
-        : `Cloud backup couldn't be turned on. ${result.error.message}`;
-    } catch (error) {
-      console.error('Turning on cloud backup after a restore failed', error);
-      return "Cloud backup couldn't be turned on. Try restoring again.";
+    const { code, backup, newestVersion } = found;
+    turningOn.current = enableCloudBackupWithCode(code, { backup, newestVersion }).catch(
+      (error: unknown) => {
+        console.error('Turning on cloud backup after a restore failed', error);
+        return { ok: false, error: { kind: 'unexpected', message: 'Try restoring again.' } };
+      },
+    );
+    return NOW_BACKS_UP;
+  };
+
+  /** The restore is done and its sheet closed: on to Games, if the parent is still here. */
+  const restored = async () => {
+    const result = await turningOn.current;
+    if (!mounted.current) return;
+    if (result && !result.ok) {
+      toast.show({
+        message: `Cloud backup couldn't be turned on. ${result.error.message}`,
+        duration: MESSAGE_TOAST_MS,
+      });
     }
+    void navigate(paths.home, { replace: true });
   };
 
   const olderBackups = versions?.slice(1) ?? [];
@@ -281,7 +310,7 @@ export function CloudRestoreScreen() {
         request={request}
         onClose={() => setSheetOpen(false)}
         afterRestore={turnOnBackup}
-        onRestored={() => void navigate(paths.home, { replace: true })}
+        onRestored={() => void restored()}
       />
     </main>
   );

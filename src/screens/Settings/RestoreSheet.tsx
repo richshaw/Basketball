@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/Button/Button';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
@@ -27,12 +27,16 @@ export interface RestoreSheetProps {
   request: RestoreRequest | null;
   onClose: () => void;
   /**
-   * Runs once the backup is on the phone, before the sheet says so (e.g. turning cloud
-   * backup on with the backup's code). Resolves to a sentence to add to what the sheet
-   * says; it must not reject.
+   * Called as soon as the backup is on the phone, before the sheet closes and says so
+   * (e.g. to turn cloud backup on with the backup's code, in the background). Returns a
+   * sentence to add to what the sheet says, at once: nothing waits for it. If it throws,
+   * the restore still stands and the sheet says only what was restored.
    */
-  afterRestore?: () => Promise<string | undefined>;
-  /** A restore finished and the sheet closed (e.g. to leave the screen). */
+  afterRestore?: () => string | undefined;
+  /**
+   * A restore finished and closed the sheet (e.g. to leave the screen). Not called if
+   * the parent closed the sheet herself while it was restoring.
+   */
   onRestored?: () => void;
 }
 
@@ -90,6 +94,19 @@ export function RestoreSheet({
   const [nothingNew, setNothingNew] = useState<{ request: RestoreRequest; note?: string } | null>(
     null,
   );
+  // A restore that finishes after the sheet (or its screen) has gone says nothing: the
+  // parent may be on the live game screen by then.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   if (!request) return null;
 
@@ -131,30 +148,36 @@ export function RestoreSheet({
       if (!confirmed) return;
     }
     setRestoring(true);
+    let taken: ImportSummary;
     try {
-      let taken: ImportSummary;
-      try {
-        taken = await importAll(backup, mode);
-      } catch (error) {
-        console.error('Restoring a backup failed', error);
-        toast.show({ message: RESTORE_FAILED });
-        return;
-      }
-      const note = await afterRestore?.();
-      if (mode === 'merge' && taken.games === 0 && backup.games.length > 0 && !phoneIsEmpty) {
-        // Nothing to add: say so next to Replace, the way to get the backup's versions.
-        setNothingNew({ request, note });
-        return;
-      }
-      onClose();
-      const restored = restoredMessage(taken, backup.games.length);
-      toast.show(
-        note ? { message: `${restored}. ${note}`, duration: NOTE_TOAST_MS } : { message: restored },
-      );
-      onRestored?.();
-    } finally {
+      taken = await importAll(backup, mode);
+    } catch (error) {
+      console.error('Restoring a backup failed', error);
       setRestoring(false);
+      if (mounted.current) toast.show({ message: RESTORE_FAILED });
+      return;
     }
+    let note: string | undefined;
+    try {
+      note = afterRestore?.();
+    } catch (error) {
+      // The backup is on the phone either way: say so, without the extra sentence.
+      console.error('After restoring a backup', error);
+    }
+    setRestoring(false);
+    if (!mounted.current) return;
+    if (mode === 'merge' && taken.games === 0 && backup.games.length > 0 && !phoneIsEmpty) {
+      // Nothing to add: say so next to Replace, the way to get the backup's versions.
+      setNothingNew({ request, note });
+      return;
+    }
+    const closedMeanwhile = !openRef.current;
+    onClose();
+    const restored = restoredMessage(taken, backup.games.length);
+    toast.show(
+      note ? { message: `${restored}. ${note}`, duration: NOTE_TOAST_MS } : { message: restored },
+    );
+    if (!closedMeanwhile) onRestored?.();
   };
 
   return (
