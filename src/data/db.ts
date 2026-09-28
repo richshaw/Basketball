@@ -31,13 +31,17 @@ export class HoopStatsDatabase extends Dexie {
     super(name);
 
     // Schema history. Never edit a version that has shipped: add the next one, e.g.
-    //   this.version(2).stores({ games: 'id, playerId, date, status, season, updatedAt, opponent' })
+    //   this.version(2).stores({ games: 'id, status, date' })
     //     .upgrade((tx) => tx.table('games').toCollection().modify((game) => { ... }));
     // listing only the tables that change. Dexie upgrades older databases in order.
-    // Only indexed fields are listed; records can hold any other fields.
+    // Only indexed fields are listed (records can hold any other fields), and only
+    // fields something queries by: every index is rewritten on every write, and a
+    // game is written on every tap.
     this.version(1).stores({
       players: 'id',
-      games: 'id, playerId, date, status, season, updatedAt',
+      // status: the live game. Game lists are small and sorted in memory.
+      games: 'id, status',
+      // gameId: deleting a game's events. [gameId+createdAt]: a game's events in order.
       events: 'id, gameId, [gameId+createdAt]',
       meta: 'key',
     });
