@@ -78,6 +78,14 @@ export function CloseIcon(props: IconProps) {
   );
 }
 
+export function PlusIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 5v14M5 12h14" />
+    </Icon>
+  );
+}
+
 /** Safari's Share button: a box with an arrow coming out of the top. */
 export function ShareIcon(props: IconProps) {
   return (

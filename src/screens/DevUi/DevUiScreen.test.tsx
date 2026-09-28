@@ -30,6 +30,7 @@ describe('DevUiScreen', () => {
       'Toast and shareText',
       'InstallBanner and InstallSheet',
       'Button',
+      'Court',
     ]) {
       expect(screen.getByRole('heading', { level: 2, name: title })).toBeInTheDocument();
     }

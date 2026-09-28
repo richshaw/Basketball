@@ -13,6 +13,7 @@ import {
   GAME_STATUSES,
   HOME_AWAY,
   MAX_PERIOD,
+  MAX_SCORE,
   PERIOD_FORMATS,
   STAT_TYPES,
   TEXT_LIMITS,
@@ -38,7 +39,7 @@ const period = z
   .check(z.minimum(1, 'Period below 1'), z.maximum(MAX_PERIOD, `Period above ${MAX_PERIOD}`));
 const score = z
   .int('Expected a score')
-  .check(z.minimum(0, 'Negative score'), z.maximum(999, 'Score above 999'));
+  .check(z.minimum(0, 'Negative score'), z.maximum(MAX_SCORE, `Score above ${MAX_SCORE}`));
 
 export const courtPointSchema = z.object({
   x: z.number().check(z.minimum(-SIDELINE_X), z.maximum(SIDELINE_X)),
