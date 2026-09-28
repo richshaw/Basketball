@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useRef, useState, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from '@/components/Button/Button';
+import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { TextField } from '@/components/TextField/TextField';
 import { Sheet, type SheetProps } from './Sheet';
 
@@ -209,17 +210,130 @@ describe('Sheet', () => {
     const { onClose, dialog } = await openDemo();
     // e.g. Chrome closes a modal on a second Escape even when "cancel" is prevented.
     act(() => dialog.close());
-    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
     await waitForClosed();
   });
 
   it('shows itself again if the browser closes it while it must stay open', async () => {
     const { onClose, dialog } = await openDemo({ dismissible: false });
     act(() => dialog.close());
-    expect(onClose).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(dialog.open).toBe(true);
     });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('ignores a queued close event that arrives after it was opened again', async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<Sheet open onClose={onClose} title="Edit game" />);
+    const dialog = screen.getByRole<HTMLDialogElement>('dialog');
+
+    // Closing queues a "close" event; reopening at once must not be undone by it.
+    rerender(<Sheet open={false} onClose={onClose} title="Edit game" />);
+    rerender(<Sheet open onClose={onClose} title="Edit game" />);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialog.open).toBe(true);
+  });
+
+  it('gives the page back as soon as closing starts, then reports when it is gone', async () => {
+    const onClosed = vi.fn();
+    const { dialog } = await openDemo({ onClosed, footer: <Button>Save</Button> });
+    const trigger = screen.getByRole('button', { name: 'Edit' });
+    expect(trigger).toHaveAttribute('inert');
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    });
+    // Still on screen for its exit animation, but already closed: focus is back and
+    // the page is usable, while the sheet's own buttons can't be tapped again.
+    expect(dialog).toHaveAttribute('data-closing');
+    expect(dialog.open).toBe(false);
+    expect(trigger).toHaveFocus();
+    expect(trigger).not.toHaveAttribute('inert');
+    expect(screen.getByText('Save', { selector: 'button' }).parentElement).toHaveAttribute('inert');
+    expect(onClosed).not.toHaveBeenCalled();
+
+    await waitForClosed();
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  it('lifts itself above the on-screen keyboard', async () => {
+    const keyboard = new (class extends EventTarget {
+      height = 461;
+      offsetTop = 0;
+      scale = 1;
+    })();
+    vi.stubGlobal('visualViewport', keyboard);
+    vi.stubGlobal('innerHeight', 797);
+    try {
+      const { dialog } = await openDemo();
+      expect(dialog.style.getPropertyValue('--keyboard-inset')).toBe('336px');
+
+      act(() => {
+        keyboard.height = 797;
+        keyboard.dispatchEvent(new Event('resize'));
+      });
+      expect(dialog.style.getPropertyValue('--keyboard-inset')).toBe('0px');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('Sheet with a dialog inside it', () => {
+  /** An edit sheet whose content opens a ConfirmDialog, like "Delete this game?". */
+  function EditWithConfirm({ onSheetClose }: { onSheetClose: () => void }) {
+    const [confirming, setConfirming] = useState(false);
+    return (
+      <Sheet open onClose={onSheetClose} title="Edit game">
+        <TextField label="Opponent" />
+        <Button onClick={() => setConfirming(true)}>Delete</Button>
+        <ConfirmDialog
+          open={confirming}
+          title="Delete this game?"
+          confirmLabel="Delete game"
+          destructive
+          onConfirm={() => setConfirming(false)}
+          onCancel={() => setConfirming(false)}
+        />
+      </Sheet>
+    );
+  }
+
+  async function openBoth() {
+    const user = userEvent.setup();
+    const onSheetClose = vi.fn();
+    render(<EditWithConfirm onSheetClose={onSheetClose} />);
+    await user.type(screen.getByRole('textbox', { name: 'Opponent' }), 'Hawks');
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(screen.getByRole('alertdialog', { name: 'Delete this game?' })).toBeInTheDocument();
+    return { user, onSheetClose };
+  }
+
+  const expectOnlyTheSheetLeft = async (onSheetClose: () => void) => {
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    });
+    // React passes a nested dialog's cancel/close events up to the sheet: it must ignore them.
+    expect(onSheetClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Edit game' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Opponent' })).toHaveValue('Hawks');
+  };
+
+  it('closes only the inner dialog on Escape', async () => {
+    const { user, onSheetClose } = await openBoth();
+    await user.keyboard('{Escape}');
+    await expectOnlyTheSheetLeft(onSheetClose);
+  });
+
+  it('closes only the inner dialog with its buttons', async () => {
+    const { user, onSheetClose } = await openBoth();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await expectOnlyTheSheetLeft(onSheetClose);
   });
 });
 
