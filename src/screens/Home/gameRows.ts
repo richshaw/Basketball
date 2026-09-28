@@ -1,15 +1,11 @@
 /**
- * Pure helpers for the Games list: row titles, dates, results and season groups.
+ * Pure helpers for the Games list: dates, results and season groups. (Game titles,
+ * "vs Central" or "@ Central", come from `gameTitle` in src/lib/gameTitle.ts.)
  */
 import type { BadgeTone } from '@/components/Badge/Badge';
 import { gameResult, type GameStatLine } from '@/data/stats';
 import type { Game } from '@/data/types';
 import { formatGameDate } from '@/lib/format';
-
-/** "vs Central", or "@ Central" for an away game (home, neutral and unknown read "vs"). */
-export function gameTitle(game: Pick<Game, 'opponent' | 'homeAway'>): string {
-  return `${game.homeAway === 'away' ? '@' : 'vs'} ${game.opponent}`;
-}
 
 /** 'Sun, Sep 27', with the year added for a game outside the current year (`today`'s). */
 export function gameDateLabel(date: string, today: string): string {

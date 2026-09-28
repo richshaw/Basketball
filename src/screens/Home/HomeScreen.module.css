@@ -8,9 +8,10 @@
   visibility: hidden;
 }
 
-/* Whose games these are, beside the large title. */
+/* Whose games these are, beside the large title: at most half the row, so a long name
+   ends in "…" instead of squeezing the title. */
 .player {
-  max-width: 45vw;
+  max-width: calc((min(100vw, var(--content-max-width)) - 2 * var(--space-4)) / 2);
   overflow: hidden;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
@@ -32,7 +33,7 @@
 }
 
 .plus {
-  width: var(--space-5);
-  height: var(--space-5);
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   margin-inline-start: calc(-1 * var(--space-1));
 }

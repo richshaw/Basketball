@@ -11,6 +11,11 @@ import styles from './PlayerSetupCard.module.css';
 export interface PlayerSetupCardProps {
   /** The player so far: null before there is one, or one with no name yet. */
   player: Player | null;
+  /**
+   * `primary` (default) when saving is the screen's main action; `secondary` when
+   * something else is, e.g. resuming a live game.
+   */
+  saveVariant?: 'primary' | 'secondary';
 }
 
 /**
@@ -18,7 +23,7 @@ export interface PlayerSetupCardProps {
  * started without it; the name can be added any time later. Once the player has a
  * name, Games stops showing the card.
  */
-export function PlayerSetupCard({ player }: PlayerSetupCardProps) {
+export function PlayerSetupCard({ player, saveVariant = 'primary' }: PlayerSetupCardProps) {
   const toast = useToast();
   const headingId = useId();
   const [name, setName] = useState(player?.name ?? '');
@@ -111,7 +116,7 @@ export function PlayerSetupCard({ player }: PlayerSetupCardProps) {
             className={styles.number}
           />
         </div>
-        <Button type="submit" size="lg" block disabled={saving}>
+        <Button type="submit" size="lg" block variant={saveVariant} disabled={saving}>
           Save
         </Button>
       </form>

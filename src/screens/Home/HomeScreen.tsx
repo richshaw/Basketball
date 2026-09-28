@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, type Ref } from 'react';
 import { ButtonLink } from '@/components/Button/ButtonLink';
 import type { ButtonVariant } from '@/components/Button/buttonClassName';
 import { EmptyState } from '@/components/EmptyState/EmptyState';
+import { PlusIcon } from '@/components/Icons/Icons';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
-import { useAllEvents, useGames, useLiveGame, usePlayer } from '@/data/hooks';
+import { useAllEvents, useGameEvents, useGames, useLiveGame, usePlayer } from '@/data/hooks';
 import { computeStatLine, statLinesForGames } from '@/data/stats';
 import type { Player } from '@/data/types';
 import { cx } from '@/lib/cx';
@@ -13,7 +14,6 @@ import { paths } from '@/routes';
 import { GameList } from './GameList';
 import { LiveGameCard } from './LiveGameCard';
 import { PlayerSetupCard } from './PlayerSetupCard';
-import { PlusIcon } from './PlusIcon';
 import styles from './HomeScreen.module.css';
 
 /** "Ava · #12" (or just "Ava" with no number). */
@@ -47,30 +47,39 @@ export function HomeScreen() {
   const player = usePlayer();
   const games = useGames();
   const liveGame = useLiveGame();
-  const events = useAllEvents();
+  // Just the live game's events: the Resume card mustn't wait for every event there is.
+  const liveEvents = useGameEvents(liveGame?.id);
+  // Every event, only for the list's stat lines, which render last.
+  const allEvents = useAllEvents();
   const newGameRef = useRef<HTMLAnchorElement>(null);
+  const resumeRef = useRef<HTMLAnchorElement>(null);
   const wasSettingUp = useRef(false);
 
+  const liveLine = useMemo(
+    () => (liveGame && liveEvents ? computeStatLine(liveEvents) : undefined),
+    [liveGame, liveEvents],
+  );
   // One pass over every event for all the rows; redone only when the data changes.
   const entries = useMemo(
-    () => (games && events ? statLinesForGames(games, events) : undefined),
-    [games, events],
-  );
-  const liveLine = useMemo(
-    () =>
-      liveGame && events
-        ? computeStatLine(events.filter((event) => event.gameId === liveGame.id))
-        : undefined,
-    [liveGame, events],
+    () => (games && allEvents ? statLinesForGames(games, allEvents) : undefined),
+    [games, allEvents],
   );
 
-  const loading = player === undefined || entries === undefined || liveGame === undefined;
+  // Everything above the list comes from small reads, so it shows at once. The list
+  // comes in below it when every event is read, and nothing above it moves.
+  const loading =
+    player === undefined ||
+    games === undefined ||
+    liveGame === undefined ||
+    (liveGame !== null && liveLine === undefined);
   const named = Boolean(player?.name.trim());
   const needsSetup = !loading && !named;
-  const noGames = !loading && entries.length === 0;
+  const noGames = !loading && games.length === 0;
+  const hasGames = !loading && games.length > 0;
   const today = todayLocalISO();
 
-  // When the setup card goes away it takes focus with it: carry on at the next step.
+  // When the setup card goes away it takes focus with it: carry on at the next step,
+  // the live game if there is one.
   useEffect(() => {
     if (needsSetup) {
       wasSettingUp.current = true;
@@ -79,7 +88,7 @@ export function HomeScreen() {
     if (!wasSettingUp.current) return;
     wasSettingUp.current = false;
     if (document.activeElement === null || document.activeElement === document.body) {
-      newGameRef.current?.focus();
+      (resumeRef.current ?? newGameRef.current)?.focus();
     }
   }, [needsSetup]);
 
@@ -95,9 +104,15 @@ export function HomeScreen() {
         aria-busy={loading || undefined}
       >
         {liveGame && liveLine ? (
-          <LiveGameCard game={liveGame} line={liveLine} today={today} />
+          <LiveGameCard game={liveGame} line={liveLine} today={today} resumeRef={resumeRef} />
         ) : null}
-        {needsSetup ? <PlayerSetupCard player={player ?? null} /> : null}
+        {needsSetup ? (
+          <PlayerSetupCard
+            player={player ?? null}
+            // Resuming the live game stays the one main action.
+            saveVariant={liveGame ? 'secondary' : 'primary'}
+          />
+        ) : null}
 
         {!needsSetup && noGames ? (
           <EmptyState
@@ -120,7 +135,12 @@ export function HomeScreen() {
           </div>
         )}
 
-        {entries?.length ? <GameList entries={entries} today={today} /> : null}
+        {hasGames ? (
+          // Busy until every event is read and the stat lines are in.
+          <div aria-busy={entries ? undefined : true}>
+            {entries ? <GameList entries={entries} today={today} /> : null}
+          </div>
+        ) : null}
       </ScreenBody>
     </main>
   );

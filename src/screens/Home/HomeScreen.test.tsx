@@ -131,12 +131,27 @@ describe('HomeScreen', () => {
     it('keeps asking for the name after a game started without one, below the live game', async () => {
       // Starting a game first creates the player with no name.
       await addGame({ opponent: 'Central' });
-      renderRoute(paths.home);
+      const { user } = renderRoute(paths.home);
 
       const live = await screen.findByRole('region', { name: 'Game in progress' });
       const card = screen.getByRole('region', { name: 'Who are you tracking?' });
       expect(isBefore(live, card)).toBe(true);
       expect(screen.getByRole('link', { name: /vs Central/ })).toBeInTheDocument();
+
+      // Resuming the game stays the one main action; saving the name steps back.
+      const resume = within(live).getByRole('link', { name: 'Resume game' });
+      const save = within(card).getByRole('button', { name: 'Save' });
+      expect(resume).toHaveClass('primary');
+      expect(save).toHaveClass('secondary');
+      expect(newGameLink()).toHaveClass('secondary');
+      expect(screen.queryByText('In a hurry? You can add the name later.')).not.toBeInTheDocument();
+
+      // Once the name is saved, focus goes back to the game.
+      await user.type(within(card).getByLabelText('Name'), 'Ava');
+      await user.click(save);
+      await waitFor(() => expect(setupCard()).not.toBeInTheDocument());
+      expect(await getPlayer()).toMatchObject({ name: 'Ava' });
+      await waitFor(() => expect(resume).toHaveFocus());
     });
   });
 
@@ -295,6 +310,40 @@ describe('HomeScreen', () => {
       const { container } = renderRoute(paths.home);
       expect(container.querySelector('[aria-busy="true"]')).toContainElement(newGameLink());
       await screen.findByRole('heading', { name: 'No games yet' });
+      expect(container.querySelector('[aria-busy]')).not.toBeInTheDocument();
+    });
+
+    it('shows the live game and New game without waiting to read every stat', async () => {
+      const live = await addGame({ opponent: 'Eastlake', date: '2026-09-28', stats: ['fg3_made'] });
+      await addGame({ opponent: 'Lincoln', date: '2026-09-01', stats: ['ast'], end: [40, 30] });
+      // Reading every event of every game (for the list's lines) never finishes here.
+      vi.spyOn(db.events, 'orderBy').mockReturnValue({
+        toArray: () => new Promise(() => {}),
+      } as unknown as ReturnType<typeof db.events.orderBy>);
+      const { container } = renderRoute(paths.home);
+
+      const card = await screen.findByRole('region', { name: 'Game in progress' });
+      expect(within(card).getAllByRole('definition')[0]).toHaveTextContent('3');
+      expect(within(card).getByRole('link', { name: 'Resume game' })).toHaveAttribute(
+        'href',
+        paths.trackGame(live.id),
+      );
+      expect(newGameLink()).toBeInTheDocument();
+
+      // Only the list, below everything else, is still waiting.
+      const busy = container.querySelectorAll('[aria-busy="true"]');
+      expect(busy).toHaveLength(1);
+      expect(busy[0]).not.toContainElement(card);
+      expect(isBefore(newGameLink(), busy[0] as Element)).toBe(true);
+      expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    });
+
+    it('fills in the list once every stat is read', async () => {
+      await addGame({ opponent: 'Lincoln', date: '2026-09-01', stats: ['ast'], end: [40, 30] });
+      const { container } = renderRoute(paths.home);
+
+      const list = await screen.findByRole('list', { name: 'Games' });
+      expect(within(list).getByRole('link')).toHaveTextContent('0 PTS · 0 REB');
       expect(container.querySelector('[aria-busy]')).not.toBeInTheDocument();
     });
   });

@@ -14,15 +14,16 @@
   text-align: center;
 }
 
+/* The same round illustration as an EmptyState. */
 .icon {
   display: grid;
   place-items: center;
-  width: var(--tap-target-lg);
-  height: var(--tap-target-lg);
+  width: var(--illustration-size);
+  height: var(--illustration-size);
   margin-bottom: var(--space-3);
   border-radius: var(--radius-full);
   background-color: var(--color-surface-2);
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-4xl);
   line-height: 1;
 }
 
@@ -33,9 +34,9 @@
 }
 
 .message {
-  max-width: 30ch;
   margin-top: var(--space-2);
   color: var(--color-text-muted);
+  text-wrap: balance;
 }
 
 .form {

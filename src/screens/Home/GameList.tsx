@@ -3,7 +3,8 @@ import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import type { GameStatLine, StatLine } from '@/data/stats';
 import { paths } from '@/routes';
-import { countOf, gameDateLabel, gameTitle, groupBySeason, resultBadge } from './gameRows';
+import { gameTitle } from '@/lib/gameTitle';
+import { countOf, gameDateLabel, groupBySeason, resultBadge } from './gameRows';
 import styles from './GameList.module.css';
 
 /** The headline numbers for a row: "14 PTS · 6 REB". */

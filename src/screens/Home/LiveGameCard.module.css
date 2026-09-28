@@ -2,7 +2,7 @@
   display: flex;
   flex-direction: column;
   padding: var(--space-4);
-  border: 2px solid var(--color-accent);
+  border: var(--border-width-emphasis) solid var(--color-accent);
   border-radius: var(--radius-lg);
   background-color: var(--color-surface);
 }

@@ -1,10 +1,11 @@
-import { useId } from 'react';
+import { useId, type Ref } from 'react';
 import { ButtonLink } from '@/components/Button/ButtonLink';
 import { StatTile, StatTileGrid } from '@/components/StatTile/StatTile';
 import { periodLabel, type StatLine } from '@/data/stats';
 import type { Game } from '@/data/types';
+import { gameTitle } from '@/lib/gameTitle';
 import { paths } from '@/routes';
-import { gameDateLabel, gameTitle } from './gameRows';
+import { gameDateLabel } from './gameRows';
 import styles from './LiveGameCard.module.css';
 
 export interface LiveGameCardProps {
@@ -13,13 +14,16 @@ export interface LiveGameCardProps {
   line: StatLine;
   /** Today's local date, so an older live game can show its year. */
   today: string;
+  /** The Resume game link, e.g. to move focus to it. */
+  resumeRef?: Ref<HTMLAnchorElement>;
 }
 
 /**
- * The game still in progress, with the player's running line and a big way back in. It is the
- * first thing on Games: iOS may relaunch the app mid-game, and this is the way back.
+ * The game still in progress, with the player's running line and a big way back in.
+ * It is the first thing on Games: iOS may relaunch the app mid-game, and this is the
+ * way back.
  */
-export function LiveGameCard({ game, line, today }: LiveGameCardProps) {
+export function LiveGameCard({ game, line, today, resumeRef }: LiveGameCardProps) {
   const headingId = useId();
   const date = gameDateLabel(game.date, today);
 
@@ -39,7 +43,7 @@ export function LiveGameCard({ game, line, today }: LiveGameCardProps) {
         <StatTile value={line.reb} label="REB" fullLabel="Rebounds" />
         <StatTile value={line.ast} label="AST" fullLabel="Assists" />
       </StatTileGrid>
-      <ButtonLink to={paths.trackGame(game.id)} size="lg" block>
+      <ButtonLink ref={resumeRef} to={paths.trackGame(game.id)} size="lg" block>
         Resume game
       </ButtonLink>
     </section>

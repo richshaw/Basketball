@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyStatLine, type GameStatLine } from '@/data/stats';
 import type { Game } from '@/data/types';
-import { countOf, gameDateLabel, gameTitle, groupBySeason, resultBadge } from './gameRows';
+import { countOf, gameDateLabel, groupBySeason, resultBadge } from './gameRows';
 
 function game(overrides: Partial<Game> = {}): Game {
   return {
@@ -21,15 +21,6 @@ function game(overrides: Partial<Game> = {}): Game {
 function entry(overrides: Partial<Game>): GameStatLine {
   return { game: game(overrides), line: emptyStatLine() };
 }
-
-describe('gameTitle', () => {
-  it('reads "vs" for home, neutral and unknown venues, and "@" for away games', () => {
-    expect(gameTitle(game({ homeAway: 'home' }))).toBe('vs Central');
-    expect(gameTitle(game({ homeAway: 'neutral' }))).toBe('vs Central');
-    expect(gameTitle(game())).toBe('vs Central');
-    expect(gameTitle(game({ homeAway: 'away' }))).toBe('@ Central');
-  });
-});
 
 describe('gameDateLabel', () => {
   it('leaves out the year for this year and shows it for other years', () => {
