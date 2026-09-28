@@ -1,0 +1,6 @@
+/* Each section is one wrapper (its list, plus any sheet or file input), spaced like iOS Settings groups. */
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}

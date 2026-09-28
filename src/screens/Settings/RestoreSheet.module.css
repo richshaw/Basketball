@@ -1,0 +1,14 @@
+.note {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.noWrap {
+  white-space: nowrap;
+}
+
+.recommended {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
