@@ -8,10 +8,13 @@ import {
   getBackupCode,
   getCloudBackupStatus,
 } from '@/data/backup/cloudBackup';
+import { createBackupApi } from '@/data/backup/api';
+import { parseBackupCode } from '@/data/backup/code';
 import { errorMessage } from '@/data/backup/errors';
-import { listGames } from '@/data/repo';
+import { deriveBackupKeys } from '@/data/backup/keys';
+import { createGame, listGames } from '@/data/repo';
 import { paths } from '@/routes';
-import { buildRealData } from '@/test/backupHarness';
+import { buildRealData, TEST_API_URL } from '@/test/backupHarness';
 import {
   backUpFromAnotherPhone,
   pauseForAnotherPhone,
@@ -483,15 +486,25 @@ describe('Settings: cloud backup paused or stopped', () => {
 });
 
 describe('Settings: erasing all data with cloud backup', () => {
-  it("says the online backup stays, and won't be replaced by the empty phone", async () => {
+  const ERASED =
+    "All 10 games and their stats, the player's name and number, and your settings will be deleted from this phone. This can't be undone.";
+  const SAVE_A_FILE = 'If you might want them back, save a backup file first.';
+  const backupFilesNote = () => screen.getByRole('list', { name: 'Backup' }).parentElement;
+
+  /** Taps "Erase all data" and returns its question. */
+  async function eraseQuestion(user: ReturnType<typeof renderRoute>['user']) {
+    await user.click(screen.getByRole('button', { name: 'Erase all data' }));
+    return screen.getByRole('alertdialog', { name: 'Erase all data?' });
+  }
+
+  it("says an online backup with everything stays, and won't be replaced by the empty phone", async () => {
     await seedOwnGames();
     const code = await turnOnCloudBackup();
     const { user } = await renderSettings();
 
-    await user.click(screen.getByRole('button', { name: 'Erase all data' }));
-    const dialog = screen.getByRole('alertdialog', { name: 'Erase all data?' });
+    const dialog = await eraseQuestion(user);
     expect(dialog).toHaveAccessibleDescription(
-      "All 10 games and their stats, the player's name and number, and your settings will be deleted from this phone. This can't be undone. Your online backup stays: this phone keeps its backup code and won't replace the backup with an empty phone. To delete it too, first use Turn off and delete online backup in Cloud backup.",
+      `${ERASED} Your online backup has all of it and stays: this phone keeps its code and won't replace the backup with an empty phone. To delete it too, first use Turn off and delete online backup in Cloud backup. For a copy of your own as well, save a backup file first.`,
     );
     await user.click(within(dialog).getByRole('button', { name: 'Erase all data' }));
 
@@ -502,29 +515,74 @@ describe('Settings: erasing all data with cloud backup', () => {
     expect(cloud.server.uploads).toHaveLength(1);
   });
 
-  it('points to Delete online backup while backup is off with its code kept', async () => {
+  it("says what isn't backed up yet while changes wait for signal", async () => {
+    await seedOwnGames();
+    await turnOnCloudBackup();
+    cloud.server.networkDown = true;
+    await createGame({ opponent: 'Hillcrest', date: '2026-09-28', periodFormat: 'quarters' });
+    await backUpNow();
+    expect(await settledStatus()).toMatchObject({
+      state: 'waiting-for-signal',
+      pendingChanges: true,
+    });
+    const { user } = await renderSettings();
+
+    expect(await eraseQuestion(user)).toHaveAccessibleDescription(
+      `${ERASED.replace('10', '11')} This phone last backed up just now, so anything changed since then isn't in your online backup. ${SAVE_A_FILE}`,
+    );
+    // It will catch up by itself, so the backup files' note doesn't say "only here".
+    expect(backupFilesNote()).toHaveTextContent('For a copy you keep yourself');
+  });
+
+  it('says nothing since backup was turned off is in the online backup', async () => {
     await seedOwnGames();
     await turnOnCloudBackup();
     await disableCloudBackup();
+    // A game recorded after backup was turned off: it's only on this phone.
+    await createGame({ opponent: 'Hillcrest', date: '2026-09-28', periodFormat: 'quarters' });
     const { user } = await renderSettings();
 
-    await user.click(screen.getByRole('button', { name: 'Erase all data' }));
-    expect(
-      screen.getByRole('alertdialog', { name: 'Erase all data?' }),
-    ).toHaveAccessibleDescription(
-      /To delete it too, first use Delete online backup in Cloud backup\.$/,
+    expect(await eraseQuestion(user)).toHaveAccessibleDescription(
+      `${ERASED.replace('10', '11')} Cloud backup is off, so nothing changed since it was turned off is in your online backup. ${SAVE_A_FILE}`,
     );
+    expect(backupFilesNote()).toHaveTextContent('Your stats are stored only on this phone.');
+  });
+
+  it('says the online backup was deleted, when that stopped backup', async () => {
+    await seedOwnGames();
+    const code = await turnOnCloudBackup();
+    // The online backup is deleted (from another phone with the same code, say)...
+    const keys = await deriveBackupKeys(parseBackupCode(code));
+    const api = createBackupApi({ baseUrl: TEST_API_URL, fetch: cloud.server.fetch });
+    expect((await api.deleteAll(keys)).ok).toBe(true);
+    // ...and this phone finds out when its next upload is refused.
+    cloud.server.failNext({ status: 409, error: 'account_deleted', method: 'PUT' });
+    await backUpNow();
+    expect(await settledStatus()).toMatchObject({ state: 'needs-attention' });
+    const { user } = await renderSettings();
+
+    expect(await eraseQuestion(user)).toHaveAccessibleDescription(
+      `${ERASED} Your online backup was deleted, so none of this is backed up online. ${SAVE_A_FILE}`,
+    );
+    expect(backupFilesNote()).toHaveTextContent('Your latest stats are stored only on this phone.');
+  });
+
+  it("while paused for another phone, names no row that isn't there", async () => {
+    await pauseForAnotherPhone(cloud.server);
+    const { user } = await renderSettings();
+
+    const dialog = await eraseQuestion(user);
+    expect(dialog).toHaveAccessibleDescription(
+      `${ERASED} This phone last backed up just now, so anything changed since then isn't in your online backup. ${SAVE_A_FILE}`,
+    );
+    expect(within(cloudList()).queryByRole('button', { name: 'Turn off' })).toBeNull();
+    expect(backupFilesNote()).toHaveTextContent('Your latest stats are stored only on this phone.');
   });
 
   it('says nothing about cloud backup on a phone without a code', async () => {
     await seedOwnGames();
     const { user } = await renderSettings();
 
-    await user.click(screen.getByRole('button', { name: 'Erase all data' }));
-    expect(
-      screen.getByRole('alertdialog', { name: 'Erase all data?' }),
-    ).toHaveAccessibleDescription(
-      "All 10 games and their stats, the player's name and number, and your settings will be deleted from this phone. This can't be undone. If you might want them back, save a backup file first.",
-    );
+    expect(await eraseQuestion(user)).toHaveAccessibleDescription(`${ERASED} ${SAVE_A_FILE}`);
   });
 });

@@ -3,9 +3,12 @@ import type { CloudBackupStatus } from '@/data/backup/cloudBackup';
 import { buildRealData } from '@/test/backupHarness';
 import {
   backUpAnywayMessage,
+  backupCoverage,
+  backupKeepsUp,
   cloudBackupSummary,
   codeFromTyped,
   describeStatus,
+  eraseCloudNote,
   formatBackupTime,
   formatWhen,
   otherDeviceMessage,
@@ -217,5 +220,71 @@ describe('sharing the code', () => {
     expect(codeFromTyped(shareableCode(code))).toBe(code);
     expect(codeFromTyped(' hoop stats backup code 7k3m 9qxa ')).toBe('7k3m 9qxa');
     expect(codeFromTyped(code)).toBe(code);
+  });
+});
+
+describe('backupCoverage', () => {
+  const code = '7K3M-9QXA-B2CD-EF45-GH67-JK89-MN0P';
+  const backedUp = { lastSuccessAt: NOW - HOUR };
+  const error = (kind: string) => ({ kind, message: 'Stopped.', at: NOW });
+
+  it('calls a backup complete only when it has everything', () => {
+    expect(backupCoverage(on(backedUp), code)).toEqual({ kind: 'complete' });
+    // Nothing waiting: a failed "Back up now" or no signal don't change that.
+    expect(backupCoverage(on({ ...backedUp, state: 'error' }), code).kind).toBe('complete');
+    expect(backupCoverage(on({ ...backedUp, state: 'waiting-for-signal' }), code).kind).toBe(
+      'complete',
+    );
+    expect(backupCoverage(on({ ...backedUp, pendingChanges: true }), code)).toEqual({
+      kind: 'behind',
+      lastSuccessAt: NOW - HOUR,
+      paused: false,
+    });
+    for (const state of ['paused-shrink', 'paused-other-device'] as const) {
+      expect(backupCoverage(on({ ...backedUp, state }), code)).toEqual({
+        kind: 'behind',
+        lastSuccessAt: NOW - HOUR,
+        paused: true,
+      });
+    }
+    expect(backupCoverage(on({ pendingChanges: true }), code)).toEqual({ kind: 'never' });
+  });
+
+  it('tells a deleted online backup from other stops, and off from none', () => {
+    const stopped = { ...backedUp, state: 'needs-attention' } as const;
+    expect(backupCoverage(on({ ...stopped, lastError: error('account-deleted') }), code)).toEqual({
+      kind: 'deleted',
+    });
+    expect(backupCoverage(on({ ...stopped, lastError: error('too-large') }), code)).toEqual({
+      kind: 'stopped',
+    });
+    const off = { available: true, enabled: false, state: 'idle', pendingChanges: false } as const;
+    expect(backupCoverage(off, code)).toEqual({ kind: 'off' });
+    expect(backupCoverage(off, null)).toEqual({ kind: 'none' });
+    expect(backupCoverage({ ...off, available: false }, code)).toEqual({ kind: 'none' });
+  });
+
+  it('keeps up while on and working, even with changes waiting for signal', () => {
+    expect(backupKeepsUp({ kind: 'complete' })).toBe(true);
+    expect(backupKeepsUp({ kind: 'behind', lastSuccessAt: NOW, paused: false })).toBe(true);
+    expect(backupKeepsUp({ kind: 'behind', lastSuccessAt: NOW, paused: true })).toBe(false);
+    for (const kind of ['never', 'deleted', 'stopped', 'off', 'none'] as const) {
+      expect(backupKeepsUp({ kind })).toBe(false);
+    }
+  });
+});
+
+describe('eraseCloudNote', () => {
+  it('says what the online backup has of what "Erase all data" deletes', () => {
+    expect(eraseCloudNote({ kind: 'none' }, NOW)).toBe('');
+    expect(eraseCloudNote({ kind: 'never' }, NOW)).toBe("This phone hasn't backed up online yet.");
+    expect(eraseCloudNote({ kind: 'stopped' }, NOW)).toBe(
+      "Cloud backup has stopped, so your latest stats aren't backed up online.",
+    );
+    expect(
+      eraseCloudNote({ kind: 'behind', lastSuccessAt: NOW - 3 * HOUR, paused: true }, NOW),
+    ).toBe(
+      "This phone last backed up 3 hours ago, so anything changed since then isn't in your online backup.",
+    );
   });
 });

@@ -3,12 +3,12 @@ import { useSearchParams } from 'react-router';
 import { isStandalone } from '@/components/InstallBanner/install';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
-import type { CloudBackupStatus } from '@/data/backup/cloudBackup';
 import { useCloudBackupStatus } from '@/data/backup/hooks';
 import { useGames, usePlayer, useSettings } from '@/data/hooks';
 import type { SettingsSection } from '@/routes';
 import { AboutSection } from './AboutSection';
-import { BackupSection } from './BackupSection';
+import { BackupSection, type OnlineBackupNote } from './BackupSection';
+import { backupCoverage, backupKeepsUp, type BackupCoverage } from './cloudBackupText';
 import { CloudBackupSection } from './CloudBackupSection';
 import { GameSetupSection } from './GameSetupSection';
 import { InstallSection } from './InstallSection';
@@ -20,10 +20,10 @@ import styles from './SettingsScreen.module.css';
 
 const CLOUD_BACKUP_SECTION: SettingsSection = 'cloud-backup';
 
-/** Whether this phone has a cloud backup code, and backup is on with it (for Erase all data). */
-function codeState(status: CloudBackupStatus, code: string | null): 'on' | 'kept' | undefined {
-  if (!status.available || code === null) return undefined;
-  return status.enabled ? 'on' : 'kept';
+/** What the backup files' note says about cloud backup (none: the stats are only here). */
+function onlineBackupNote(coverage: BackupCoverage | undefined): OnlineBackupNote | undefined {
+  if (!coverage || coverage.kind === 'none' || coverage.kind === 'off') return undefined;
+  return backupKeepsUp(coverage) ? 'keeping-up' : 'behind';
 }
 
 /**
@@ -50,6 +50,7 @@ export function SettingsScreen() {
     snapshot !== undefined &&
     cloudBackup !== undefined &&
     backupCode !== undefined;
+  const coverage = loaded ? backupCoverage(cloudBackup, backupCode) : undefined;
 
   return (
     <main>
@@ -71,15 +72,11 @@ export function SettingsScreen() {
               snapshot={snapshot}
               fresh={fresh}
               currentSnapshot={currentSnapshot}
-              cloudBackupOn={cloudBackup.enabled}
+              onlineBackup={onlineBackupNote(coverage)}
             />
             <StorageSection standalone={standalone} dataVersion={games} />
             {standalone ? null : <InstallSection />}
-            <AboutSection
-              player={player}
-              games={games}
-              backupCode={codeState(cloudBackup, backupCode)}
-            />
+            <AboutSection player={player} games={games} cloudCoverage={coverage} />
           </div>
         ) : null}
       </ScreenBody>

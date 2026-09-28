@@ -190,6 +190,73 @@ export function describeStatus(status: CloudBackupStatus, now: number): StatusLi
   }
 }
 
+/**
+ * How much of what's on this phone its online backup has, so nothing claims more:
+ * - `none`: no cloud backup here (none in this build, or no code on the phone);
+ * - `off`: turned off, its code kept: nothing since then is in the online backup;
+ * - `complete`: on, and the last backup has everything (nothing waiting, not paused
+ *   or stopped);
+ * - `behind`: on and backed up before, but not what changed since (waiting to go up,
+ *   or `paused` for the parent);
+ * - `never`: on, and this phone hasn't backed up yet;
+ * - `deleted`: stopped because the online backup was deleted;
+ * - `stopped`: stopped for another reason (the code refused, the stats too big).
+ */
+export type BackupCoverage =
+  | { kind: 'none' }
+  | { kind: 'off' }
+  | { kind: 'complete' }
+  | { kind: 'behind'; lastSuccessAt: number; paused: boolean }
+  | { kind: 'never' }
+  | { kind: 'deleted' }
+  | { kind: 'stopped' };
+
+/** See BackupCoverage. `code` is this phone's backup code (on, or kept while off), or null. */
+export function backupCoverage(status: CloudBackupStatus, code: string | null): BackupCoverage {
+  if (!status.available) return { kind: 'none' };
+  if (!status.enabled) return code === null ? { kind: 'none' } : { kind: 'off' };
+  if (status.state === 'needs-attention') {
+    return status.lastError?.kind === 'account-deleted' ? { kind: 'deleted' } : { kind: 'stopped' };
+  }
+  const last = status.lastSuccessAt;
+  if (last === undefined) return { kind: 'never' };
+  const paused = status.state === 'paused-shrink' || status.state === 'paused-other-device';
+  if (paused || status.pendingChanges) return { kind: 'behind', lastSuccessAt: last, paused };
+  return { kind: 'complete' };
+}
+
+/**
+ * Cloud backup has, or will soon have, everything on this phone: on and working, maybe
+ * with changes waiting for signal (for the backup files' note).
+ */
+export function backupKeepsUp(coverage: BackupCoverage): boolean {
+  return coverage.kind === 'complete' || (coverage.kind === 'behind' && !coverage.paused);
+}
+
+/**
+ * What "Erase all data" says about the online backup, or '' without one. Only a backup
+ * that has everything is called safe; otherwise it says what isn't in it. The row it
+ * names exists in that state ("Turn off" leads to it unless paused for another phone).
+ */
+export function eraseCloudNote(coverage: BackupCoverage, now: number): string {
+  switch (coverage.kind) {
+    case 'none':
+      return '';
+    case 'complete':
+      return "Your online backup has all of it and stays: this phone keeps its code and won't replace the backup with an empty phone. To delete it too, first use Turn off and delete online backup in Cloud backup.";
+    case 'behind':
+      return `This phone last backed up ${timeAgo(coverage.lastSuccessAt, now)}, so anything changed since then isn't in your online backup.`;
+    case 'never':
+      return "This phone hasn't backed up online yet.";
+    case 'off':
+      return 'Cloud backup is off, so nothing changed since it was turned off is in your online backup.';
+    case 'deleted':
+      return 'Your online backup was deleted, so none of this is backed up online.';
+    case 'stopped':
+      return "Cloud backup has stopped, so your latest stats aren't backed up online.";
+  }
+}
+
 /** What the share sheet shares: one line, so a note saved with it says what it is. */
 const SHARE_LABEL = 'Hoop Stats backup code';
 

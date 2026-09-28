@@ -28,9 +28,23 @@ export interface BackupSectionProps {
   fresh: boolean;
   /** The snapshot if it's up to date at this very moment, for the tap handlers. */
   currentSnapshot: () => BackupSnapshot | undefined;
-  /** Cloud backup is on, so the stats aren't only on this phone. */
-  cloudBackupOn?: boolean;
+  /**
+   * Cloud backup is on: `keeping-up` (it has, or soon will have, everything here) or
+   * `behind` (paused, stopped or not backed up yet, so the latest stats are only here).
+   */
+  onlineBackup?: OnlineBackupNote;
 }
+
+export type OnlineBackupNote = 'keeping-up' | 'behind';
+
+/** The group's note: whether the stats are only on this phone, and saving files. */
+const FOOTERS: Record<OnlineBackupNote | 'none', string> = {
+  none: 'Your stats are stored only on this phone. Save a backup file now and then (to Files, iCloud Drive or email) so you can always get them back.',
+  behind:
+    'Your latest stats are stored only on this phone. Save a backup file now and then (to Files, iCloud Drive or email) so you can always get them back.',
+  'keeping-up':
+    'For a copy you keep yourself, save a backup file now and then (to Files, iCloud Drive or email).',
+};
 
 /**
  * Backup files: save one (share sheet or download), restore one, and export the
@@ -41,7 +55,7 @@ export function BackupSection({
   snapshot,
   fresh,
   currentSnapshot,
-  cloudBackupOn = false,
+  onlineBackup,
 }: BackupSectionProps) {
   const toast = useToast();
   const [lastSaved, setLastSaved] = useState(readLastBackupFile);
@@ -125,14 +139,7 @@ export function BackupSection({
 
   return (
     <div>
-      <GroupedList
-        header="Backup"
-        footer={
-          cloudBackupOn
-            ? 'For a copy you keep yourself, save a backup file now and then (to Files, iCloud Drive or email).'
-            : 'Your stats are stored only on this phone. Save a backup file now and then (to Files, iCloud Drive or email) so you can always get them back.'
-        }
-      >
+      <GroupedList header="Backup" footer={FOOTERS[onlineBackup ?? 'none']}>
         <ActionRow
           title="Save a backup file"
           subtitle={saveSubtitle}
