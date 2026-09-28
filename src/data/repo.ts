@@ -340,16 +340,49 @@ async function touchGame(gameId: string, now: number): Promise<void> {
   if (game) await db.games.put({ ...game, updatedAt: nextTimestamp(now, game.updatedAt) });
 }
 
+export interface RecordStatOptions {
+  /**
+   * The stat's id, made at the tap, so saving the same tap again (a retry after a
+   * write that seemed to fail but landed) can never add it twice: if a stat with this
+   * id already exists, it's returned as it is and nothing is written.
+   */
+  id?: string;
+  /**
+   * When it was tapped (epoch ms), used as its `createdAt`, so it sorts where it was
+   * tapped however late it's saved. Make it with `nextTimestamp` after the game's
+   * latest stat; if another stat of the game already has that time, the next free
+   * millisecond is used. Leave it out for "now", just after the game's latest stat.
+   */
+  at?: number;
+  /**
+   * The period the stat belongs to (1 to MAX_PERIOD), e.g. the one on screen when it
+   * was tapped. Leave it out for the game's current period.
+   */
+  period?: number;
+}
+
+/** `at`, or the first millisecond after it that no other stat of the game has. */
+async function freeTimestamp(gameId: string, at: number): Promise<number> {
+  let time = at;
+  while ((await db.events.where('[gameId+createdAt]').equals([gameId, time]).count()) > 0) {
+    time += 1;
+  }
+  return time;
+}
+
 /**
- * Records one stat in the game's current period. `location` (feet, see CourtPoint)
- * is only allowed on 2PT/3PT shots and is clamped onto the half court; a location
- * that isn't a real point is dropped and the stat is still saved. Works on final
- * games too, for corrections.
+ * Records one stat, in the game's current period unless `options.period` says
+ * otherwise (the game's current period stays as it is). `location` (feet, see
+ * CourtPoint) is only allowed on 2PT/3PT shots and is clamped onto the half court;
+ * a location that isn't a real point is dropped and the stat is still saved. Works
+ * on final games too, for corrections. With `options.id` it's idempotent: a stat
+ * already saved under that id is returned without writing or bumping anything.
  */
 export function recordStat(
   gameId: string,
   type: StatType,
   location?: CourtPoint | null,
+  options: RecordStatOptions = {},
 ): Promise<StatEvent> {
   return db.transaction('rw', [db.games, db.events, db.meta], async () => {
     if (!(STAT_TYPES as readonly string[]).includes(type)) {
@@ -357,22 +390,37 @@ export function recordStat(
     }
     const shot = shotLocation(type, location);
 
+    if (options.id !== undefined) {
+      const saved = await db.events.get(options.id);
+      if (saved) {
+        if (saved.gameId !== gameId || saved.type !== type) {
+          throw new TypeError(`Stat id ${options.id} belongs to another stat`);
+        }
+        return saved;
+      }
+    }
+
     const now = Date.now();
     const game = await requireGame(gameId);
-    const last = await eventsOfGame(gameId).last();
+    // Without a tap time: strictly after the game's latest stat, even for taps in the
+    // same millisecond.
+    const createdAt =
+      options.at ?? nextTimestamp(now, (await eventsOfGame(gameId).last())?.createdAt);
     const event = validRecord(
       statEventSchema,
       {
-        id: newId(),
+        id: options.id ?? newId(),
         gameId,
         type,
-        period: game.currentPeriod,
-        // Strictly increasing within the game, even for taps in the same millisecond.
-        createdAt: nextTimestamp(now, last?.createdAt),
+        // Checked like setCurrentPeriod's: a whole number from 1 to MAX_PERIOD.
+        period: options.period ?? game.currentPeriod,
+        createdAt,
         location: shot,
       },
       'stat',
     );
+    // A tap time (checked as a timestamp just above) that no other stat of the game has.
+    if (options.at !== undefined) event.createdAt = await freeTimestamp(gameId, createdAt);
     await db.events.add(event);
     await db.games.put({ ...game, updatedAt: nextTimestamp(now, game.updatedAt) });
     await touchLastChange(now);

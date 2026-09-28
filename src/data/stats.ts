@@ -40,6 +40,15 @@ export const STAT_DEFS: Record<StatType, StatDef> = {
   charge: { label: 'Charge Taken', shortLabel: 'Charge', kind: 'other', points: 0 },
 };
 
+/**
+ * The definition of a stat type, or undefined for one this version doesn't know (e.g.
+ * data from a newer app), which screens show by its type and reports leave out, as
+ * `computeStatLine` does.
+ */
+export function statDefOf(type: string): StatDef | undefined {
+  return Object.hasOwn(STAT_DEFS, type) ? STAT_DEFS[type as StatType] : undefined;
+}
+
 /** Field goal attempts: the only stat types that can carry a shot location. */
 export const FIELD_GOAL_TYPES = ['fg2_made', 'fg2_miss', 'fg3_made', 'fg3_miss'] as const;
 export type FieldGoalType = (typeof FIELD_GOAL_TYPES)[number];

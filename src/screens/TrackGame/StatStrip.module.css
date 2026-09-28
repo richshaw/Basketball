@@ -1,0 +1,110 @@
+/*
+ * Points on the left across both rows; the counting stats on the first row and
+ * shooting (made/attempted) on the second, each spanning two columns.
+ */
+.strip {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: auto repeat(6, minmax(0, 1fr));
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+  list-style: none;
+}
+
+.item {
+  /* Keeps the visually hidden text inside the item. */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding-block: calc(var(--space-1) / 2);
+  border-radius: var(--radius-sm);
+}
+
+.value {
+  max-width: 100%;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-heavy);
+  line-height: var(--line-height-tight);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.label {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.points {
+  grid-row: span 2;
+  justify-content: center;
+  align-self: stretch;
+  min-width: calc(2 * var(--tap-target));
+  margin-inline-end: var(--space-2);
+  padding-inline-end: var(--space-3);
+  border-inline-end: 1px solid var(--color-border);
+  border-radius: 0;
+}
+
+.points .value {
+  color: var(--color-accent-text);
+  font-size: var(--font-size-display);
+  line-height: 1;
+}
+
+.points .label {
+  margin-top: calc(var(--space-1) / 2);
+}
+
+/*
+ * Shooting, made/attempted: two columns each, and the label under the value like the
+ * counting stats, so even "12/25" fits on the smallest iPhone.
+ */
+.shooting {
+  grid-column: span 2;
+}
+
+.shooting .value {
+  font-size: var(--font-size-lg);
+}
+
+/* Four fouls: one more and she's out. */
+.trouble {
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+/* Five fouls: fouled out. */
+.out {
+  background-color: var(--color-danger);
+  color: var(--color-on-danger);
+}
+
+.trouble .label,
+.out .label {
+  color: inherit;
+}
+
+/* Short screens (iPhone SE): a flatter strip leaves the stat buttons more height. */
+@media (max-height: 700px) {
+  .strip {
+    padding-block: var(--space-1);
+  }
+
+  .value {
+    font-size: var(--font-size-lg);
+  }
+
+  .points .value {
+    font-size: var(--font-size-4xl);
+  }
+}

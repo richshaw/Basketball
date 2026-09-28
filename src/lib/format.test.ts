@@ -6,6 +6,7 @@ import {
   formatPct,
   formatPlayerName,
   isLocalISODate,
+  pad2,
   parseLocalDate,
   todayLocalISO,
 } from './format';
@@ -68,6 +69,10 @@ describe('local dates', () => {
 });
 
 describe('number formatting', () => {
+  it('pads to two digits', () => {
+    expect([0, 7, 10, 59, 123].map(pad2)).toEqual(['00', '07', '10', '59', '123']);
+  });
+
   it('formats percentages', () => {
     expect(formatPct(45.4)).toBe('45%');
     expect(formatPct(55.56)).toBe('56%');

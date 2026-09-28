@@ -109,7 +109,10 @@ export interface StatEvent {
   type: StatType;
   /** The game's current period when the stat was recorded. */
   period: number;
-  /** Strictly increasing within a game, so event order and undo are exact. */
+  /**
+   * When it was tapped (epoch ms). No two stats of a game share a time, so event order
+   * and undo are exact, however late a stat was saved.
+   */
   createdAt: number;
   /** Where the shot was taken from. Only on 2PT and 3PT shots (fg2_* / fg3_*). */
   location?: CourtPoint;

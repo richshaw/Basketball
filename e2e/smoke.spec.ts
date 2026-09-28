@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, expectRoute, screenHeading, tabBar } from './support/app';
+import { DEMO_LIVE_GAME_ID, seedDemoData } from './support/data';
 
 test('loads the Games screen', async ({ page }) => {
   await page.goto('./');
@@ -43,9 +44,12 @@ test('full-screen routes hide the tab bar and lead back', async ({ page }) => {
 });
 
 test('the live game screen has no tab bar', async ({ page }) => {
-  await page.goto(appUrl(paths.trackGame('smoke')));
+  await page.goto('./');
+  await seedDemoData(page, { liveGame: true });
+  await page.goto(appUrl(paths.trackGame(DEMO_LIVE_GAME_ID)));
 
-  await expect(screenHeading(page, 'Live game')).toBeVisible();
+  await expect(screenHeading(page, 'vs Westfield')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Record a stat' })).toBeVisible();
   await expect(tabBar(page)).toHaveCount(0);
 });
 

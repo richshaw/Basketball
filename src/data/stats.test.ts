@@ -13,6 +13,7 @@ import {
   regulationPeriods,
   STAT_DEFS,
   STAT_LINE_KEYS,
+  statDefOf,
   statLinesByPeriod,
   statLinesForGames,
   summarizeGames,
@@ -81,6 +82,16 @@ describe('STAT_DEFS', () => {
 
   it('only lets 2PT and 3PT shots carry a location', () => {
     expect(STAT_TYPES.filter(isFieldGoalType)).toEqual([...FIELD_GOAL_TYPES]);
+  });
+});
+
+describe('statDefOf', () => {
+  it('knows every stat type, and nothing else', () => {
+    expect(statDefOf('fg3_made')).toBe(STAT_DEFS.fg3_made);
+    expect(statDefOf('tip_in')).toBeUndefined();
+    // Not fooled by what every object inherits.
+    expect(statDefOf('toString')).toBeUndefined();
+    expect(statDefOf('constructor')).toBeUndefined();
   });
 });
 

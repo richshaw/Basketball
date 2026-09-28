@@ -1,14 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { STAT_DEFS } from '@/data/stats';
 import type { StatEvent, StatType } from '@/data/types';
-import {
-  countPlays,
-  formatClockTime,
-  periodName,
-  periodSummary,
-  playByPlay,
-  statDefOf,
-} from './playByPlay';
+import { countPlays, formatClockTime, periodName, periodSummary, playByPlay } from './playByPlay';
 
 let nextId = 0;
 function event(type: StatType, period: number, createdAt: number): StatEvent {
@@ -98,16 +90,6 @@ describe('playByPlay', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]?.plays.map((play) => play.event.type)).toEqual(['fg2_made']);
     expect(groups[0]?.points).toBe(2);
-  });
-});
-
-describe('statDefOf', () => {
-  it('knows every stat type, and nothing else', () => {
-    expect(statDefOf('fg3_made')).toBe(STAT_DEFS.fg3_made);
-    expect(statDefOf('tip_in')).toBeUndefined();
-    // Not fooled by what every object inherits.
-    expect(statDefOf('toString')).toBeUndefined();
-    expect(statDefOf('constructor')).toBeUndefined();
   });
 });
 
