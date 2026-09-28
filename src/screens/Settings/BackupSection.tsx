@@ -2,7 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useRef, useState, type ChangeEvent } from 'react';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { useToast } from '@/components/Toast/toastContext';
-import { exportAll, ExportFileError } from '@/data/transfer';
+import { exportAll, ExportFileError, NOT_A_BACKUP } from '@/data/transfer';
 import type { Game } from '@/data/types';
 import { ActionRow } from './ActionRow';
 import {
@@ -90,10 +90,10 @@ export function BackupSection({ games }: { games: readonly Game[] }) {
       showRestore({ kind: 'preview', backup, phoneGameCount: games.length });
     } catch (error) {
       if (!(error instanceof ExportFileError)) console.error('Reading a backup file failed', error);
-      showRestore({
-        kind: 'error',
-        message: error instanceof ExportFileError ? error.message : UNREADABLE,
-      });
+      const message = error instanceof ExportFileError ? error.message : UNREADABLE;
+      // Only a file that isn't a backup at all gets the "choose a Hoop Stats backup" hint:
+      // it would contradict "update the app", "too big" or "try choosing it again".
+      showRestore({ kind: 'error', message, notABackup: message === NOT_A_BACKUP });
     }
   };
 

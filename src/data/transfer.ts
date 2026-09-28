@@ -50,7 +50,8 @@ export class ExportFileError extends Error {
   }
 }
 
-const NOT_A_BACKUP = "This file isn't a Hoop Stats backup.";
+/** The ExportFileError message for a file that isn't a Hoop Stats backup at all. */
+export const NOT_A_BACKUP = "This file isn't a Hoop Stats backup.";
 const NEWER_VERSION =
   'This backup is from a newer version of Hoop Stats. Update the app, then try again.';
 const DAMAGED = "This backup is damaged, so it can't be restored.";

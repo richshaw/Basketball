@@ -357,6 +357,9 @@ describe('Settings: restore from a backup file', () => {
 
     const sheet = await screen.findByRole('dialog', { name: "Can't restore this file" });
     expect(sheet).toHaveAccessibleDescription("This file isn't a Hoop Stats backup.");
+    expect(sheet).toHaveTextContent(
+      'Choose a backup saved from Hoop Stats. Its name starts with hoop-stats-backup.',
+    );
     await user.click(within(sheet).getByRole('button', { name: 'OK' }));
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
@@ -370,11 +373,23 @@ describe('Settings: restore from a backup file', () => {
 
     await chooseBackupFile(user, pickedFile(JSON.stringify(newer)));
 
-    expect(
-      await screen.findByRole('dialog', { name: "Can't restore this file" }),
-    ).toHaveAccessibleDescription(
+    const sheet = await screen.findByRole('dialog', { name: "Can't restore this file" });
+    expect(sheet).toHaveAccessibleDescription(
       'This backup is from a newer version of Hoop Stats. Update the app, then try again.',
     );
+    // It is a Hoop Stats backup, so no "choose a Hoop Stats backup" hint.
+    expect(sheet).not.toHaveTextContent('Choose a backup saved from Hoop Stats');
+  });
+
+  it('explains a damaged backup without asking for a different file', async () => {
+    const { user } = await renderSettings();
+    const damaged = { ...(JSON.parse(fixtureJson) as object), games: [{ id: 'half a game' }] };
+
+    await chooseBackupFile(user, pickedFile(JSON.stringify(damaged)));
+
+    const sheet = await screen.findByRole('dialog', { name: "Can't restore this file" });
+    expect(sheet).toHaveAccessibleDescription("This backup is damaged, so it can't be restored.");
+    expect(sheet).not.toHaveTextContent('Choose a backup saved from Hoop Stats');
   });
 
   it('can restore the same file twice in a row', async () => {

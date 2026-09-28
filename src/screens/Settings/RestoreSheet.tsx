@@ -14,11 +14,11 @@ import styles from './RestoreSheet.module.css';
 /**
  * What the sheet shows: a backup ready to restore (with how many games the phone had
  * when it was picked, so the choices don't change as it restores), or why a file
- * can't be restored.
+ * can't be restored (`notABackup`: the wrong file was picked, so say which to pick).
  */
 export type RestoreRequest =
   | { kind: 'preview'; backup: ExportFile; phoneGameCount: number }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string; notABackup: boolean };
 
 export interface RestoreSheetProps {
   open: boolean;
@@ -88,9 +88,11 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
           </Button>
         }
       >
-        <p className={styles.note}>
-          Choose a backup saved from Hoop Stats. Its name starts with <em>hoop-stats-backup</em>.
-        </p>
+        {request.notABackup ? (
+          <p className={styles.note}>
+            Choose a backup saved from Hoop Stats. Its name starts with <em>hoop-stats-backup</em>.
+          </p>
+        ) : null}
       </Sheet>
     );
   }
