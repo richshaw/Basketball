@@ -105,6 +105,16 @@ export function ShareIcon(props: IconProps) {
   );
 }
 
+/** A map pin: a spot, e.g. where a shot was taken. */
+export function PinIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 21s-6.5-5.7-6.5-11a6.5 6.5 0 0 1 13 0c0 5.3-6.5 11-6.5 11z" />
+      <circle cx="12" cy="10" r="2.5" />
+    </Icon>
+  );
+}
+
 /** The share sheet's "Add to Home Screen" action: a plus in a rounded square. */
 export function AddToHomeScreenIcon(props: IconProps) {
   return (
