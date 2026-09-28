@@ -351,10 +351,14 @@ describe('Settings: restore from a backup file', () => {
     const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
     await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
 
-    // The sheet stays open and says why, instead of claiming "Restored 2 games".
-    expect(await within(sheet).findByRole('status', { name: 'Restore result' })).toHaveTextContent(
-      "Nothing new was added: this phone already has both games in this backup (the same, or changed here since). To go back to the backup's versions, use Replace everything on this phone.",
-    );
+    // The sheet stays open and says why, instead of claiming "Restored 2 games". (The
+    // status is always there, empty, so screen readers announce it: wait for the text.)
+    const result = within(sheet).getByRole('status', { name: 'Restore result' });
+    await waitFor(() => {
+      expect(result).toHaveTextContent(
+        "Nothing new was added: this phone already has both games in this backup (the same, or changed here since). To go back to the backup's versions, use Replace everything on this phone.",
+      );
+    });
     expect(notifications()).toBeEmptyDOMElement();
 
     await user.click(
