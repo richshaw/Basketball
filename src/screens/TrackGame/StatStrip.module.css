@@ -93,3 +93,18 @@
 .out .label {
   color: inherit;
 }
+
+/* Short screens (iPhone SE): a flatter strip leaves the stat buttons more height. */
+@media (max-height: 700px) {
+  .strip {
+    padding-block: var(--space-1);
+  }
+
+  .value {
+    font-size: var(--font-size-lg);
+  }
+
+  .points .value {
+    font-size: var(--font-size-4xl);
+  }
+}
