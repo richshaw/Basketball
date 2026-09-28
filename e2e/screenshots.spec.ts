@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, emulateIPhoneSafeArea, expectRoute } from './support/app';
+import { demoGameId, seedDemoData } from './support/data';
 
 interface Screen {
   /** File name stem: saved as `<name>-light.png` and `<name>-dark.png`. */
@@ -29,7 +30,14 @@ const screens: Screen[] = [
   { name: 'stats', path: paths.stats },
   { name: 'settings', path: paths.settings },
   { name: 'new-game', path: paths.newGame },
-  { name: 'game-report', path: paths.gameReport('demo') },
+  {
+    name: 'game-report',
+    path: paths.gameReport(demoGameId(10)),
+    setup: seedDemoData,
+    // The loading state has a title too, so wait for the report itself.
+    interact: (page) =>
+      expect(page.getByRole('heading', { level: 2, name: 'Play-by-play' })).toBeVisible(),
+  },
   { name: 'track-game', path: paths.trackGame('demo') },
   // The shared component gallery, and its overlays one at a time.
   { name: 'dev-ui', path: paths.devUi },

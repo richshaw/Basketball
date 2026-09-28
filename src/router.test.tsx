@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { createGame } from '@/data/repo';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
 
@@ -70,11 +71,20 @@ describe('app routes', () => {
   });
 
   it('goes from a game report to live tracking, and from there back to Games', async () => {
-    const { user, router } = renderRoute(paths.gameReport('g 1'));
-    await user.click(screen.getByRole('link', { name: 'Track game' }));
-    expect(router.state.location.pathname).toBe(paths.trackGame('g 1'));
+    const game = await createGame({
+      opponent: 'Lincoln',
+      date: '2026-09-27',
+      periodFormat: 'quarters',
+    });
+    const { user, router } = renderRoute(paths.gameReport(game.id));
+    await user.click(await screen.findByRole('link', { name: 'Resume tracking' }));
+    expect(router.state.location.pathname).toBe(paths.trackGame(game.id));
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'vs Lincoln' }),
+    ).toBeInTheDocument();
 
-    await user.click(await screen.findByRole('link', { name: 'Games' }));
+    // Leaving the live game screen never ends the game: its back link leads to Games.
+    await user.click(screen.getByRole('link', { name: 'Games' }));
     expect(router.state.location.pathname).toBe(paths.home);
   });
 });
