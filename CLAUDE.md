@@ -155,7 +155,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
   - `meta.lastChangeAt` only moves when an import actually changed something.
   - `clearAllData()`.
   - A round trip through JSON is exact. Settings are part of the export; `meta.lastChangeAt` isn't.
-- `data/demo.ts`: `seedDemoData({ today?, liveGame?, force? })` replaces all data with "Ava" #12 and ten final "Fall 2026" games. Their ids run from `demo-game-01` (oldest) to `demo-game-10`, and `demo-live` is the optional live game in Q3. It refuses to replace a device's own data (anything but earlier demo data) unless `force: true`; a fresh Playwright context starts empty, so tests don't need it.
+- `data/demo.ts`: `seedDemoData({ today?, liveGame?, force?, keepSettings? })` replaces all data with "Ava" #12 and ten final "Fall 2026" games (`keepSettings` keeps the device's own settings). Their ids run from `demo-game-01` (oldest) to `demo-game-10`, and `demo-live` is the optional live game in Q3; `isDemoGameId(id)` tells them apart. It refuses to replace a device's own data (anything but earlier demo data) unless `force: true`; a fresh Playwright context starts empty, so tests don't need it.
 - `data/persistence.ts`: `requestPersistentStorage()` (called once at startup) and `getStorageStatus()` (`{ persisted, usage?, quota? }`).
 - `window.hoopStats` (`{ seedDemoData, clearAllData, exportAll }`) is installed in every build, for the console, e2e tests and screenshots.
 - Other modules (e.g. the cloud backup) may keep their own state in the `meta` table under their own keys. `clearAllData` leaves those alone.

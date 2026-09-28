@@ -2,7 +2,15 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { restoreStubs, simulateBrowser, stubProperties } from '@/components/InstallBanner/testing';
 import { seedDemoData } from '@/data/demo';
-import { createGame, deleteGame, getPlayer, getSettings, listGames, savePlayer } from '@/data/repo';
+import {
+  createGame,
+  deleteGame,
+  getPlayer,
+  getSettings,
+  listGames,
+  savePlayer,
+  updateSettings,
+} from '@/data/repo';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
 import { APP_VERSION } from './appVersion';
@@ -224,16 +232,61 @@ describe('Settings: about', () => {
     expect(list('About')).toHaveTextContent(`Version${APP_VERSION}`);
   });
 
-  it('offers sample data on an empty phone', async () => {
+  it('offers sample data on an empty phone, keeping its Game setup', async () => {
+    const settings = await updateSettings({ shotChart: false, defaultPeriodFormat: 'halves' });
     const { user } = await renderSettings();
 
     await user.click(screen.getByRole('button', { name: /Try it with sample data/ }));
 
     await expectToast('Sample games added');
     expect(await listGames()).toHaveLength(10);
+    expect(await getSettings()).toEqual(settings);
     // Offered only while the phone is empty.
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /Try it with sample data/ })).toBeNull();
+    });
+  });
+
+  it('offers sample data after a test game was started and deleted', async () => {
+    // Starting a game before setting up the player creates an unnamed player.
+    const game = await createGame({
+      opponent: 'Test',
+      date: '2026-09-28',
+      periodFormat: 'quarters',
+    });
+    await deleteGame(game.id);
+    expect(await getPlayer()).toMatchObject({ name: '' });
+    const { user } = await renderSettings();
+
+    await user.click(screen.getByRole('button', { name: /Try it with sample data/ }));
+
+    await expectToast('Sample games added');
+    expect(await listGames()).toHaveLength(10);
+    expect(await getPlayer()).toMatchObject({ name: 'Ava', jerseyNumber: '12' });
+  });
+
+  it('removes just the sample games', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    const own = await createGame({
+      opponent: 'Hillcrest',
+      date: '2026-09-28',
+      periodFormat: 'halves',
+    });
+    const settings = await getSettings();
+    const { user } = await renderSettings();
+
+    const remove = screen.getByRole('button', { name: /Remove sample games/ });
+    expect(remove).toHaveTextContent(
+      'Deletes just the 10 sample games. The player, your settings and any games of your own stay.',
+    );
+    await user.click(remove);
+
+    await expectToast('Sample games removed');
+    expect((await listGames()).map((game) => game.id)).toEqual([own.id]);
+    expect(await getPlayer()).toMatchObject({ name: 'Ava', jerseyNumber: '12' });
+    expect(await getSettings()).toEqual(settings);
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Remove sample games/ })).toBeNull();
     });
   });
 

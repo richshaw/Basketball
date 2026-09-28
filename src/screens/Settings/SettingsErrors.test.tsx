@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { restoreStubs, stubProperties } from '@/components/InstallBanner/testing';
 import { buildDemoData, seedDemoData } from '@/data/demo';
-import { createGame, listGames, savePlayer, updateSettings } from '@/data/repo';
+import { createGame, deleteGame, listGames, savePlayer, updateSettings } from '@/data/repo';
 import { clearAllData, importAll } from '@/data/transfer';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
@@ -19,6 +19,7 @@ vi.mock('@/data/repo', async (importOriginal) => {
     ...actual,
     savePlayer: vi.fn(actual.savePlayer),
     updateSettings: vi.fn(actual.updateSettings),
+    deleteGame: vi.fn(actual.deleteGame),
   };
 });
 
@@ -110,6 +111,18 @@ describe('Settings when a write fails', () => {
 
     await expectToast("Couldn't add the sample games. Try again.");
     expect(screen.getByRole('button', { name: /Try it with sample data/ })).toBeEnabled();
+  });
+
+  it('says so when the sample games cannot be removed', async () => {
+    await importAll(buildDemoData({ today: '2026-09-28' }), 'replace');
+    vi.mocked(deleteGame).mockRejectedValueOnce(failure());
+    const { user } = await renderSettings();
+
+    await user.click(screen.getByRole('button', { name: /Remove sample games/ }));
+
+    await expectToast("Couldn't remove the sample games. Try again.");
+    expect(screen.getByRole('button', { name: /Remove sample games/ })).toBeEnabled();
+    expect(await listGames()).toHaveLength(10);
   });
 
   it('says so when erasing fails', async () => {
