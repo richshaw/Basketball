@@ -2,8 +2,17 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { restoreStubs } from '@/components/InstallBanner/testing';
 import { seedDemoData } from '@/data/demo';
-import { createGame, endGame, getPlayer, listGames, recordStat, savePlayer } from '@/data/repo';
-import { parseExportFile } from '@/data/transfer';
+import {
+  createGame,
+  endGame,
+  getPlayer,
+  getSettings,
+  listGames,
+  recordStat,
+  savePlayer,
+  updateSettings,
+} from '@/data/repo';
+import { parseExportFile, type ExportFile } from '@/data/transfer';
 import { todayLocalISO } from '@/lib/format';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
@@ -223,7 +232,7 @@ describe('Settings: restore from a backup file', () => {
 
     const confirm = screen.getByRole('alertdialog', { name: 'Replace everything on this phone?' });
     expect(confirm).toHaveAccessibleDescription(
-      "The game on this phone and its stats will be erased and replaced with what's in the backup. This can't be undone.",
+      "The game on this phone and its stats, the player's name and number, and your settings will be erased and replaced with what's in the backup. This can't be undone.",
     );
     await user.click(within(confirm).getByRole('button', { name: 'Replace everything' }));
 
@@ -266,7 +275,33 @@ describe('Settings: restore from a backup file', () => {
 
     await expectToast('Restored 2 games');
     expect(await listGames()).toHaveLength(2);
+    expect(await getPlayer()).toMatchObject({ name: 'Maya', jerseyNumber: '7' });
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('keeps the player and settings set up on a phone with no games yet', async () => {
+    await savePlayer({ name: 'Ava', jerseyNumber: '12' });
+    const settings = await updateSettings({ shotChart: false, defaultPeriodFormat: 'halves' });
+    const { user } = await renderSettings();
+    // A backup whose player was never named, with the default settings.
+    const fixture = parseExportFile(fixtureJson);
+    const backup: ExportFile = {
+      ...fixture,
+      players: fixture.players.map(({ jerseyNumber: _, ...player }) => ({ ...player, name: '' })),
+      settings: { shotChart: true, defaultPeriodFormat: 'quarters' },
+    };
+
+    await chooseBackupFile(user, pickedFile(JSON.stringify(backup)));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+
+    await expectToast('Restored 2 games');
+    expect((await listGames()).map((game) => game.opponent).sort()).toEqual([
+      'Brookside',
+      'Hillcrest',
+    ]);
+    expect(await getPlayer()).toMatchObject({ name: 'Ava', jerseyNumber: '12' });
+    expect(await getSettings()).toEqual(settings);
   });
 
   it("explains a file that isn't a backup, and changes nothing", async () => {

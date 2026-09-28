@@ -35,10 +35,34 @@ function phoneGamesAndStats(count: number): string {
     : `All ${count} games on this phone and their stats`;
 }
 
+/** 'a and b', or 'a, b, and c'. */
+function listInWords(items: readonly string[]): string {
+  if (items.length <= 2) return items.join(' and ');
+  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
+}
+
+/**
+ * The Replace confirmation: everything it erases. That's the player and the settings
+ * too, not just the games (a backup without settings leaves this phone's alone).
+ */
+function replaceWarning(phoneGameCount: number, backup: ExportFile): string {
+  const erased = [phoneGamesAndStats(phoneGameCount), "the player's name and number"];
+  if (backup.settings) erased.push('your settings');
+  return `${listInWords(erased)} will be erased and replaced with what's in the backup. This can't be undone.`;
+}
+
+/** The Replace row's subtitle, e.g. 'Erases everything on this phone first: all 3 games, the player and your settings.' */
+function replaceSubtitle(phoneGameCount: number, backup: ExportFile): string {
+  const games = phoneGameCount === 1 ? 'its game' : `all ${phoneGameCount} games`;
+  const rest = backup.settings ? ', the player and your settings' : ' and the player';
+  return `Erases everything on this phone first: ${games}${rest}.`;
+}
+
 /**
  * Shows what a backup holds and restores it: added to this phone's data (merge,
  * recommended) or replacing it (after a confirmation). With no games on the phone
- * there's nothing to lose, so it just restores.
+ * it just adds the backup: a merge, so the player's name and the settings set up
+ * here are kept (Replace would erase them too).
  */
 export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
   const confirm = useConfirm();
@@ -72,10 +96,10 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
 
   const restore = async (mode: ImportMode) => {
     if (restoring) return;
-    if (mode === 'replace' && phoneGameCount > 0) {
+    if (mode === 'replace') {
       const confirmed = await confirm({
         title: 'Replace everything on this phone?',
-        message: `${phoneGamesAndStats(phoneGameCount)} will be erased and replaced with what's in the backup. This can't be undone.`,
+        message: replaceWarning(phoneGameCount, backup),
         confirmLabel: 'Replace everything',
         destructive: true,
       });
@@ -110,7 +134,7 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
       ))}
       footer={
         phoneIsEmpty ? (
-          <Button size="lg" onClick={() => void restore('replace')} disabled={restoring}>
+          <Button size="lg" onClick={() => void restore('merge')} disabled={restoring}>
             Restore backup
           </Button>
         ) : null
@@ -127,7 +151,8 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
             subtitle={
               <>
                 <strong className={styles.recommended}>Recommended.</strong> Keeps everything here
-                and adds what&apos;s new. For a game on both, the newer version wins, stats and all.
+                and adds what&apos;s missing, even games deleted here. For a game on both, the newer
+                version wins, stats and all.
               </>
             }
             onClick={() => void restore('merge')}
@@ -135,7 +160,7 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
           />
           <ListRow
             title="Replace everything on this phone"
-            subtitle={`Erases ${phoneGamesAndStats(phoneGameCount).toLowerCase()} first.`}
+            subtitle={replaceSubtitle(phoneGameCount, backup)}
             destructive
             onClick={() => void restore('replace')}
             disabled={restoring}
