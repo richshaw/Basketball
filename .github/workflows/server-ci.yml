@@ -16,11 +16,12 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch or PR supersedes the running checks. On main this also means
-# only the newest commit's run can complete and trigger a deploy.
+# On a PR, a newer push supersedes the running checks. On main every commit's run completes (grouped
+# per commit, never cancelled), so re-running an old run can't cancel a newer one; the deploy
+# workflow skips any commit that is no longer the tip of main.
 concurrency:
-  group: server-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: server-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   checks:

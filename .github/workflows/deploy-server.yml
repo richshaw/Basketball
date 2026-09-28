@@ -30,10 +30,28 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
+      # Re-running an old "Server CI" run on main must not redeploy that old commit: only the
+      # commit that is still the tip of main is deployed (the newer one deploys after its own CI).
+      - name: Check the commit is still the tip of main
+        id: tip
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$tip" != "$HEAD_SHA" ]; then
+            echo "::notice title=Deploy skipped::$HEAD_SHA is no longer the tip of main ($tip). The newer commit deploys after its own CI run."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Until the owner completes the one-time Fly.io setup (server/README.md), there is no
       # FLY_API_TOKEN secret: skip the deploy with a notice instead of failing the run.
       - name: Check for FLY_API_TOKEN
         id: fly
+        if: steps.tip.outputs.stale != 'true'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
