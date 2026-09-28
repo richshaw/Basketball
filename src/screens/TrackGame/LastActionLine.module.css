@@ -11,6 +11,12 @@
   background-color: var(--color-surface);
 }
 
+.status {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
 .message {
   display: flex;
   flex: 1;
@@ -69,12 +75,17 @@
   font-weight: var(--font-weight-bold);
 }
 
-.action:active {
+.action:active:not(:disabled) {
   opacity: 0.6;
 }
 
+/* Briefly off after the line changes (see LastActionLine.tsx): no visible change, no flicker. */
+.action:disabled {
+  cursor: default;
+}
+
 .action:focus-visible {
-  outline-offset: -3px;
+  outline-offset: calc(-1 * var(--focus-ring-width));
 }
 
 @media (prefers-reduced-motion: reduce) {

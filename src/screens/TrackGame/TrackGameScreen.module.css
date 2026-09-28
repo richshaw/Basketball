@@ -10,8 +10,11 @@
   height: 100dvh;
   padding: 0 var(--space-2) max(var(--space-2), var(--safe-bottom));
   overflow: hidden;
-  /* Fast taps between buttons must never zoom, select text or open a callout. */
-  touch-action: manipulation;
+  /*
+   * Taps must never zoom (double tap or pinch), select text or open a callout. The
+   * sheets live outside <main>, so they still scroll.
+   */
+  touch-action: pan-x pan-y;
   overscroll-behavior: none;
   -webkit-user-select: none;
   user-select: none;
@@ -29,6 +32,12 @@
   font-weight: var(--font-weight-bold);
   line-height: var(--line-height-tight);
   text-align: center;
+}
+
+/* The stat strip, with the "not saved" row laid over it when a tap wasn't saved. */
+.stripArea {
+  position: relative;
+  flex-shrink: 0;
 }
 
 .bottomBar {

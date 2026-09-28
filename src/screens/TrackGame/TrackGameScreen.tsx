@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Button } from '@/components/Button/Button';
 import { ButtonLink } from '@/components/Button/ButtonLink';
@@ -8,22 +8,10 @@ import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useToast } from '@/components/Toast/toastContext';
 import { useGame, useGameEvents } from '@/data/hooks';
-import {
-  deleteStat,
-  endGame,
-  recordStat,
-  setCurrentPeriod,
-  undoLastStat,
-  type FinalScore,
-} from '@/data/repo';
-import { computeStatLine, periodLabel, STAT_DEFS } from '@/data/stats';
-import {
-  MAX_PERIOD,
-  type Game,
-  type PeriodFormat,
-  type StatEvent,
-  type StatType,
-} from '@/data/types';
+import { endGame, type FinalScore } from '@/data/repo';
+import { computeStatLine, periodLabel } from '@/data/stats';
+import { MAX_PERIOD, type Game, type StatEvent, type StatType } from '@/data/types';
+import { gameTitle } from '@/lib/gameTitle';
 import { paths } from '@/routes';
 import { EndGameSheet } from './EndGameSheet';
 import { LastActionLine, type LastAction } from './LastActionLine';
@@ -32,103 +20,30 @@ import { PeriodSheet } from './PeriodSheet';
 import { StatGrid } from './StatGrid';
 import { StatStrip } from './StatStrip';
 import { TopBar } from './TopBar';
-import { countByType, formatClockTime, matchupTitle, statLabel } from './tracking';
+import {
+  countByType,
+  createTapGuard,
+  FOUL_TROUBLE_AT,
+  FOULED_OUT_AT,
+  formatClockTime,
+  statKind,
+  statLabel,
+} from './tracking';
+import { UnsavedStats } from './UnsavedStats';
+import { useTrackingSession } from './useTrackingSession';
 import { useWakeLock } from './useWakeLock';
 import styles from './TrackGameScreen.module.css';
 
 /** Puts a message on the last-action line. */
 type ShowAction = (action: Omit<LastAction, 'key'>) => void;
 
-/** Runs `run` the first time only, so a double tap on an inline Undo acts once. */
-function once(run: () => void): () => void {
-  let done = false;
-  return () => {
-    if (done) return;
-    done = true;
-    run();
-  };
-}
-
-/**
- * Removes one particular stat: the one an inline Undo belongs to (never "whatever is
- * latest"), so a repeated tap can't take away a second stat. Works even while the
- * stat is still being saved.
- */
-function removeStat(show: ShowAction, saved: Promise<StatEvent>, label: string): void {
-  show({ message: `Removed ${label}`, tone: 'muted' });
-  saved.then(
-    (event) =>
-      deleteStat(event.id).then(undefined, () =>
-        show({ message: `Couldn't remove ${label}`, tone: 'error' }),
-      ),
-    // Never saved: the save error is already on the line.
-    () => undefined,
-  );
-}
-
-/** Saves one tap right away, then confirms it on the line with an Undo for that stat. */
-function recordWithFeedback(
-  show: ShowAction,
-  gameId: string,
-  type: StatType,
-  periodText: string,
-): void {
-  const saved = recordStat(gameId, type);
-  const label = statLabel(type);
-  show({
-    message: `${label} · ${periodText}`,
-    kind: STAT_DEFS[type].kind,
-    actionLabel: 'Undo',
-    onAction: once(() => removeStat(show, saved, label)),
-  });
-  saved.catch(() =>
-    show({
-      message: `Couldn't save ${label}`,
-      tone: 'error',
-      actionLabel: 'Retry',
-      onAction: once(() => recordWithFeedback(show, gameId, type, periodText)),
-    }),
-  );
-}
-
-/** The grid's Undo: removes the game's latest stat, whatever it is. */
-function undoLatest(show: ShowAction, gameId: string): void {
-  undoLastStat(gameId).then(
-    (removed) =>
-      show({
-        message: removed ? `Removed ${statLabel(removed.type)}` : 'Nothing to undo',
-        tone: 'muted',
-      }),
-    () => show({ message: "Couldn't undo. Try again.", tone: 'error' }),
-  );
-}
-
-/** Moves to another period, with an Undo back to where it was. */
-function movePeriod(
-  show: ShowAction,
-  gameId: string,
-  from: number,
-  to: number,
-  format: PeriodFormat,
-): void {
-  const toText = periodLabel(to, format);
-  const fromText = periodLabel(from, format);
-  setCurrentPeriod(gameId, to).catch(() =>
-    show({ message: `Couldn't move to ${toText}`, tone: 'error' }),
-  );
-  show({
-    message: `Now in ${toText}`,
-    actionLabel: 'Undo',
-    onAction: once(() => {
-      show({ message: `Back in ${fromText}`, tone: 'muted' });
-      setCurrentPeriod(gameId, from).catch(() =>
-        show({ message: `Couldn't go back to ${fromText}`, tone: 'error' }),
-      );
-    }),
-  });
-}
-
 type OpenSheet = 'period' | 'log' | 'end' | null;
+
+/** ' · 4 fouls' once she's in foul trouble, so the line says it right at the tap. */
+function foulNote(fouls: number): string {
+  if (fouls >= FOULED_OUT_AT) return ` · ${fouls} fouls, fouled out`;
+  return fouls >= FOUL_TROUBLE_AT ? ` · ${fouls} fouls` : '';
+}
 
 /** The live tracking UI for a loaded game. */
 function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
@@ -139,42 +54,110 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   // Bumped each time the end-game sheet opens, so its form starts fresh.
   const [endSheetKey, setEndSheetKey] = useState(0);
   const [lastAction, setLastAction] = useState<LastAction | null>(null);
+  const [session, { period, unsaved, retrying }] = useTrackingSession(game.id, game.currentPeriod);
+  // A double tap on the grid's Undo or on Next acts once.
+  const [undoGuard] = useState(() => createTapGuard());
+  const [nextGuard] = useState(() => createTapGuard());
   useWakeLock();
 
-  const { id: gameId, currentPeriod, periodFormat } = game;
-  const periodText = periodLabel(currentPeriod, periodFormat);
+  const { id: gameId, periodFormat } = game;
+  const periodText = periodLabel(period, periodFormat);
   const isFinal = game.status === 'final';
 
   // Recording a stat changes `events`; only these two derive from it.
   const counts = useMemo(() => countByType(events), [events]);
   const line = useMemo(() => computeStatLine(events), [events]);
 
+  // Read by tap handlers, which stay stable so the grid doesn't re-render.
+  const eventsRef = useRef(events);
+  const foulsRef = useRef(counts.foul);
+  useEffect(() => {
+    eventsRef.current = events;
+    foulsRef.current = counts.foul;
+  }, [events, counts.foul]);
+
   const show = useCallback<ShowAction>((action) => {
     setLastAction((previous) => ({ ...action, key: (previous?.key ?? 0) + 1 }));
   }, []);
 
-  // Stable across stats (they change only with the game or period), so the memoized
-  // grid buttons re-render only when their own count changes.
-  const record = useCallback(
-    (type: StatType) => recordWithFeedback(show, gameId, type, periodText),
-    [show, gameId, periodText],
-  );
-  const undo = useCallback(() => undoLatest(show, gameId), [show, gameId]);
-  const nextPeriod = useCallback(
-    () => movePeriod(show, gameId, currentPeriod, currentPeriod + 1, periodFormat),
-    [show, gameId, currentPeriod, periodFormat],
-  );
-  const pickPeriod = useCallback(
-    (period: number) => {
-      setOpenSheet(null);
-      if (period !== currentPeriod) {
-        movePeriod(show, gameId, currentPeriod, period, periodFormat);
-      }
+  /** Says a stat is gone right away, and speaks up if removing it fails. */
+  const takeBack = useCallback(
+    (label: string, removal: Promise<boolean>) => {
+      show({ message: `Removed ${label}`, tone: 'muted' });
+      void removal.then((removed) => {
+        if (!removed) show({ message: `Couldn't remove ${label}. Try again.`, tone: 'error' });
+      });
     },
-    [show, gameId, currentPeriod, periodFormat],
+    [show],
+  );
+
+  // Stable for the whole game (the period comes from the session at the tap), so the
+  // memoized grid buttons re-render only when their own count changes.
+  const record = useCallback(
+    (type: StatType) => {
+      const tap = session.record(type);
+      const label = statLabel(type);
+      const fouls = type === 'foul' ? foulNote(foulsRef.current + 1) : '';
+      show({
+        message: `${label} · ${periodLabel(tap.period, periodFormat)}${fouls}`,
+        kind: statKind(type),
+        tapId: tap.id,
+        actionLabel: 'Undo',
+        onAction: () => takeBack(label, session.undo(tap)),
+      });
+    },
+    [session, show, takeBack, periodFormat],
+  );
+
+  const undo = useCallback((): boolean => {
+    if (!undoGuard()) return false;
+    const outcome = session.undoLatest(eventsRef.current);
+    if (outcome === 'busy') return false;
+    if (outcome === 'nothing') show({ message: 'Nothing to undo', tone: 'muted' });
+    else takeBack(statLabel(outcome.type), outcome.done);
+    return true;
+  }, [session, show, takeBack, undoGuard]);
+
+  /** Moves to another period at once (stats tapped next land there), with an Undo. */
+  const moveTo = useCallback(
+    (to: number) => {
+      const from = session.getSnapshot().period;
+      if (to === from) return;
+      const toText = periodLabel(to, periodFormat);
+      const fromText = periodLabel(from, periodFormat);
+      const sayIfFailed = (message: string) => (moved: boolean) => {
+        if (!moved) show({ message, tone: 'error' });
+      };
+      void session.movePeriod(to).then(sayIfFailed(`Couldn't move to ${toText}. Try again.`));
+      show({
+        message: `Now in ${toText}`,
+        actionLabel: 'Undo',
+        onAction: () => {
+          show({ message: `Back in ${fromText}`, tone: 'muted' });
+          void session
+            .movePeriod(from)
+            .then(sayIfFailed(`Couldn't go back to ${fromText}. Try again.`));
+        },
+      });
+    },
+    [session, show, periodFormat],
+  );
+
+  const nextPeriod = useCallback(() => {
+    if (!nextGuard()) return;
+    const current = session.getSnapshot().period;
+    if (current < MAX_PERIOD) moveTo(current + 1);
+  }, [session, moveTo, nextGuard]);
+  const pickPeriod = useCallback(
+    (to: number) => {
+      setOpenSheet(null);
+      moveTo(to);
+    },
+    [moveTo],
   );
   const openPeriods = useCallback(() => setOpenSheet('period'), []);
   const closeSheet = useCallback(() => setOpenSheet(null), []);
+  const retry = useCallback(() => session.retry(), [session]);
 
   const deleteFromLog = useCallback(
     async (event: StatEvent) => {
@@ -186,16 +169,11 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
         destructive: true,
       });
       if (!confirmed) return;
-      try {
-        await deleteStat(event.id);
-      } catch {
-        toast.show({ message: `Couldn't delete ${what}. Try again.` });
-        return;
-      }
-      toast.show({ message: `Deleted ${what}` });
-      show({ message: `Deleted ${what}`, tone: 'muted' });
+      // The log shows it's gone; the line says so once the log is closed.
+      if (await session.remove(event)) show({ message: `Deleted ${what}`, tone: 'muted' });
+      else toast.show({ message: `Couldn't delete ${what}. Try again.` });
     },
-    [confirm, toast, show, periodFormat],
+    [confirm, toast, show, session, periodFormat],
   );
 
   const finishGame = useCallback(
@@ -214,30 +192,43 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   // Before anything is tapped, the line shows the game's latest stat (e.g. after a
   // relaunch), or how to start.
   const latest = events.at(-1);
-  const shownAction: LastAction =
+  let shownAction: LastAction =
     lastAction ??
     (latest
       ? {
           key: 0,
           message: `${statLabel(latest.type)} · ${periodLabel(latest.period, periodFormat)}`,
-          kind: STAT_DEFS[latest.type].kind,
+          kind: statKind(latest.type),
           actionLabel: 'Undo',
-          onAction: once(() => removeStat(show, Promise.resolve(latest), statLabel(latest.type))),
+          onAction: () => takeBack(statLabel(latest.type), session.remove(latest)),
         }
       : { key: 0, message: 'Tap a button to record a stat', tone: 'muted' });
+  // The tap on the line couldn't be saved (yet): say so there too.
+  const unsavedTap = unsaved.find((tap) => tap.id === shownAction.tapId);
+  if (unsavedTap) {
+    shownAction = {
+      ...shownAction,
+      message: `${statLabel(unsavedTap.type)} not saved`,
+      kind: undefined,
+      tone: 'error',
+    };
+  }
 
   return (
     <>
       <main className={styles.screen}>
         <TopBar
-          title={matchupTitle(game)}
+          title={gameTitle(game)}
           periodText={periodText}
-          canAdvance={currentPeriod < MAX_PERIOD}
+          canAdvance={period < MAX_PERIOD}
           onPickPeriod={openPeriods}
           onNextPeriod={nextPeriod}
         />
         {isFinal ? <p className={styles.banner}>Editing a finished game</p> : null}
-        <StatStrip line={line} />
+        <div className={styles.stripArea}>
+          <StatStrip line={line} />
+          <UnsavedStats unsaved={unsaved} retrying={retrying} onRetry={retry} />
+        </div>
         {/*
           The shot chart (a later PR) slots in here, above the grid: the grid takes
           whatever height is left, so it shrinks to make room.
@@ -269,7 +260,7 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
       {/* Outside <main>: the sheets' text fields need the text selection <main> turns off. */}
       <PeriodSheet
         open={openSheet === 'period'}
-        current={currentPeriod}
+        current={period}
         periodFormat={periodFormat}
         onPick={pickPeriod}
         onClose={closeSheet}
@@ -312,7 +303,8 @@ function GameNotFound() {
 /**
  * Live game tracking: big one-tap stat buttons for a parent in a loud gym. Full
  * screen on purpose: no tab bar and no update banner may interrupt a live game.
- * Every tap is saved immediately; nothing here ever waits on the database first.
+ * Every tap is saved immediately; nothing here ever waits on the database first,
+ * and a tap that couldn't be saved stays on screen until it is (see session.ts).
  */
 export function TrackGameScreen() {
   const { gameId } = useParams();

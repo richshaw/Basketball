@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { StatType } from '@/data/types';
 import {
   countByType,
+  createTapGuard,
   formatClockTime,
   foulStatus,
-  matchupTitle,
   parseScore,
   periodChoices,
+  statKind,
   statLabel,
   widestWordEm,
 } from './tracking';
@@ -26,20 +27,38 @@ describe('countByType', () => {
   });
 });
 
-describe('statLabel', () => {
-  it('uses the stat definitions, or the raw type for an unknown one', () => {
+describe('statLabel and statKind', () => {
+  it('use the stat definitions, and cope with a type this app does not know', () => {
     expect(statLabel('fg3_made')).toBe('3PT Made');
     expect(statLabel('charge')).toBe('Charge Taken');
     expect(statLabel('dunk' as StatType)).toBe('dunk');
+    expect(statLabel('toString' as StatType)).toBe('toString');
+    expect([statKind('fg2_made'), statKind('ft_miss'), statKind('stl')]).toEqual([
+      'made',
+      'miss',
+      'other',
+    ]);
+    expect(statKind('dunk' as StatType)).toBe('other');
+    expect(statKind('constructor' as StatType)).toBe('other');
   });
 });
 
-describe('matchupTitle', () => {
-  it('uses "vs" at home or on a neutral court, and "@" away', () => {
-    expect(matchupTitle({ opponent: 'Central', homeAway: 'home' })).toBe('vs Central');
-    expect(matchupTitle({ opponent: 'Central', homeAway: 'neutral' })).toBe('vs Central');
-    expect(matchupTitle({ opponent: 'Central' })).toBe('vs Central');
-    expect(matchupTitle({ opponent: 'Central', homeAway: 'away' })).toBe('@ Central');
+describe('createTapGuard', () => {
+  it('lets one call through per window, counted from the last one let through', () => {
+    let time = 1000;
+    const guard = createTapGuard(400, () => time);
+    const tapAt = (at: number) => {
+      time = at;
+      return guard();
+    };
+    expect([tapAt(1000), tapAt(1120), tapAt(1399), tapAt(1400), tapAt(1700), tapAt(1800)]).toEqual([
+      true,
+      false,
+      false,
+      true,
+      false,
+      true,
+    ]);
   });
 });
 

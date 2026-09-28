@@ -13,30 +13,46 @@ const GRID_STATS = [
   ['foul', 'deflection', 'charge'],
 ] as const satisfies readonly (readonly StatType[])[];
 
-/** Font size the label words are measured at (any size works; bigger is more precise). */
-const MEASURE_PX = 100;
+/**
+ * Shorter words on the grid only (the log and reports keep the full names), so every
+ * label is at most two short words and they all fit at the same large size.
+ */
+const GRID_WORDS: Partial<Record<StatType, string>> = {
+  tov: 'Turn over',
+  deflection: 'Deflect',
+};
 
 /**
- * Labels are big, but a label's longest word must still fit on one line ("Deflection"
- * is the long one). Measures each label's longest word once, in the label font, and
- * gives it to the CSS as `--label-em`, which sizes the font to the button's width.
- * Where there's no OffscreenCanvas, the CSS falls back to a size that fits any label.
+ * Labels are big, and all the same size, but the widest word on the grid must still
+ * fit its button on one line. Measures every word once, with a canvas, in the label
+ * font at the size labels render at when they fit (the xl token), and gives the
+ * widest one to the CSS as `--label-em`, which caps the size so it fits the width.
+ * Without a canvas, the CSS falls back to a size that fits any label.
  */
 function useFitLabels(gridRef: RefObject<HTMLElement | null>) {
   useLayoutEffect(() => {
-    const labels = gridRef.current?.querySelectorAll<HTMLElement>('[data-fit-label]');
+    const grid = gridRef.current;
+    const labels = grid?.querySelectorAll<HTMLElement>('[data-fit-label]');
     const first = labels?.[0];
-    if (!labels || !first || typeof OffscreenCanvas !== 'function') return;
-    const context = new OffscreenCanvas(1, 1).getContext('2d');
+    if (!grid || !labels || !first) return;
+    const context = document.createElement('canvas').getContext('2d');
     if (!context) return;
 
+    const probe = document.createElement('span');
+    probe.style.fontSize = 'var(--font-size-xl)';
+    grid.append(probe);
+    const size = parseFloat(getComputedStyle(probe).fontSize);
+    probe.remove();
+    if (!(size > 0)) return;
+
     const { fontStyle, fontWeight, fontFamily } = getComputedStyle(first);
-    context.font = `${fontStyle} ${fontWeight} ${MEASURE_PX}px ${fontFamily}`;
-    const measureEm = (word: string) => context.measureText(word).width / MEASURE_PX;
+    context.font = `${fontStyle} ${fontWeight} ${size}px ${fontFamily}`;
+    const measureEm = (word: string) => context.measureText(word).width / size;
+    let widest = 0;
     for (const label of labels) {
-      const em = widestWordEm(label.textContent ?? '', measureEm);
-      if (em > 0) label.style.setProperty('--label-em', em.toFixed(3));
+      widest = Math.max(widest, widestWordEm(label.textContent ?? '', measureEm));
     }
+    if (widest > 0) grid.style.setProperty('--label-em', widest.toFixed(3));
   }, [gridRef]);
 }
 
@@ -55,6 +71,16 @@ function flash(button: HTMLElement) {
         ],
     { duration: 240, easing: 'ease-out' },
   );
+}
+
+/** Each word on its own line, the same on every screen size ("2PT" over "Made"). */
+function Words({ text }: { text: string }) {
+  return text.split(' ').map((word, index) => (
+    <Fragment key={word}>
+      {index > 0 ? ' ' : null}
+      <span className={styles.word}>{word}</span>
+    </Fragment>
+  ));
 }
 
 interface StatButtonProps {
@@ -86,13 +112,7 @@ const StatButton = memo(function StatButton({ type, count, onRecord }: StatButto
       }}
     >
       <span className={styles.label} data-fit-label="">
-        {/* One word per line, the same on every screen size ("2PT" over "Made"). */}
-        {label.split(' ').map((word, index) => (
-          <Fragment key={word}>
-            {index > 0 ? ' ' : null}
-            <span className={styles.word}>{word}</span>
-          </Fragment>
-        ))}
+        <Words text={GRID_WORDS[type] ?? label} />
       </span>
       {count > 0 ? (
         <>
@@ -104,15 +124,15 @@ const StatButton = memo(function StatButton({ type, count, onRecord }: StatButto
   );
 });
 
-const UndoButton = memo(function UndoButton({ onUndo }: { onUndo: () => void }) {
+const UndoButton = memo(function UndoButton({ onUndo }: { onUndo: () => boolean }) {
   return (
     <button
       type="button"
       className={cx(styles.button, styles.undo)}
       aria-label="Undo last stat"
       onClick={(event) => {
-        onUndo();
-        flash(event.currentTarget);
+        // The second tap of a double tap is ignored, so it doesn't flash either.
+        if (onUndo()) flash(event.currentTarget);
       }}
     >
       <span className={styles.label} data-fit-label="">
@@ -126,8 +146,11 @@ export interface StatGridProps {
   counts: StatCounts;
   /** Records one stat. Keep it stable (useCallback), or every button re-renders. */
   onRecord: (type: StatType) => void;
-  /** Removes the game's most recent stat. Keep it stable too. */
-  onUndo: () => void;
+  /**
+   * Removes the most recent stat; returns false if it ignored the tap (e.g. the
+   * second tap of a double tap). Keep it stable too.
+   */
+  onUndo: () => boolean;
 }
 
 /**

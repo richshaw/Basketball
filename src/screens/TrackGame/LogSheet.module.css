@@ -28,13 +28,10 @@
   gap: var(--space-3);
 }
 
+/* The period Badge, wide enough that 'Q1' and '2OT' line up down the list. */
 .period {
+  justify-content: center;
   min-width: calc(var(--space-8) + var(--space-2));
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-full);
-  background-color: var(--color-surface-2);
   color: var(--color-text);
   font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-bold);
-  text-align: center;
 }

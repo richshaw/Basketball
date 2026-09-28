@@ -1,5 +1,6 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { db } from '@/data/db';
 import * as repo from '@/data/repo';
 import {
   createGame,
@@ -13,6 +14,8 @@ import {
 import { MAX_PERIOD, type Game, type StatType } from '@/data/types';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
+import { AUTO_RETRY_MS } from './session';
+import { DOUBLE_TAP_MS } from './tracking';
 
 function newGame(overrides: Partial<NewGame> = {}): Promise<Game> {
   return createGame({
@@ -36,6 +39,20 @@ const statButton = (name: string) => within(grid()).getByRole('button', { name }
 const strip = () => screen.getByRole('list', { name: 'Game stats' });
 const lastAction = () => screen.getByRole('status', { name: 'Last action' });
 const notifications = () => screen.getByRole('status', { name: 'Notifications' });
+/** The last-action line's button ("Undo"); the grid's is "Undo last stat". */
+const lineButton = (name = 'Undo') => screen.getByRole('button', { name });
+const notSaved = () => screen.queryByRole('alert');
+
+/** Taps the line's button once it takes taps (it ignores them just after it changes). */
+async function tapLineButton(name = 'Undo') {
+  const button = lineButton(name);
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+}
+
+/** Waits out the double-tap window, so the next tap on the same control counts. */
+const afterDoubleTapWindow = () =>
+  new Promise((resolve) => setTimeout(resolve, DOUBLE_TAP_MS + 50));
 
 /** Waits until the stat strip says `text` (what a screen reader hears), e.g. 'Points: 5'. */
 async function expectStrip(...texts: string[]) {
@@ -46,6 +63,10 @@ async function expectStrip(...texts: string[]) {
 
 async function eventTypes(gameId: string): Promise<StatType[]> {
   return (await getGameEvents(gameId)).map((event) => event.type);
+}
+
+async function eventPeriods(gameId: string): Promise<[StatType, number][]> {
+  return (await getGameEvents(gameId)).map((event) => [event.type, event.period]);
 }
 
 describe('TrackGameScreen', () => {
@@ -68,11 +89,9 @@ describe('TrackGameScreen', () => {
       '3-pointers: 0 of 0',
       'Free throws: 0 of 0',
     );
-    expect(
-      within(grid())
-        .getAllByRole('button')
-        .map((button) => button.textContent),
-    ).toEqual([
+    const buttons = within(grid()).getAllByRole('button');
+    // Full names for VoiceOver and Voice Control...
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
       '2PT Made',
       '2PT Miss',
       '3PT Made',
@@ -88,10 +107,29 @@ describe('TrackGameScreen', () => {
       'Foul',
       'Deflection',
       'Charge Taken',
+      'Undo last stat',
+    ]);
+    // ...and at most two short words on each button.
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      '2PT Made',
+      '2PT Miss',
+      '3PT Made',
+      '3PT Miss',
+      'FT Made',
+      'FT Miss',
+      'Off Reb',
+      'Def Reb',
+      'Assist',
+      'Steal',
+      'Block',
+      'Turn over',
+      'Foul',
+      'Deflect',
+      'Charge Taken',
       'Undo',
     ]);
-    expect(statButton('Undo last stat')).toBeInTheDocument();
     expect(lastAction()).toHaveTextContent('Tap a button to record a stat');
+    expect(notSaved()).not.toBeInTheDocument();
     // Full screen: no tab bar to tap by mistake.
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument();
   });
@@ -110,6 +148,8 @@ describe('TrackGameScreen', () => {
     // Confirmed on the spot, before the database has answered, in the fixed line: never
     // in a floating toast, which would cover the bottom row of stat buttons.
     expect(lastAction()).toHaveTextContent('3PT Made · Q1');
+    // Only the message is read out, not the Undo button next to it.
+    expect(within(lastAction()).queryByRole('button')).not.toBeInTheDocument();
     expect(notifications()).toBeEmptyDOMElement();
     await expectStrip('Points: 3', '3-pointers: 1 of 1', 'Field goals: 1 of 1');
     await waitFor(() => expect(statButton('3PT Made')).toHaveAccessibleDescription('1 this game'));
@@ -176,19 +216,24 @@ describe('TrackGameScreen', () => {
     await expectStrip('Points: 6', 'Field goals: 2 of 4', 'Free throws: 2 of 2', 'Fouls: 1');
   });
 
-  it("the line's Undo removes exactly the stat it belongs to, and only once", async () => {
+  // (That each line action runs at most once is tested in LastActionLine.test.tsx, and
+  // that taking back a tap twice removes it once, in session.test.ts.)
+  it("the line's Undo removes exactly the stat it belongs to, even on a double tap", async () => {
     const game = await newGame();
     await renderTracking(game);
 
     fireEvent.click(statButton('Steal'));
     fireEvent.click(statButton('Assist'));
-    const undo = within(lastAction()).getByRole('button', { name: 'Undo' });
-    // A double tap: the second one must not remove the Steal too.
+    const undo = lineButton();
+    // Just after the line changed, it ignores taps (a double tap on the stat button
+    // must not reach it).
+    expect(undo).toBeDisabled();
+    await waitFor(() => expect(undo).toBeEnabled());
     fireEvent.click(undo);
     fireEvent.click(undo);
 
     expect(lastAction()).toHaveTextContent('Removed Assist');
-    expect(within(lastAction()).queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
     await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
     await expectStrip('Assists: 0', 'Steals: 1');
   });
@@ -202,10 +247,28 @@ describe('TrackGameScreen', () => {
 
     fireEvent.click(statButton('Block'));
     fireEvent.click(statButton('Foul'));
+    await afterDoubleTapWindow();
     fireEvent.click(statButton('Undo last stat'));
-    await waitFor(() => expect(lastAction()).toHaveTextContent('Removed Foul'));
-    expect(await eventTypes(game.id)).toEqual(['blk']);
+    expect(lastAction()).toHaveTextContent('Removed Foul');
+    await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['blk']));
     await expectStrip('Blocks: 1', 'Fouls: 0');
+  });
+
+  it("a double tap on the grid's Undo removes one stat", async () => {
+    const game = await newGame();
+    for (const type of ['stl', 'ast', 'blk'] as const) await recordStat(game.id, type);
+    await renderTracking(game);
+
+    fireEvent.click(statButton('Undo last stat'));
+    fireEvent.click(statButton('Undo last stat'));
+    expect(lastAction()).toHaveTextContent('Removed Block');
+    await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl', 'ast']));
+
+    // A deliberate second Undo, a moment later, takes the next one.
+    await afterDoubleTapWindow();
+    fireEvent.click(statButton('Undo last stat'));
+    expect(lastAction()).toHaveTextContent('Removed Assist');
+    await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
   });
 
   it('after a relaunch, the line offers to undo the latest saved stat', async () => {
@@ -217,9 +280,28 @@ describe('TrackGameScreen', () => {
 
     await waitFor(() => expect(lastAction()).toHaveTextContent('FT Made · Q2'));
     await expectStrip('Points: 3');
-    fireEvent.click(within(lastAction()).getByRole('button', { name: 'Undo' }));
+    await tapLineButton();
     expect(lastAction()).toHaveTextContent('Removed FT Made');
     await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['fg2_made']));
+  });
+
+  it("copes with a stat this version doesn't know (e.g. from a newer app)", async () => {
+    const game = await newGame();
+    await recordStat(game.id, 'ast');
+    await db.events.add({
+      id: 'from-the-future',
+      gameId: game.id,
+      type: 'dunk' as StatType,
+      period: 1,
+      createdAt: Date.now() + 1000,
+    });
+    await renderTracking(game);
+
+    expect(lastAction()).toHaveTextContent('dunk · Q1');
+    await expectStrip('Assists: 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Log' }));
+    const log = await screen.findByRole('dialog', { name: 'Stat log' });
+    expect(within(log).getAllByRole('listitem')[0]).toHaveTextContent('dunk');
   });
 
   it('moves to the next period (with an Undo), and records new stats there', async () => {
@@ -228,21 +310,47 @@ describe('TrackGameScreen', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
     expect(lastAction()).toHaveTextContent('Now in Q2');
-    await screen.findByRole('button', { name: 'Period Q2' });
-    expect((await getGame(game.id))?.currentPeriod).toBe(2);
+    expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
+    await waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(2));
 
     fireEvent.click(statButton('2PT Made'));
     expect(lastAction()).toHaveTextContent('2PT Made · Q2');
-    await waitFor(async () => expect((await getGameEvents(game.id))[0]?.period).toBe(2));
+    await waitFor(async () => expect(await eventPeriods(game.id)).toEqual([['fg2_made', 2]]));
 
+    await afterDoubleTapWindow();
     fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
-    await screen.findByRole('button', { name: 'Period Q3' });
-    const undo = within(lastAction()).getByRole('button', { name: 'Undo' });
-    fireEvent.click(undo);
-    fireEvent.click(undo);
+    expect(screen.getByRole('button', { name: 'Period Q3' })).toBeInTheDocument();
+    await tapLineButton();
     expect(lastAction()).toHaveTextContent('Back in Q2');
-    await screen.findByRole('button', { name: 'Period Q2' });
-    expect((await getGame(game.id))?.currentPeriod).toBe(2);
+    expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
+    await waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(2));
+  });
+
+  it('a double tap on Next moves one period', async () => {
+    const game = await newGame();
+    await setCurrentPeriod(game.id, 3);
+    await renderTracking(game);
+
+    const next = screen.getByRole('button', { name: 'Next period' });
+    fireEvent.click(next);
+    fireEvent.click(next);
+    expect(screen.getByRole('button', { name: 'Period Q4' })).toBeInTheDocument();
+    await waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(4));
+    await afterDoubleTapWindow();
+    expect((await getGame(game.id))?.currentPeriod).toBe(4);
+    expect(screen.getByRole('button', { name: 'Period Q4' })).toBeInTheDocument();
+  });
+
+  it('a stat tapped right after Next lands in the period on screen', async () => {
+    const game = await newGame();
+    await setCurrentPeriod(game.id, 3);
+    await renderTracking(game);
+
+    // In the same moment: before the new period is saved or shown by the database.
+    fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
+    fireEvent.click(statButton('Steal'));
+    expect(lastAction()).toHaveTextContent('Steal · Q4');
+    await waitFor(async () => expect(await eventPeriods(game.id)).toEqual([['stl', 4]]));
   });
 
   it('picks any period, overtime included, from the period sheet', async () => {
@@ -271,7 +379,7 @@ describe('TrackGameScreen', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await screen.findByRole('button', { name: 'Period OT' });
     expect(lastAction()).toHaveTextContent('Now in OT');
-    expect((await getGame(game.id))?.currentPeriod).toBe(5);
+    await waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(5));
   });
 
   it('labels halves, and stops Next at the last possible period', async () => {
@@ -314,8 +422,9 @@ describe('TrackGameScreen', () => {
 
     await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl', 'fg3_miss']));
     await waitFor(() => expect(rows()).toEqual(['3PT MissQ27:42:05', 'StealQ27:42:05']));
-    expect(notifications()).toHaveTextContent('Deleted 2PT Made (Q1)');
+    // Said on the line (under the log), not in a toast that would outstay the log.
     expect(lastAction()).toHaveTextContent('Deleted 2PT Made (Q1)');
+    expect(notifications()).toBeEmptyDOMElement();
   });
 
   it('says so when the log is empty', async () => {
@@ -338,8 +447,12 @@ describe('TrackGameScreen', () => {
     const ours = within(sheet).getByRole('textbox', { name: 'Our team' });
     expect(ours).toHaveAttribute('inputmode', 'numeric');
     expect(ours).toHaveAttribute('pattern', '[0-9]*');
-    await user.type(ours, '46');
-    await user.type(within(sheet).getByRole('textbox', { name: 'Opponent' }), '39');
+    // Return ("next") after the first score moves on to the second, not ending the game.
+    await user.type(ours, '46{Enter}');
+    const theirs = within(sheet).getByRole('textbox', { name: 'Opponent' });
+    expect(theirs).toHaveFocus();
+    expect((await getGame(game.id))?.status).toBe('live');
+    await user.type(theirs, '39');
     await user.click(within(sheet).getByRole('button', { name: 'End game' }));
 
     await waitFor(() => expect(router.state.location.pathname).toBe(paths.gameReport(game.id)));
@@ -370,6 +483,24 @@ describe('TrackGameScreen', () => {
     expect(ended?.status).toBe('final');
     expect(ended).not.toHaveProperty('teamScore');
     expect(ended).not.toHaveProperty('opponentScore');
+  });
+
+  it('clears a saved score when its field is emptied', async () => {
+    const game = await newGame();
+    await repo.updateGame(game.id, { teamScore: 40, opponentScore: 31 });
+    const { user, router } = await renderTracking(game);
+
+    await user.click(screen.getByRole('button', { name: 'End game' }));
+    const sheet = screen.getByRole('dialog', { name: 'Final score' });
+    const ours = within(sheet).getByRole('textbox', { name: 'Our team' });
+    expect(ours).toHaveValue('40');
+    await user.clear(ours);
+    await user.click(within(sheet).getByRole('button', { name: 'End game' }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(paths.gameReport(game.id)));
+    const ended = await getGame(game.id);
+    expect(ended).not.toHaveProperty('teamScore');
+    expect(ended).toMatchObject({ status: 'final', opponentScore: 31 });
   });
 
   it('keeps tracking when asked, with the game still live', async () => {
@@ -406,28 +537,82 @@ describe('TrackGameScreen', () => {
     expect((await getGame(game.id))?.status).toBe('final');
   });
 
-  it('warns about foul trouble at 4 fouls and shows fouled out at 5', async () => {
+  it('warns about foul trouble at 4 fouls, on the line too, and shows fouled out at 5', async () => {
     const game = await newGame();
+    for (let i = 0; i < 3; i++) await recordStat(game.id, 'foul');
     await renderTracking(game);
 
-    for (let i = 0; i < 4; i++) fireEvent.click(statButton('Foul'));
+    fireEvent.click(statButton('Foul'));
+    expect(lastAction()).toHaveTextContent('Foul · Q1 · 4 fouls');
     await expectStrip('Fouls: 4 (foul trouble)');
     fireEvent.click(statButton('Foul'));
+    expect(lastAction()).toHaveTextContent('Foul · Q1 · 5 fouls, fouled out');
     await expectStrip('Fouls: 5 (fouled out)');
   });
 
-  it('says when a stat could not be saved, and saves it on Retry', async () => {
-    const game = await newGame();
-    await renderTracking(game);
-    vi.spyOn(repo, 'recordStat').mockRejectedValueOnce(new Error('Disk full'));
+  describe('when a stat could not be saved', () => {
+    it('keeps it on screen through later taps until Retry saves it, in its own period', async () => {
+      const game = await newGame();
+      await renderTracking(game);
+      // The first save and the retry the next tap makes both fail.
+      vi.spyOn(repo, 'recordStat')
+        .mockRejectedValueOnce(new Error('Disk full'))
+        .mockRejectedValueOnce(new Error('Disk full'));
 
-    fireEvent.click(statButton('Steal'));
-    await waitFor(() => expect(lastAction()).toHaveTextContent("Couldn't save Steal"));
-    expect(await eventTypes(game.id)).toEqual([]);
+      fireEvent.click(statButton('Steal'));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Steal not saved');
+      expect(lastAction()).toHaveTextContent('Steal not saved');
 
-    fireEvent.click(within(lastAction()).getByRole('button', { name: 'Retry' }));
-    expect(lastAction()).toHaveTextContent('Steal · Q1');
-    await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
+      // Another tap, in another period, doesn't clear it.
+      fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
+      fireEvent.click(statButton('Assist'));
+      expect(lastAction()).toHaveTextContent('Assist · Q2');
+      await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['ast']));
+      expect(notSaved()).toHaveTextContent('Steal not saved');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(notSaved()).not.toBeInTheDocument());
+      expect(await eventPeriods(game.id)).toEqual([
+        ['ast', 2],
+        ['stl', 1],
+      ]);
+      await expectStrip('Steals: 1', 'Assists: 1');
+    });
+
+    it('saves it on its own a moment later', async () => {
+      const game = await newGame();
+      await renderTracking(game);
+      vi.spyOn(repo, 'recordStat').mockRejectedValueOnce(new Error('Database closed'));
+
+      fireEvent.click(statButton('Block'));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Block not saved');
+      await waitFor(() => expect(notSaved()).not.toBeInTheDocument(), {
+        timeout: AUTO_RETRY_MS + 2000,
+      });
+      expect(await eventTypes(game.id)).toEqual(['blk']);
+      expect(lastAction()).toHaveTextContent('Block · Q1');
+    });
+
+    it('never saves it once it was undone, even if the save fails after the Undo', async () => {
+      const game = await newGame();
+      await renderTracking(game);
+      let fail: (error: Error) => void = () => {};
+      vi.spyOn(repo, 'recordStat').mockReturnValueOnce(
+        new Promise((_, reject) => {
+          fail = reject;
+        }),
+      );
+
+      fireEvent.click(statButton('Steal'));
+      await tapLineButton();
+      expect(lastAction()).toHaveTextContent('Removed Steal');
+      act(() => fail(new Error('Disk full')));
+      await new Promise((resolve) => setTimeout(resolve, AUTO_RETRY_MS + 200));
+      // No retry offer replaced "Removed Steal", and nothing was saved.
+      expect(lastAction()).toHaveTextContent('Removed Steal');
+      expect(notSaved()).not.toBeInTheDocument();
+      expect(await eventTypes(game.id)).toEqual([]);
+    });
   });
 
   it('goes back to Games without ending the game', async () => {

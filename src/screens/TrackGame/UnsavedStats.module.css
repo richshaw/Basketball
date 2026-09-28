@@ -1,0 +1,56 @@
+/* Laid over the stat strip (its parent is position: relative), exactly its size. */
+.row {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-danger);
+  color: var(--color-on-danger);
+}
+
+.message {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  line-height: var(--line-height-tight);
+}
+
+.title {
+  overflow: hidden;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-heavy);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hint {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* The danger fill as text on its own text color: the same (AA) pair, inverted. */
+.retry {
+  flex-shrink: 0;
+  align-self: stretch;
+  min-width: calc(2 * var(--tap-target));
+  min-height: var(--tap-target);
+  padding-inline: var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--color-on-danger);
+  color: var(--color-danger);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-heavy);
+}
+
+.retry:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.retry:disabled {
+  opacity: 0.7;
+}

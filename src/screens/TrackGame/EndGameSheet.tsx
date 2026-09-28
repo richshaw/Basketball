@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { Button } from '@/components/Button/Button';
 import { Sheet } from '@/components/Sheet/Sheet';
 import { TextField } from '@/components/TextField/TextField';
@@ -12,8 +12,8 @@ export interface EndGameSheetProps {
   teamScore?: number;
   opponentScore?: number;
   /**
-   * Ends the game with the scores that were typed (a blank one is left out, so the
-   * saved value is kept). Resolves once it's done; rejects if it couldn't be saved.
+   * Ends the game with the scores that were typed (a blank one clears a saved score).
+   * Resolves once it's done; rejects if it couldn't be saved.
    */
   onEnd: (score: FinalScore) => Promise<void>;
   /** "Keep tracking": close without ending the game. */
@@ -34,6 +34,7 @@ export function EndGameSheet({
   onClose,
 }: EndGameSheetProps) {
   const formId = useId();
+  const opponentRef = useRef<HTMLInputElement>(null);
   const [team, setTeam] = useState(teamScore?.toString() ?? '');
   const [opponent, setOpponent] = useState(opponentScore?.toString() ?? '');
   const [showErrors, setShowErrors] = useState(false);
@@ -49,9 +50,12 @@ export function EndGameSheet({
       setShowErrors(true);
       return;
     }
+    // A blank field clears a score saved earlier (null), and leaves out one never set.
     const score: FinalScore = {};
     if (parsedTeam !== undefined) score.teamScore = parsedTeam;
+    else if (teamScore !== undefined) score.teamScore = null;
     if (parsedOpponent !== undefined) score.opponentScore = parsedOpponent;
+    else if (opponentScore !== undefined) score.opponentScore = null;
     setSaving(true);
     try {
       await onEnd(score);
@@ -90,9 +94,16 @@ export function EndGameSheet({
           enterKeyHint="next"
           value={team}
           onChange={(event) => setTeam(event.target.value)}
+          onKeyDown={(event) => {
+            // "next" on the keyboard: on to the other score, not ending the game with one.
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            opponentRef.current?.focus();
+          }}
           error={showErrors && parsedTeam === null ? NUMBERS_ONLY : undefined}
         />
         <TextField
+          ref={opponentRef}
           label="Opponent"
           inputMode="numeric"
           pattern="[0-9]*"

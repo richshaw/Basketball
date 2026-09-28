@@ -9,7 +9,8 @@ Offline-first iPhone web app (PWA). A parent records their daughter's basketball
 - **Data lives on the device** (IndexedDB), with no accounts. The only network use allowed is the optional, end-to-end-encrypted, best-effort backup to the project's own backup server (`server/`, added in PR #2). Nothing else may call the network, and the app never waits on it.
 - **Never lose data.** Save every tap immediately. Never rely on a later "save" step, on the page staying open, or on in-memory state.
 - **Never interrupt a live game.** Nothing may pop up, navigate away or reload on the tracking screen. That's why the update banner lives only in the tab-screen shell.
-- **No zooming on the game screen.** Its root element sets `touch-action: manipulation` (not just its buttons), so fast taps between buttons can't double-tap-zoom.
+- **No zooming on the game screen.** Its root element sets `touch-action: pan-x pan-y` (not just its buttons), so fast taps between buttons can't double-tap-zoom and a stray pinch can't zoom either. Its sheets sit outside that element, so they still scroll.
+- **Every tap counts exactly once on the game screen.** A double tap on Undo or Next acts once, a button that just appeared ignores taps for a moment, and a stat that couldn't be saved stays on screen and is retried until it is (`src/screens/TrackGame/session.ts`).
 - **Resume after a relaunch.** iOS may relaunch the app at `start_url` in the middle of a game, so the Games screen must offer to resume the live game.
 
 ## Stack

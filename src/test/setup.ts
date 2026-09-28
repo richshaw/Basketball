@@ -10,6 +10,10 @@ import { installDialogPolyfill } from './dialogPolyfill';
 // jsdom can't open <dialog> elements (Sheet, ConfirmDialog) on its own.
 installDialogPolyfill();
 
+// jsdom has no canvas (it would log "not implemented"): code that measures text with
+// one falls back as it would in a browser without it.
+Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { value: () => null });
+
 // Every test starts with an empty database (seed data in beforeEach, not beforeAll).
 beforeEach(async () => {
   await resetDatabase();

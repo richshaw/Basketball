@@ -1,11 +1,12 @@
 import { memo, useMemo } from 'react';
+import { Badge } from '@/components/Badge/Badge';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { Sheet } from '@/components/Sheet/Sheet';
-import { periodLabel, STAT_DEFS } from '@/data/stats';
+import { periodLabel } from '@/data/stats';
 import type { PeriodFormat, StatEvent } from '@/data/types';
 import { cx } from '@/lib/cx';
-import { formatClockTime, statLabel } from './tracking';
+import { formatClockTime, statKind, statLabel } from './tracking';
 import styles from './LogSheet.module.css';
 
 export interface LogSheetProps {
@@ -34,11 +35,11 @@ function LogList({
       {newestFirst.map((event) => (
         <ListRow
           key={event.id}
-          icon={<span className={cx(styles.dot, styles[STAT_DEFS[event.type]?.kind ?? 'other'])} />}
+          icon={<span className={cx(styles.dot, styles[statKind(event.type)])} />}
           title={statLabel(event.type)}
           value={
             <span className={styles.meta}>
-              <span className={styles.period}>{periodLabel(event.period, periodFormat)}</span>
+              <Badge className={styles.period}>{periodLabel(event.period, periodFormat)}</Badge>
               <span>{formatClockTime(event.createdAt)}</span>
             </span>
           }
