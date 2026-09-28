@@ -1,5 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
+import type { UserEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
+import { db } from '@/data/db';
 import { deleteStat, getGame, getGameEvents } from '@/data/repo';
 import { computeStatLine, percentage, statLinesByPeriod } from '@/data/stats';
 import { EXPORT_APP, EXPORT_SCHEMA_VERSION, importAll } from '@/data/transfer';
@@ -108,6 +110,18 @@ const waitForNoDialog = () =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
+
+/** The button that opens or closes a period of the play-by-play, e.g. '2nd quarter'. */
+const periodToggle = (name: string) =>
+  screen.getByRole('button', { name: new RegExp(`^${name}, `) });
+
+/** Taps a play and confirms deleting it. */
+async function deletePlay(user: UserEvent, name: RegExp) {
+  await user.click(screen.getByRole('button', { name }));
+  const dialog = await screen.findByRole('alertdialog', { name: 'Delete this stat?' });
+  await user.click(within(dialog).getByRole('button', { name: 'Delete stat' }));
+  await waitForNoDialog();
+}
 
 afterEach(() => {
   delete (navigator as { share?: unknown }).share;
@@ -289,70 +303,170 @@ describe('GameReportScreen', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'By half' })).toBeInTheDocument();
   });
 
-  it('lists every play by period, with the time and her running points', async () => {
-    await seed();
-    await renderReport();
+  describe('play-by-play', () => {
+    it('sums up each period of a long game, and opens one on a tap', async () => {
+      await seed(); // 17 plays: more than a short game's 15
+      const { user } = await renderReport();
 
-    const periods = screen
-      .getAllByRole('heading', { level: 3 })
-      .map((heading) => heading.textContent);
-    expect(periods).toEqual(['1st quarter', '2nd quarter', '3rd quarter', '4th quarter']);
+      expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(4);
+      for (const [name, summary] of [
+        ['1st quarter', '3 plays · 2 pts'],
+        ['2nd quarter', '3 plays · 3 pts · 5 total'],
+        ['3rd quarter', '3 plays · 1 pt · 6 total'],
+        ['4th quarter', '8 plays · 2 pts · 8 total'],
+      ] as const) {
+        const toggle = periodToggle(name);
+        expect(toggle).toHaveAccessibleName(`${name}, ${summary}`);
+        expect(toggle).toHaveTextContent(`${name}${summary}`);
+        expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      }
+      expect(screen.queryByRole('button', { name: /2PT Made/ })).not.toBeInTheDocument();
 
-    const firstQuarter = screen.getByRole('list', { name: '1st quarter' });
-    expect(
-      within(firstQuarter)
-        .getAllByRole('button')
-        .map((row) => row.textContent),
-    ).toEqual(['6:052PT Made2 pts', '6:063PT Miss2 pts', '6:07Def Reb2 pts']);
-    const thirdQuarter = screen.getByRole('list', { name: '3rd quarter' });
-    expect(within(thirdQuarter).getAllByRole('button')[0]).toHaveTextContent('6:11FT Made6 pts');
-    const lastPlay = screen.getAllByRole('button', { name: /Def Reb/ }).at(-1);
-    expect(lastPlay).toHaveTextContent('6:21Def Reb8 pts');
-  });
+      await user.click(periodToggle('2nd quarter'));
+      expect(periodToggle('2nd quarter')).toHaveAttribute('aria-expanded', 'true');
+      const plays = screen.getByRole('list', { name: '2nd quarter plays' });
+      expect(periodToggle('2nd quarter')).toHaveAttribute('aria-controls', plays.id);
+      // The time, the stat, and the points it added (only made shots add any).
+      const rows = within(plays).getAllByRole('button');
+      expect(rows.map((row) => row.textContent)).toEqual([
+        '6:083PT Made+3',
+        '6:09Assist',
+        '6:10Deflection',
+      ]);
+      expect(rows[0]).toHaveAccessibleName('6:08, 3PT Made, +3 points');
+      expect(rows[1]).toHaveAccessibleName('6:09, Assist');
+      expect(screen.queryByRole('list', { name: '1st quarter plays' })).not.toBeInTheDocument();
 
-  it('deletes a play after confirming, and the numbers follow', async () => {
-    await seed();
-    const { user } = await renderReport();
-
-    await user.click(screen.getByRole('button', { name: /6:08.*3PT Made/ }));
-    const dialog = screen.getByRole('alertdialog', { name: 'Delete this stat?' });
-    expect(dialog).toHaveAccessibleDescription("3PT Made in Q2 at 6:08. This can't be undone.");
-    await user.click(within(dialog).getByRole('button', { name: 'Delete stat' }));
-
-    await waitFor(async () => {
-      expect((await getGameEvents('g1')).map((event) => event.id)).not.toContain('e04');
+      await user.click(periodToggle('2nd quarter'));
+      expect(periodToggle('2nd quarter')).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByRole('list', { name: '2nd quarter plays' })).not.toBeInTheDocument();
     });
-    expect(await getGameEvents('g1')).toHaveLength(PLAYS.length - 1);
-    await waitFor(() => expect(tile('Game totals', 'Points').value).toBe('5'));
-    expect(notifications()).toHaveTextContent('Deleted 3PT Made');
-  });
 
-  it('says so when the play was deleted elsewhere in the meantime', async () => {
-    await seed();
-    const { user } = await renderReport();
+    it('shows every play of a short game', async () => {
+      await seed(makeGame(), PLAYS.slice(0, 15));
+      await renderReport();
 
-    await user.click(screen.getByRole('button', { name: /6:08.*3PT Made/ }));
-    const dialog = screen.getByRole('alertdialog', { name: 'Delete this stat?' });
-    await deleteStat('e04');
-    await user.click(within(dialog).getByRole('button', { name: 'Delete stat' }));
+      for (const name of ['1st quarter', '2nd quarter', '3rd quarter', '4th quarter']) {
+        expect(periodToggle(name)).toHaveAttribute('aria-expanded', 'true');
+      }
+      expect(screen.getAllByRole('button', { name: /^\d{1,2}:\d\d/ })).toHaveLength(15);
+      expect(screen.getByRole('button', { name: '6:11, FT Made, +1 point' })).toHaveTextContent(
+        '6:11FT Made+1',
+      );
+    });
 
-    expect(
-      await within(notifications()).findByText('That stat was already deleted'),
-    ).toBeInTheDocument();
-    expect(await getGameEvents('g1')).toHaveLength(PLAYS.length - 1);
-  });
+    it('links to adding or fixing stats, above the plays', async () => {
+      await seed();
+      const { user, router } = await renderReport();
 
-  it('keeps a play when the deletion is cancelled', async () => {
-    await seed();
-    const { user } = await renderReport();
+      const link = screen.getByRole('link', { name: 'Add or fix stats' });
+      expect(
+        link.compareDocumentPosition(periodToggle('1st quarter')) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      await user.click(link);
+      expect(router.state.location.pathname).toBe(paths.trackGame('g1'));
+    });
 
-    await user.click(screen.getByRole('button', { name: /6:08.*3PT Made/ }));
-    const dialog = screen.getByRole('alertdialog', { name: 'Delete this stat?' });
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitForNoDialog();
+    it('leaves out stat types this version does not know, instead of crashing', async () => {
+      await seed(makeGame(), PLAYS.slice(0, 3));
+      // As if a newer version of the app had recorded it.
+      await db.events.add({
+        id: 'from-newer-app',
+        gameId: 'g1',
+        type: 'tip_in' as StatType,
+        period: 1,
+        createdAt: at(18, 30),
+      });
+      await renderReport();
 
-    expect(await getGameEvents('g1')).toHaveLength(PLAYS.length);
-    expect(tile('Game totals', 'Points').value).toBe('8');
+      expect(periodToggle('1st quarter')).toHaveAccessibleName('1st quarter, 3 plays · 2 pts');
+      expect(screen.getAllByRole('button', { name: /^\d{1,2}:\d\d/ })).toHaveLength(3);
+      expect(tile('Game totals', 'Points').value).toBe('2');
+    });
+
+    it('deletes a play after confirming; the numbers follow and focus moves on', async () => {
+      await seed();
+      const { user } = await renderReport();
+      await user.click(periodToggle('2nd quarter'));
+
+      await user.click(screen.getByRole('button', { name: /6:08.*3PT Made/ }));
+      const dialog = screen.getByRole('alertdialog', { name: 'Delete this stat?' });
+      expect(dialog).toHaveAccessibleDescription("3PT Made in Q2 at 6:08. This can't be undone.");
+      await user.click(within(dialog).getByRole('button', { name: 'Delete stat' }));
+
+      await waitFor(() => expect(tile('Game totals', 'Points').value).toBe('5'));
+      expect((await getGameEvents('g1')).map((event) => event.id)).not.toContain('e04');
+      expect(await getGameEvents('g1')).toHaveLength(PLAYS.length - 1);
+      expect(notifications()).toHaveTextContent('Deleted 3PT Made');
+      expect(periodToggle('2nd quarter')).toHaveAccessibleName(
+        '2nd quarter, 2 plays · 0 pts · 2 total',
+      );
+      // Focus doesn't drop to the page: it goes to the next play.
+      expect(screen.getByRole('button', { name: /6:09.*Assist/ })).toHaveFocus();
+    });
+
+    it('moves focus to the previous play after deleting a period’s last one', async () => {
+      await seed();
+      const { user } = await renderReport();
+      await user.click(periodToggle('2nd quarter'));
+
+      await deletePlay(user, /6:10.*Deflection/);
+
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /6:10/ })).not.toBeInTheDocument(),
+      );
+      expect(screen.getByRole('button', { name: /6:09.*Assist/ })).toHaveFocus();
+    });
+
+    it('moves focus to the next period, then to the heading, as periods empty out', async () => {
+      await seed(makeGame(), [
+        ['fg2_made', 1],
+        ['ast', 2],
+      ]);
+      const { user } = await renderReport();
+
+      await deletePlay(user, /6:05.*2PT Made/);
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /^1st quarter/ })).not.toBeInTheDocument(),
+      );
+      expect(periodToggle('2nd quarter')).toHaveFocus();
+
+      await deletePlay(user, /6:06.*Assist/);
+      expect(await screen.findByText('No stats recorded yet.')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 2, name: 'Play-by-play' })).toHaveFocus();
+    });
+
+    it('says so when the play was deleted elsewhere in the meantime', async () => {
+      await seed();
+      const { user } = await renderReport();
+      await user.click(periodToggle('2nd quarter'));
+
+      await user.click(screen.getByRole('button', { name: /6:08.*3PT Made/ }));
+      const dialog = screen.getByRole('alertdialog', { name: 'Delete this stat?' });
+      await deleteStat('e04');
+      await user.click(within(dialog).getByRole('button', { name: 'Delete stat' }));
+
+      expect(
+        await within(notifications()).findByText('That stat was already deleted'),
+      ).toBeInTheDocument();
+      expect(await getGameEvents('g1')).toHaveLength(PLAYS.length - 1);
+    });
+
+    it('keeps a play when the deletion is cancelled', async () => {
+      await seed();
+      const { user } = await renderReport();
+      await user.click(periodToggle('2nd quarter'));
+
+      await user.click(screen.getByRole('button', { name: /6:08.*3PT Made/ }));
+      const dialog = screen.getByRole('alertdialog', { name: 'Delete this stat?' });
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitForNoDialog();
+
+      expect(await getGameEvents('g1')).toHaveLength(PLAYS.length);
+      expect(tile('Game totals', 'Points').value).toBe('8');
+      expect(screen.getByRole('button', { name: /6:08.*3PT Made/ })).toHaveFocus();
+    });
   });
 
   it('shows the notes, when there are some', async () => {
@@ -373,14 +487,6 @@ describe('GameReportScreen', () => {
     await seed();
     await renderReport();
     expect(screen.getByRole('region', { name: 'Shot chart' })).toBeInTheDocument();
-  });
-
-  it('links to adding or fixing stats on the tracking screen', async () => {
-    await seed();
-    const { user, router } = await renderReport();
-
-    await user.click(screen.getByRole('link', { name: 'Add or fix stats' }));
-    expect(router.state.location.pathname).toBe(paths.trackGame('g1'));
   });
 
   describe('a live game', () => {

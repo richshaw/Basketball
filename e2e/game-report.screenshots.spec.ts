@@ -31,6 +31,24 @@ const screens: Screen[] = [
   { name: 'game-report-loss', gameId: demoGameId(9), title: '@ Riverside' },
   { name: 'game-report-live', gameId: DEMO_LIVE_GAME_ID, title: 'vs Westfield' },
   {
+    // Every demo game is long enough to start with its quarters closed: open one.
+    name: 'game-report-plays',
+    gameId: demoGameId(10),
+    title: 'vs Eastlake',
+    viewportOnly: true,
+    interact: async (page) => {
+      const firstQuarter = page.getByRole('button', { name: /^1st quarter, / });
+      await firstQuarter.tap();
+      await expect(firstQuarter).toHaveAttribute('aria-expanded', 'true');
+      // Scroll the section's heading to just under the sticky screen header.
+      await page.getByRole('heading', { level: 2, name: 'Play-by-play' }).evaluate((heading) => {
+        const headerHeight = document.querySelector('header')?.offsetHeight ?? 0;
+        const top = heading.getBoundingClientRect().top + window.scrollY - headerHeight - 16;
+        window.scrollTo(0, top);
+      });
+    },
+  },
+  {
     name: 'game-report-edit',
     gameId: demoGameId(10),
     title: 'vs Eastlake',

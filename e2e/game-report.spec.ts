@@ -105,14 +105,30 @@ test('a play can be deleted from the play-by-play', async ({ page }) => {
 
   await page.goto(appUrl(paths.gameReport(gameId)));
   await expect(tileValue(page, 'Game totals', 'Points')).toHaveText(String(stats.pts));
-  const firstMake = page.getByRole('button', { name: /2PT Made/ }).first();
-  await firstMake.scrollIntoViewIfNeeded();
-  await firstMake.tap();
+  // A long game starts with each quarter closed.
+  const firstQuarter = page.getByRole('button', { name: /^1st quarter, / });
+  await expect(firstQuarter).toHaveAttribute('aria-expanded', 'false');
+  await firstQuarter.scrollIntoViewIfNeeded();
+  await firstQuarter.tap();
+  await expect(firstQuarter).toHaveAttribute('aria-expanded', 'true');
+
+  const plays = page.getByRole('list', { name: '1st quarter plays' }).getByRole('button');
+  const names = await plays.evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute('aria-label') ?? ''),
+  );
+  const index = names.findIndex((name) => name.includes('2PT Made'));
+  const neighbor = names[index + 1] ?? names[index - 1] ?? '';
+  expect(names[index]).toMatch(/, 2PT Made, \+2 points$/);
+  await plays.nth(index).tap();
   const dialog = page.getByRole('alertdialog', { name: 'Delete this stat?' });
   await dialog.getByRole('button', { name: 'Delete stat' }).tap();
 
   await expect(notifications(page)).toHaveText('Deleted 2PT Made');
   await expect(tileValue(page, 'Game totals', 'Points')).toHaveText(String(stats.pts - 2));
+  // Focus moves on to the next play instead of dropping to the page.
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label')))
+    .toBe(neighbor);
   const after = await exportAll(page);
   expect(after.events).toHaveLength(before.events.length - 1);
 });

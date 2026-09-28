@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react';
+import { useId, type ReactNode, type Ref } from 'react';
 import styles from './ReportSection.module.css';
 
 export interface ReportSectionProps {
@@ -6,16 +6,26 @@ export interface ReportSectionProps {
   title: string;
   /** A short line under the heading, e.g. "Tap a play to delete it." */
   note?: ReactNode;
+  /**
+   * The heading element, e.g. to move focus there when what had it is gone. Passing
+   * one makes the heading focusable from script (not with Tab).
+   */
+  headingRef?: Ref<HTMLHeadingElement>;
   children: ReactNode;
 }
 
 /** One titled part of the game report (a named region with an h2). */
-export function ReportSection({ title, note, children }: ReportSectionProps) {
+export function ReportSection({ title, note, headingRef, children }: ReportSectionProps) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} className={styles.section}>
       <div className={styles.heading}>
-        <h2 id={headingId} className={styles.title}>
+        <h2
+          ref={headingRef}
+          id={headingId}
+          className={styles.title}
+          tabIndex={headingRef ? -1 : undefined}
+        >
           {title}
         </h2>
         {note ? <p className={styles.note}>{note}</p> : null}

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { STAT_DEFS } from '@/data/stats';
 import type { StatEvent, StatType } from '@/data/types';
-import { formatClockTime, periodName, playByPlay } from './playByPlay';
+import {
+  countPlays,
+  formatClockTime,
+  periodName,
+  periodSummary,
+  playByPlay,
+  statDefOf,
+} from './playByPlay';
 
 let nextId = 0;
 function event(type: StatType, period: number, createdAt: number): StatEvent {
@@ -9,7 +17,7 @@ function event(type: StatType, period: number, createdAt: number): StatEvent {
 }
 
 describe('playByPlay', () => {
-  it('groups stats by period with her running points', () => {
+  it('groups stats by period, with the points of each play and each period', () => {
     const events = [
       event('fg2_made', 1, 100),
       event('dreb', 1, 200),
@@ -19,23 +27,28 @@ describe('playByPlay', () => {
     ];
     const groups = playByPlay(events, 'quarters');
 
-    expect(groups.map(({ period, label, name }) => ({ period, label, name }))).toEqual([
-      { period: 1, label: 'Q1', name: '1st quarter' },
-      { period: 2, label: 'Q2', name: '2nd quarter' },
+    expect(
+      groups.map(({ period, label, name, points, total }) => [period, label, name, points, total]),
+    ).toEqual([
+      [1, 'Q1', '1st quarter', 2, 2],
+      [2, 'Q2', '2nd quarter', 4, 6],
     ]);
     expect(
-      groups.map((group) => group.plays.map((play) => [play.event.type, play.scored, play.points])),
+      groups.map((group) =>
+        group.plays.map((play) => [play.event.type, play.def.label, play.scored]),
+      ),
     ).toEqual([
       [
-        ['fg2_made', 2, 2],
-        ['dreb', 0, 2],
+        ['fg2_made', '2PT Made', 2],
+        ['dreb', 'Def Reb', 0],
       ],
       [
-        ['fg3_miss', 0, 2],
-        ['ft_made', 1, 3],
-        ['fg3_made', 3, 6],
+        ['fg3_miss', '3PT Miss', 0],
+        ['ft_made', 'FT Made', 1],
+        ['fg3_made', '3PT Made', 3],
       ],
     ]);
+    expect(countPlays(groups)).toBe(5);
   });
 
   it('orders by period, then by when each stat was recorded', () => {
@@ -57,7 +70,11 @@ describe('playByPlay', () => {
       'fg2_made',
       'fg2_made',
     ]);
-    expect(groups.at(-1)?.plays.at(-1)?.points).toBe(4);
+    expect(groups.map((group) => [group.points, group.total])).toEqual([
+      [0, 0],
+      [2, 2],
+      [2, 4],
+    ]);
   });
 
   it('skips periods without stats and has nothing for a game without any', () => {
@@ -65,6 +82,53 @@ describe('playByPlay', () => {
       '2nd half',
     ]);
     expect(playByPlay([], 'quarters')).toEqual([]);
+  });
+
+  it('leaves out stat types this version does not know, like the box score does', () => {
+    const fromNewerApp = { ...event('fg2_made', 1, 50), type: 'tip_in' as StatType };
+    const groups = playByPlay(
+      [
+        fromNewerApp,
+        event('fg2_made', 1, 100),
+        { ...event('ast', 2, 200), type: 'toString' as StatType },
+      ],
+      'quarters',
+    );
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.plays.map((play) => play.event.type)).toEqual(['fg2_made']);
+    expect(groups[0]?.points).toBe(2);
+  });
+});
+
+describe('statDefOf', () => {
+  it('knows every stat type, and nothing else', () => {
+    expect(statDefOf('fg3_made')).toBe(STAT_DEFS.fg3_made);
+    expect(statDefOf('tip_in')).toBeUndefined();
+    // Not fooled by what every object inherits.
+    expect(statDefOf('toString')).toBeUndefined();
+    expect(statDefOf('constructor')).toBeUndefined();
+  });
+});
+
+describe('periodSummary', () => {
+  it('counts the plays and points, and adds her running total once it differs', () => {
+    const groups = playByPlay(
+      [
+        event('fg2_made', 1, 1),
+        event('fg2_made', 1, 2),
+        event('ft_made', 1, 3),
+        event('stl', 1, 4),
+        event('ast', 2, 5),
+        event('ft_made', 3, 6),
+      ],
+      'quarters',
+    );
+    expect(groups.map(periodSummary)).toEqual([
+      '4 plays · 5 pts',
+      '1 play · 0 pts · 5 total',
+      '1 play · 1 pt · 6 total',
+    ]);
   });
 });
 

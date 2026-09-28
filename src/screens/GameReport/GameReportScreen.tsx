@@ -193,17 +193,7 @@ function GameReport({ game, events, player, onLeaving }: GameReportProps) {
           </ReportSection>
         ) : null}
 
-        <ReportSection
-          title="Play-by-play"
-          note={events.length > 0 ? 'Tap a play to delete it.' : undefined}
-        >
-          <PlayByPlay game={game} events={events} />
-          {live ? null : (
-            <ButtonLink to={paths.trackGame(game.id)} variant="secondary" size="lg" block>
-              Add or fix stats
-            </ButtonLink>
-          )}
-        </ReportSection>
+        <PlayByPlay game={game} events={events} />
 
         <GroupedList aria-label="Delete">
           <ListRow title="Delete game" destructive onClick={removeGame} />
