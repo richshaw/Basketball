@@ -1,10 +1,12 @@
 import {
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type FocusEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Link } from 'react-router';
@@ -51,12 +53,15 @@ const ZERO_MARK_HEIGHT = 2;
 /** Width before the chart has been measured (and in tests, which have no layout). */
 const FALLBACK_WIDTH = 320;
 /**
- * Focus arriving this soon (ms) after a press on the chart came from that press (some
- * browsers focus a tapped button), not from the keyboard.
+ * Focus or a click arriving this soon (ms) after a press on the chart came from that
+ * press (browsers focus a tapped button, and may click at the end of a short drag).
  */
-const POINTER_FOCUS_WINDOW_MS = 1000;
-/** How far (px) a press has to slide sideways before it scrubs instead of tapping. */
-const SCRUB_THRESHOLD = 6;
+const PRESS_FOLLOW_UP_MS = 1000;
+/**
+ * How far (px) a press has to move to be a drag rather than a tap: sideways it scrubs
+ * through the games; up or down it's the page scrolling.
+ */
+const DRAG_THRESHOLD = 6;
 
 const METRIC_OPTIONS: SegmentedOption<TrendMetric>[] = TREND_METRICS.map((metric) => ({
   value: metric,
@@ -118,17 +123,31 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
   const press = useRef<{
     pointerId: number;
     startX: number;
-    index: number;
+    startY: number;
     scrubbing: boolean;
   } | null>(null);
   /** When the chart was last pressed or let go (an event timeStamp). */
   const lastPressAt = useRef(Number.NEGATIVE_INFINITY);
+  /** When the last scrub ended (an event timeStamp): the click that can follow isn't a tap. */
+  const scrubEndedAt = useRef(Number.NEGATIVE_INFINITY);
   const summaryId = useId();
+  const columnClipId = useId();
 
   const info = TREND_METRIC_INFO[metric];
-  const points = trendPoints(entries, metric);
+  // The points and their text change with the games or the stat, not on each scrub step.
+  const { points, high, labels } = useMemo(() => {
+    const list = trendPoints(entries, metric);
+    return {
+      points: list,
+      high: highestPoint(list),
+      labels: list.map((point) => describePoint(point, metric, { withYear })),
+    };
+  }, [entries, metric, withYear]);
+  const summary = useMemo(
+    () => describeTrend(points, metric, averages, { withYear }),
+    [points, metric, averages, withYear],
+  );
   const average = averages[metric];
-  const high = highestPoint(points);
   const selectedIndex = points.findIndex((point) => point.game.id === selectedId);
   const selected = points[selectedIndex];
   const first = points[0];
@@ -155,21 +174,33 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
     setSelectedId(index === null ? null : (points[index]?.game.id ?? null));
   };
 
-  // Pointer: tap a bar to read it (tap it again to let go) or slide sideways to scrub.
-  // A vertical swipe scrolls the page (the browser cancels the press) and selects nothing.
+  // Selecting: every way of pressing a bar (a tap, a click, Enter or Space, a screen
+  // reader's double tap) ends in exactly one click, so a bar is read or let go only in
+  // handleClick. Pointer events only scrub: sliding sideways reads each game on the way.
   const indexAtPointer = (event: ReactPointerEvent<HTMLElement>): number | null => {
     const rect = hitAreaRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0) return null;
     return slotIndexAt(event.clientX - rect.left, rect.width, points.length);
   };
 
+  const handleClick = (index: number, event: MouseEvent) => {
+    // A browser may click at the end of a short scrub: that press already chose its game.
+    const endsScrub =
+      event.detail !== 0 && event.timeStamp - scrubEndedAt.current < PRESS_FOLLOW_UP_MS;
+    scrubEndedAt.current = Number.NEGATIVE_INFINITY;
+    if (!endsScrub) select(index === selectedIndex ? null : index);
+  };
+
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
-    const bar = event.target instanceof Element ? event.target.closest('[data-index]') : null;
-    const index = bar ? Number(bar.getAttribute('data-index')) : indexAtPointer(event);
-    if (index === null || Number.isNaN(index)) return;
     lastPressAt.current = event.timeStamp;
-    press.current = { pointerId: event.pointerId, startX: event.clientX, index, scrubbing: false };
+    scrubEndedAt.current = Number.NEGATIVE_INFINITY;
+    press.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrubbing: false,
+    };
     if (event.pointerType === 'mouse') {
       // Keep scrubbing when the mouse leaves the chart mid-drag.
       try {
@@ -184,8 +215,15 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
     const current = press.current;
     if (!current || current.pointerId !== event.pointerId) return;
     if (!current.scrubbing) {
-      if (Math.abs(event.clientX - current.startX) < SCRUB_THRESHOLD) return;
-      current.scrubbing = true;
+      const dx = Math.abs(event.clientX - current.startX);
+      const dy = Math.abs(event.clientY - current.startY);
+      if (dx >= DRAG_THRESHOLD && dx > dy) {
+        current.scrubbing = true;
+      } else {
+        // Mostly up or down: that's the page scrolling, so let the press go.
+        if (dy >= DRAG_THRESHOLD) press.current = null;
+        return;
+      }
     }
     const index = indexAtPointer(event);
     if (index !== null && index !== selectedIndex) select(index);
@@ -196,19 +234,20 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
     if (!current || current.pointerId !== event.pointerId) return;
     press.current = null;
     lastPressAt.current = event.timeStamp;
-    // A tap toggles the bar it landed on; a scrub leaves the last game it reached selected.
-    if (!current.scrubbing) select(current.index === selectedIndex ? null : current.index);
+    // A scrub leaves the last game it reached selected.
+    if (current.scrubbing) scrubEndedAt.current = event.timeStamp;
   };
 
-  // Keyboard focus reads the game, like a tap does. A tap already selected on press, and
-  // the focus some browsers then give the tapped button must not undo a tap-to-clear.
+  // The browser took the press over (e.g. to scroll): it was neither a tap nor a scrub.
+  const handlePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (press.current?.pointerId === event.pointerId) press.current = null;
+  };
+
+  // Keyboard focus reads the game. The focus a press gives the button it landed on
+  // doesn't: that press's click decides, and must not be undone by it.
   const handleFocus = (index: number, event: FocusEvent) => {
-    const fromPress = event.timeStamp - lastPressAt.current < POINTER_FOCUS_WINDOW_MS;
+    const fromPress = event.timeStamp - lastPressAt.current < PRESS_FOLLOW_UP_MS;
     if (!press.current && !fromPress) select(index);
-  };
-
-  const handlePointerCancel = () => {
-    press.current = null;
   };
 
   // Keyboard: one tab stop; the arrow keys (and Home/End) move between games.
@@ -252,6 +291,17 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
       point !== undefined && point.value > 0 && all.indexOf(point) === index,
   );
   const result = selected ? formatResult(selected.game) : null;
+  // The selected game's column, a band behind its bar from the top of the plot down.
+  const selectedSlot = slots[selectedIndex];
+  const column = selectedSlot
+    ? {
+        x: selectedSlot.slotX + 1,
+        y: PAD_TOP - 8,
+        width: Math.max(slotWidth - 2, 1),
+        height: baseline - PAD_TOP + 8,
+        rx: Math.min(6, slotWidth / 2),
+      }
+    : null;
 
   return (
     <div className={styles.chart}>
@@ -268,7 +318,7 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
             {selected ? formatGameDate(selected.game.date, { withYear }) : 'Average'}
           </p>
           <p className={styles.readoutFigure}>
-            <span className={styles.readoutValue}>
+            <span className={cx(styles.readoutValue, 'tabular-nums')}>
               {selected ? selected.value : formatAvg(average)}
             </span>{' '}
             <span className={styles.readoutUnit}>
@@ -294,7 +344,7 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
           </Link>
         ) : null}
         <span id={summaryId} className="visually-hidden">
-          {describeTrend(points, metric, averages, { withYear })}
+          {summary}
         </span>
       </div>
 
@@ -326,15 +376,15 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
             </g>
           ))}
 
-          {selected && slots[selectedIndex] ? (
-            <rect
-              className={styles.column}
-              x={slots[selectedIndex].slotX + 1}
-              y={PAD_TOP - 8}
-              width={Math.max(slotWidth - 2, 1)}
-              height={baseline - PAD_TOP + 8}
-              rx={Math.min(6, slotWidth / 2)}
-            />
+          {column ? (
+            <>
+              <defs>
+                <clipPath id={columnClipId}>
+                  <rect {...column} />
+                </clipPath>
+              </defs>
+              <rect className={styles.column} {...column} />
+            </>
           ) : null}
 
           {points.map((point, index) => {
@@ -372,6 +422,18 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
           />
 
           <line className={styles.avgHalo} x1={0} x2={plotWidth} y1={avgY} y2={avgY} />
+          {column ? (
+            // Across the selected column the halo takes the column's color, instead of
+            // painting a band of the card's color through it.
+            <line
+              className={cx(styles.avgHalo, styles.onColumn)}
+              clipPath={`url(#${columnClipId})`}
+              x1={0}
+              x2={plotWidth}
+              y1={avgY}
+              y2={avgY}
+            />
+          ) : null}
           <line className={styles.avgLine} x1={1} x2={plotWidth - 1} y1={avgY} y2={avgY} />
           <text className={styles.avgLabel} x={plotWidth + TICK_GAP} y={avgY} dy="0.35em">
             avg
@@ -438,15 +500,11 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
               }}
               type="button"
               className={styles.hit}
-              data-index={index}
               tabIndex={index === tabStop ? 0 : -1}
               aria-pressed={index === selectedIndex}
-              aria-label={describePoint(point, metric, { withYear })}
+              aria-label={labels[index]}
               onFocus={(event) => handleFocus(index, event)}
-              onClick={(event) => {
-                // Enter or Space (detail 0) toggles; pointer taps are handled on press.
-                if (event.detail === 0) select(index === selectedIndex ? null : index);
-              }}
+              onClick={(event) => handleClick(index, event)}
             />
           ))}
         </div>

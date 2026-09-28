@@ -137,6 +137,11 @@
   stroke-width: 5;
 }
 
+/* Across the selected game's column, the ring is the column's color (a clipped copy). */
+.avgHalo.onColumn {
+  stroke: var(--color-surface-2);
+}
+
 .avgLine {
   stroke: var(--color-text);
   stroke-width: 1.5;

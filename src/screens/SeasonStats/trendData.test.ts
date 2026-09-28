@@ -78,6 +78,15 @@ describe('describeTrend', () => {
     );
   });
 
+  it('names no high or low when every game is the same', () => {
+    const level = entries
+      .slice(0, 3)
+      .map((entry) => ({ ...entry, line: { ...entry.line, ast: 2 } }));
+    expect(describeTrend(trendPoints(level, 'ast'), 'ast', { ...emptyStatLine(), ast: 2 })).toBe(
+      'Assists in 3 games, Aug 1 – Sep 12. Average 2.0 a game.',
+    );
+  });
+
   it('keeps it short for a single game, or none', () => {
     const one = trendPoints(entries.slice(0, 1), 'ast');
     expect(describeTrend(one, 'ast', emptyStatLine())).toBe(

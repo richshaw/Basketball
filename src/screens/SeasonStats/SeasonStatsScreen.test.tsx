@@ -349,15 +349,24 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       const bars = within(chart).getAllByRole('button');
       const second = bars[1] as HTMLElement;
       const pressed = () => bars.filter((bar) => bar.getAttribute('aria-pressed') === 'true');
-      const touch = (pointerId: number, clientX: number) => ({
+      const touch = (pointerId: number, clientX: number, clientY = 100) => ({
         pointerId,
         pointerType: 'touch',
         clientX,
+        clientY,
       });
 
       // A finger that lands on the chart and scrolls the page.
       fireEvent.pointerDown(second, touch(1, 45));
       fireEvent.pointerCancel(second, touch(1, 45));
+      expect(pressed()).toEqual([]);
+
+      // A swipe that drifts sideways but mostly goes down scrolls too: it never scrubs,
+      // even once it has moved far enough sideways.
+      fireEvent.pointerDown(second, touch(7, 45, 100));
+      fireEvent.pointerMove(second, touch(7, 51, 108));
+      fireEvent.pointerMove(second, touch(7, 100, 112));
+      fireEvent.pointerUp(second, touch(7, 100, 112));
       expect(pressed()).toEqual([]);
 
       // A small wobble is still a tap...
@@ -376,6 +385,30 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       fireEvent.pointerMove(second, touch(3, 900));
       fireEvent.pointerUp(second, touch(3, 900));
       expect(pressed()).toEqual([bars[9]]);
+
+      // A short scrub that stays on its game keeps it, even if the browser then clicks.
+      fireEvent.pointerDown(second, touch(4, 35, 100));
+      fireEvent.pointerMove(second, touch(4, 43, 104));
+      fireEvent.pointerUp(second, touch(4, 43, 104));
+      fireEvent.click(second, { detail: 1 });
+      expect(pressed()).toEqual([bars[1]]);
+    });
+
+    it('reads a bar once for a screen reader double tap (a press and a click)', async () => {
+      renderRoute(paths.stats);
+      const chart = await screen.findByRole('group', { name: 'Points by game' });
+      const bar = within(chart).getAllByRole('button')[2] as HTMLElement;
+      const doubleTap = (pointerId: number) => {
+        const point = { pointerId, pointerType: 'touch', clientX: 75, clientY: 100 };
+        fireEvent.pointerDown(bar, point);
+        fireEvent.pointerUp(bar, point);
+        fireEvent.click(bar, { detail: 0 });
+      };
+
+      doubleTap(1);
+      expect(bar).toHaveAttribute('aria-pressed', 'true');
+      doubleTap(2);
+      expect(bar).toHaveAttribute('aria-pressed', 'false');
     });
 
     it('moves through the chart with the arrow keys', async () => {

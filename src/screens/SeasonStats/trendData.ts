@@ -82,7 +82,8 @@ export function describeTrend(
     `${TREND_METRIC_INFO[metric].label} in ${formatGameCount(points.length)}, ${formatDateRange(first.game.date, last.game.date, { withYear })}.`,
     `Average ${formatAvg(averages[metric])} a game.`,
   ];
-  if (points.length > 1) {
+  // With every game the same there's no high or low to speak of (just one game, named twice).
+  if (high.value !== low.value) {
     const at = (point: TrendPoint) =>
       `${point.value} ${opponentLabel(point.game)} on ${formatGameDate(point.game.date, { withYear })}`;
     sentences.push(`High ${at(high)}.`, `Low ${at(low)}.`);
