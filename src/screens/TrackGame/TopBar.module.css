@@ -57,7 +57,7 @@
 }
 
 .periodButton:focus-visible {
-  outline-offset: -2px;
+  outline-offset: calc(-1 * var(--focus-ring-width));
 }
 
 .pill {
@@ -107,8 +107,8 @@
 }
 
 .icon {
-  width: 18px;
-  height: 18px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   stroke-width: 2.75;
 }
 

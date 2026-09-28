@@ -79,6 +79,54 @@ describe('useWakeLock', () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it('asks again when the system lets go of the lock while the page shows', async () => {
+    const { request, sentinels } = installWakeLock();
+    const { unmount } = renderHook(() => useWakeLock());
+    await waitFor(() => expect(sentinels).toHaveLength(1));
+
+    act(() => {
+      const lock = sentinels[0];
+      if (!lock) return;
+      lock.released = true;
+      lock.dispatchEvent(new Event('release'));
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(sentinels).toHaveLength(2));
+
+    // Its own release on unmount isn't answered with a new request.
+    unmount();
+    expect(sentinels[1]?.release).toHaveBeenCalledOnce();
+    act(() => {
+      sentinels[1]?.dispatchEvent(new Event('release'));
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks again when a request made before the page was hidden fails', async () => {
+    const answers: ((granted: boolean) => void)[] = [];
+    const { request } = installWakeLock(
+      () =>
+        new Promise<FakeSentinel>((resolve, reject) =>
+          answers.push((granted) =>
+            granted ? resolve(new FakeSentinel()) : reject(new DOMException('Hidden')),
+          ),
+        ),
+    );
+    renderHook(() => useWakeLock());
+    expect(request).toHaveBeenCalledOnce();
+
+    // Hidden and shown again before the first request is answered; then it fails.
+    act(() => setVisibility('hidden'));
+    act(() => setVisibility('visible'));
+    expect(request).toHaveBeenCalledOnce();
+    act(() => answers[0]?.(false));
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+
+    act(() => answers[1]?.(true));
+    act(() => setVisibility('visible'));
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+  });
+
   it('waits until the page is visible before asking', () => {
     const { request } = installWakeLock();
     visibility = 'hidden';

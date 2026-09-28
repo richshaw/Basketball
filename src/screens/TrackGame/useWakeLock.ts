@@ -3,7 +3,8 @@ import { useEffect } from 'react';
 /**
  * Keeps the screen on while the component is mounted (and `enabled`), so the phone
  * doesn't lock in the middle of a game. The browser drops the lock whenever the
- * page is hidden, so it's asked for again each time the page becomes visible.
+ * page is hidden (and may drop it at other times), so it's asked for again each time
+ * the page becomes visible or the lock is let go while the page shows.
  * Best effort: unsupported browsers and refusals (e.g. low battery) are ignored.
  */
 export function useWakeLock(enabled = true): void {
@@ -15,14 +16,29 @@ export function useWakeLock(enabled = true): void {
     let mounted = true;
     let sentinel: WakeLockSentinel | null = null;
     let requesting = false;
+    // The page was shown again while a request was under way (one made just before
+    // it was hidden fails): ask once more when that request is done.
+    let askAgain = false;
 
     const release = (lock: WakeLockSentinel) => {
       if (!lock.released) lock.release().catch(() => {});
     };
 
+    const settled = () => {
+      requesting = false;
+      if (askAgain) {
+        askAgain = false;
+        request();
+      }
+    };
+
     const request = () => {
       const holdingLock = sentinel !== null && !sentinel.released;
-      if (!mounted || requesting || holdingLock || document.visibilityState !== 'visible') return;
+      if (!mounted || holdingLock || document.visibilityState !== 'visible') return;
+      if (requesting) {
+        askAgain = true;
+        return;
+      }
       requesting = true;
       let pending: Promise<WakeLockSentinel>;
       try {
@@ -31,17 +47,19 @@ export function useWakeLock(enabled = true): void {
         requesting = false;
         return;
       }
-      pending.then(
-        (lock) => {
-          requesting = false;
+      pending.then((lock) => {
+        if (!mounted) {
           // Unmounted while waiting: hand the lock straight back.
-          if (mounted) sentinel = lock;
-          else release(lock);
-        },
-        () => {
-          requesting = false;
-        },
-      );
+          release(lock);
+          return;
+        }
+        sentinel = lock;
+        // Let go by the system while the page still shows: ask for it again.
+        lock.addEventListener('release', () => {
+          if (sentinel === lock) request();
+        });
+        settled();
+      }, settled);
     };
 
     const handleVisibilityChange = () => {
