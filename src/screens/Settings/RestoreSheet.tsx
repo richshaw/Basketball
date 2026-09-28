@@ -5,7 +5,7 @@ import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { Sheet } from '@/components/Sheet/Sheet';
 import { useToast } from '@/components/Toast/toastContext';
-import { importAll, type ExportFile, type ImportMode } from '@/data/transfer';
+import { importAll, type ExportFile, type ImportMode, type ImportSummary } from '@/data/transfer';
 import { cx } from '@/lib/cx';
 import { ActionRow } from './ActionRow';
 import { backupSummary, nothingNewMessage, restoredMessage } from './backupFiles';
@@ -13,11 +13,12 @@ import styles from './RestoreSheet.module.css';
 
 /**
  * What the sheet shows: a backup ready to restore (with how many games the phone had
- * when it was picked, so the choices don't change as it restores), or why a file
- * can't be restored (`notABackup`: the wrong file was picked, so say which to pick).
+ * when it was picked, so the choices don't change as it restores, and optionally what
+ * to say it holds instead of `backupSummary`), or why a file can't be restored
+ * (`notABackup`: the wrong file was picked, so say which to pick).
  */
 export type RestoreRequest =
-  | { kind: 'preview'; backup: ExportFile; phoneGameCount: number }
+  | { kind: 'preview'; backup: ExportFile; phoneGameCount: number; summary?: readonly string[] }
   | { kind: 'error'; message: string; notABackup: boolean };
 
 export interface RestoreSheetProps {
@@ -25,9 +26,19 @@ export interface RestoreSheetProps {
   /** Kept after closing, so the sheet keeps its content while it slides away. */
   request: RestoreRequest | null;
   onClose: () => void;
+  /**
+   * Runs once the backup is on the phone, before the sheet says so (e.g. turning cloud
+   * backup on with the backup's code). Resolves to a sentence to add to what the sheet
+   * says; it must not reject.
+   */
+  afterRestore?: () => Promise<string | undefined>;
+  /** A restore finished and the sheet closed (e.g. to leave the screen). */
+  onRestored?: () => void;
 }
 
 const RESTORE_FAILED = "Couldn't restore the backup. Nothing on this phone was changed.";
+/** A toast with a second sentence (see `afterRestore`) stays long enough to read. */
+const NOTE_TOAST_MS = 6000;
 
 /** 'The game on this phone and its stats' or 'All 3 games on this phone and their stats'. */
 function phoneGamesAndStats(count: number): string {
@@ -65,12 +76,20 @@ function replaceSubtitle(phoneGameCount: number, backup: ExportFile): string {
  * it just adds the backup: a merge, so the player's name and the settings set up
  * here are kept (Replace would erase them too).
  */
-export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
+export function RestoreSheet({
+  open,
+  request,
+  onClose,
+  afterRestore,
+  onRestored,
+}: RestoreSheetProps) {
   const confirm = useConfirm();
   const toast = useToast();
   const [restoring, setRestoring] = useState(false);
   // The request whose "Add" found nothing new: a new file starts without the note.
-  const [nothingNewFor, setNothingNewFor] = useState<RestoreRequest | null>(null);
+  const [nothingNew, setNothingNew] = useState<{ request: RestoreRequest; note?: string } | null>(
+    null,
+  );
 
   if (!request) return null;
 
@@ -113,17 +132,26 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
     }
     setRestoring(true);
     try {
-      const taken = await importAll(backup, mode);
+      let taken: ImportSummary;
+      try {
+        taken = await importAll(backup, mode);
+      } catch (error) {
+        console.error('Restoring a backup failed', error);
+        toast.show({ message: RESTORE_FAILED });
+        return;
+      }
+      const note = await afterRestore?.();
       if (mode === 'merge' && taken.games === 0 && backup.games.length > 0 && !phoneIsEmpty) {
         // Nothing to add: say so next to Replace, the way to get the backup's versions.
-        setNothingNewFor(request);
+        setNothingNew({ request, note });
         return;
       }
       onClose();
-      toast.show({ message: restoredMessage(taken, backup.games.length) });
-    } catch (error) {
-      console.error('Restoring a backup failed', error);
-      toast.show({ message: RESTORE_FAILED });
+      const restored = restoredMessage(taken, backup.games.length);
+      toast.show(
+        note ? { message: `${restored}. ${note}`, duration: NOTE_TOAST_MS } : { message: restored },
+      );
+      onRestored?.();
     } finally {
       setRestoring(false);
     }
@@ -134,7 +162,7 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
       open={open}
       onClose={onClose}
       title="Restore this backup?"
-      description={backupSummary(backup).map((part, index) => (
+      description={(request.summary ?? backupSummary(backup)).map((part, index) => (
         // Line breaks only between the parts, never inside "Sep 28, 2026".
         <Fragment key={index}>
           {index > 0 ? ' · ' : null}
@@ -178,9 +206,10 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
           </GroupedList>
           {/* Always there (empty until needed), so screen readers announce what appears. */}
           <div role="status" aria-label="Restore result">
-            {nothingNewFor === request ? (
+            {nothingNew?.request === request ? (
               <p className={cx(styles.note, styles.result)}>
                 {nothingNewMessage(backup.games.length)}
+                {nothingNew.note ? ` ${nothingNew.note}` : null}
               </p>
             ) : null}
           </div>

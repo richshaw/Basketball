@@ -7,6 +7,7 @@ import { GameReportScreen } from '@/screens/GameReport/GameReportScreen';
 import { HomeScreen } from '@/screens/Home/HomeScreen';
 import { NewGameScreen } from '@/screens/NewGame/NewGameScreen';
 import { SeasonStatsScreen } from '@/screens/SeasonStats/SeasonStatsScreen';
+import { CloudRestoreScreen } from '@/screens/Settings/CloudRestoreScreen';
 import { SettingsScreen } from '@/screens/Settings/SettingsScreen';
 import { TrackGameScreen } from '@/screens/TrackGame/TrackGameScreen';
 
@@ -30,10 +31,11 @@ export const appRoutes: RouteObject[] = [
           },
         ],
       },
-      // Full-screen routes: no tab bar, no update banner.
+      // Full-screen routes: no tab bar, no update or backup banner.
       { path: routePatterns.newGame, Component: NewGameScreen },
       { path: routePatterns.gameReport, Component: GameReportScreen },
       { path: routePatterns.trackGame, Component: TrackGameScreen },
+      { path: routePatterns.restoreBackup, Component: CloudRestoreScreen },
       // Component gallery for reviews and screenshots; nothing links here.
       { path: routePatterns.devUi, Component: LazyDevUiScreen },
       { path: '*', element: <Navigate to={paths.home} replace /> },

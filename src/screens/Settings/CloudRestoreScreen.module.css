@@ -1,0 +1,43 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.intro {
+  color: var(--color-text-muted);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Monospaced capitals, like the code as it was shown, so it's easy to check character by character. */
+.codeField input {
+  font-family: var(--font-family-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Why the backup couldn't be found (no signal, a busy server...), under the button. */
+.problem > p {
+  margin-top: var(--space-3);
+  color: var(--color-danger-text);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+}
+
+.note {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+/* Small text, but still a full 44px tap target. */
+.noteLink {
+  display: inline-block;
+  padding-block: var(--space-3);
+  font-weight: var(--font-weight-semibold);
+}
