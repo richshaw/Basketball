@@ -7,6 +7,7 @@ import {
   fetchCloudBackup,
   getBackupCode,
   getCloudBackupStatus,
+  whenBackupIdle,
 } from '@/data/backup/cloudBackup';
 import { createBackupApi } from '@/data/backup/api';
 import { parseBackupCode } from '@/data/backup/code';
@@ -14,7 +15,7 @@ import { errorMessage } from '@/data/backup/errors';
 import { deriveBackupKeys } from '@/data/backup/keys';
 import { createGame, listGames } from '@/data/repo';
 import { paths } from '@/routes';
-import { buildRealData, TEST_API_URL } from '@/test/backupHarness';
+import { buildRealData, REAL_LIVE_GAME_ID, TEST_API_URL } from '@/test/backupHarness';
 import {
   backUpFromAnotherPhone,
   pauseForAnotherPhone,
@@ -486,6 +487,67 @@ describe('Settings: cloud backup paused or stopped', () => {
     await waitFor(() => {
       expect(screen.getByRole('region', { name: 'Cloud backup' })).toHaveFocus();
     });
+  });
+});
+
+describe('Settings: answers that come after the parent has left', () => {
+  const settingsGone = () =>
+    waitFor(() => {
+      expect(screen.queryByRole('heading', { level: 1, name: 'Settings' })).toBeNull();
+    });
+
+  it('never shows how "Back up now" went over the live game', async () => {
+    await seedOwnGames({ liveGame: true });
+    await turnOnCloudBackup();
+    const { user, router } = await renderSettings();
+
+    const release = cloud.server.hold(); // slow gym signal
+    await user.click(cloudButton('Back up now'));
+    // She heads for the game while it's still going.
+    await router.navigate(paths.trackGame(REAL_LIVE_GAME_ID));
+    await settingsGone();
+    release();
+
+    expect(await settledStatus()).toMatchObject({ state: 'idle' });
+    expect(cloud.server.uploads).toHaveLength(2);
+    expect(router.state.location.pathname).toBe(paths.trackGame(REAL_LIVE_GAME_ID));
+    expect(notifications()).not.toHaveTextContent('Backed up');
+  });
+
+  it("never shows why the online backup wasn't deleted once Settings is gone", async () => {
+    await seedOwnGames({ liveGame: true });
+    await turnOnCloudBackup();
+    const { user, router } = await renderSettings();
+    await user.click(cloudButton('Turn off'));
+    const sheet = await screen.findByRole('dialog', { name: 'Turn off cloud backup?' });
+
+    const release = cloud.server.hold();
+    await user.click(
+      within(sheet).getByRole('button', { name: /^Turn off and delete online backup/ }),
+    );
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Delete online backup',
+      }),
+    );
+    await waitFor(() => {
+      expect(cloud.server.requests.map(({ method }) => method)).toContain('DELETE');
+    });
+    // She gives up waiting, closes the sheet and goes to the game.
+    await user.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+    await router.navigate(paths.trackGame(REAL_LIVE_GAME_ID));
+    await settingsGone();
+    // The signal drops before the server answers: nothing was deleted.
+    cloud.server.networkDown = true;
+    release();
+
+    await waitFor(async () => {
+      expect(await getCloudBackupStatus()).toMatchObject({ enabled: true });
+    });
+    await whenBackupIdle();
+    expect(cloud.server.accounts.size).toBe(1);
+    expect(router.state.location.pathname).toBe(paths.trackGame(REAL_LIVE_GAME_ID));
+    expect(notifications()).not.toHaveTextContent(errorMessage('network', 'delete'));
   });
 });
 

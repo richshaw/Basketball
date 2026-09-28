@@ -17,6 +17,9 @@ export interface TurnOffSheetProps {
   onTurnedOff: (deleted: boolean) => void;
 }
 
+/** The engine's reasons run to two sentences: long enough to read them. */
+const MESSAGE_TOAST_MS = 6000;
+
 /**
  * Turning cloud backup off, two ways: keep the online backup (and the code, so turning
  * backup on again carries on with it), or delete it too, which asks first and needs
@@ -28,11 +31,19 @@ export function TurnOffSheet({ open, onClose, onTurnedOff }: TurnOffSheetProps) 
   const toast = useToast();
   const [working, setWorking] = useState<'off' | 'delete' | null>(null);
   const [problem, setProblem] = useState<string | undefined>();
-  // Whether the sheet is still open when an answer arrives (it can be closed meanwhile).
+  // Whether the sheet is still open (or there at all) when an answer arrives: it can be
+  // closed meanwhile, or Settings left for the live game.
   const openRef = useRef(open);
   useEffect(() => {
     openRef.current = open;
   }, [open]);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const turnOff = async (deleteCloudCopy: boolean) => {
     if (working) return;
@@ -43,9 +54,10 @@ export function TurnOffSheet({ open, onClose, onTurnedOff }: TurnOffSheetProps) 
     setProblem(undefined);
     try {
       const result = await disableCloudBackup({ deleteCloudCopy });
+      if (!mounted.current) return;
       if (result.ok) onTurnedOff(deleteCloudCopy);
       else if (openRef.current) setProblem(result.error.message);
-      else toast.show({ message: result.error.message });
+      else toast.show({ message: result.error.message, duration: MESSAGE_TOAST_MS });
     } finally {
       setWorking(null);
     }

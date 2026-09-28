@@ -3,7 +3,7 @@ import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { AlertIcon, CloudCheckIcon, CloudIcon, CloudOffIcon } from '@/components/Icons/Icons';
-import { useToast } from '@/components/Toast/toastContext';
+import { useToast, type ToastOptions } from '@/components/Toast/toastContext';
 import {
   backUpNow,
   disableCloudBackup,
@@ -94,6 +94,18 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
   const [turnOffKey, setTurnOffKey] = useState(0);
   const sectionRef = useRef<HTMLElement>(null);
   const { state } = status;
+  // An answer that comes after the parent left Settings (for the live game, say) isn't
+  // shown: the status row says how it went next time she looks.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const say = (options: ToastOptions) => {
+    if (mounted.current) toast.show(options);
+  };
 
   useEffect(() => {
     const section = sectionRef.current;
@@ -127,14 +139,14 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
         showCode(newCode, newCode === code ? 'reused' : 'new');
       } catch (error) {
         console.error('Turning on cloud backup failed', error);
-        toast.show({ message: "Couldn't turn on cloud backup. Try again." });
+        say({ message: "Couldn't turn on cloud backup. Try again." });
       }
     });
 
   const backUp = (force: boolean) =>
     run(async () => {
       const result = await backUpNow({ force });
-      toast.show(
+      say(
         result.ok
           ? { message: 'Backed up' }
           : { message: result.error.message, duration: MESSAGE_TOAST_MS },
@@ -157,9 +169,11 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
     if (!confirmed) return;
     await run(async () => {
       const result = await disableCloudBackup();
-      toast.show({
-        message: result.ok ? 'Cloud backup is off on this phone' : result.error.message,
-      });
+      say(
+        result.ok
+          ? { message: 'Cloud backup is off on this phone' }
+          : { message: result.error.message, duration: MESSAGE_TOAST_MS },
+      );
     });
   };
 
@@ -169,7 +183,7 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
     if (!(await confirm(DELETE_ONLINE_BACKUP_QUESTION))) return;
     await run(async () => {
       const result = await disableCloudBackup({ deleteCloudCopy: true });
-      toast.show(
+      say(
         result.ok
           ? { message: 'Online backup deleted' }
           : { message: result.error.message, duration: MESSAGE_TOAST_MS },
@@ -189,7 +203,7 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
 
   const turnedOff = (deleted: boolean) => {
     setTurnOffOpen(false);
-    toast.show({
+    say({
       message: deleted
         ? 'Cloud backup is off, and the online backup is deleted'
         : 'Cloud backup is off',
