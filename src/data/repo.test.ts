@@ -312,6 +312,31 @@ describe('recordStat', () => {
     expect(await getGameEvents(game.id)).toEqual([first, second]);
   });
 
+  it('records into the period it is given, without changing the current one', async () => {
+    const game = await newGame();
+    await setCurrentPeriod(game.id, 3);
+    const earlier = await recordStat(game.id, 'stl', undefined, { period: 2 });
+    const overtime = await recordStat(game.id, 'fg3_made', { x: 0, y: 25 }, { period: 5 });
+    const current = await recordStat(game.id, 'ast', undefined, {});
+    expect([earlier.period, overtime.period, current.period]).toEqual([2, 5, 3]);
+    expect(overtime.location).toEqual({ x: 0, y: 25 });
+    expect((await mustGetGame(game.id)).currentPeriod).toBe(3);
+    expect((await getGameEvents(game.id)).map((e) => e.period)).toEqual([2, 5, 3]);
+  });
+
+  it('rejects a period out of range, like setCurrentPeriod, and saves nothing', async () => {
+    const game = await newGame();
+    for (const period of [0, -1, 1.5, MAX_PERIOD + 1, Number.NaN]) {
+      await expect(
+        recordStat(game.id, 'ast', undefined, { period }),
+        String(period),
+      ).rejects.toThrow(TypeError);
+    }
+    expect(await getGameEvents(game.id)).toEqual([]);
+    const last = await recordStat(game.id, 'ast', undefined, { period: MAX_PERIOD });
+    expect(last.period).toBe(MAX_PERIOD);
+  });
+
   it('keeps taps in the same millisecond in order', async () => {
     freezeClock();
     const game = await newGame();

@@ -339,16 +339,26 @@ async function touchGame(gameId: string, now: number): Promise<void> {
   if (game) await db.games.put({ ...game, updatedAt: nextTimestamp(now, game.updatedAt) });
 }
 
+export interface RecordStatOptions {
+  /**
+   * The period the stat belongs to (1 to MAX_PERIOD), e.g. the one on screen when it
+   * was tapped. Leave it out for the game's current period.
+   */
+  period?: number;
+}
+
 /**
- * Records one stat in the game's current period. `location` (feet, see CourtPoint)
- * is only allowed on 2PT/3PT shots and is clamped onto the half court; a location
- * that isn't a real point is dropped and the stat is still saved. Works on final
- * games too, for corrections.
+ * Records one stat, in the game's current period unless `options.period` says
+ * otherwise (the game's current period stays as it is). `location` (feet, see
+ * CourtPoint) is only allowed on 2PT/3PT shots and is clamped onto the half court;
+ * a location that isn't a real point is dropped and the stat is still saved. Works
+ * on final games too, for corrections.
  */
 export function recordStat(
   gameId: string,
   type: StatType,
   location?: CourtPoint | null,
+  options: RecordStatOptions = {},
 ): Promise<StatEvent> {
   return db.transaction('rw', [db.games, db.events, db.meta], async () => {
     if (!(STAT_TYPES as readonly string[]).includes(type)) {
@@ -365,7 +375,8 @@ export function recordStat(
         id: newId(),
         gameId,
         type,
-        period: game.currentPeriod,
+        // Checked like setCurrentPeriod's: a whole number from 1 to MAX_PERIOD.
+        period: options.period ?? game.currentPeriod,
         // Strictly increasing within the game, even for taps in the same millisecond.
         createdAt: nextTimestamp(now, last?.createdAt),
         location: shot,
