@@ -23,7 +23,13 @@ export interface ExportedData {
   exportedAt: string;
   players: { id: string; name: string; jerseyNumber?: string }[];
   games: { id: string; opponent: string; date: string; status: 'live' | 'final' }[];
-  events: { id: string; gameId: string; type: string; period: number }[];
+  events: {
+    id: string;
+    gameId: string;
+    type: string;
+    period: number;
+    location?: { x: number; y: number };
+  }[];
 }
 
 interface HoopStatsWindow {

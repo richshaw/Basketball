@@ -66,6 +66,60 @@ export function keptTaps(page: Page): Promise<string[]> {
   );
 }
 
+/** A spot on the court in feet: the basket at (0, 0), +y toward half court (src/lib/court.ts). */
+export interface CourtSpot {
+  x: number;
+  y: number;
+}
+
+/** The kept taps as stored (type and spot), e.g. to check a spot is kept with its tap. */
+export function keptTapSpots(page: Page): Promise<{ type: string; location?: CourtSpot }[]> {
+  return page.evaluate(() =>
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith('hoop-stats.pendingStat.'))
+      .map((key) => {
+        const { type, location } = JSON.parse(localStorage.getItem(key) ?? '{}') as {
+          type: string;
+          location?: { x: number; y: number };
+        };
+        return location ? { type, location } : { type };
+      }),
+  );
+}
+
+/** The shot chart's court on the live game screen (with the Shot chart setting on). */
+export const shotCourt = (page: Page) => page.getByRole('img', { name: /^Shot spot/ });
+
+/**
+ * Taps the live game screen's court where a shot was taken. The drawing (10 SVG units
+ * per foot from the left end of the baseline; e2e code can't import courtGeometry.ts)
+ * is scaled to fit its box and centered, so a short court is narrower than its box.
+ */
+export async function tapCourt(page: Page, spot: CourtSpot) {
+  const court = shotCourt(page);
+  const box = await court.boundingBox();
+  if (!box) throw new Error('The court is not on screen');
+  const view = await court.evaluate((svg) => {
+    const { x, y, width, height } = (svg as SVGSVGElement).viewBox.baseVal;
+    return { x, y, width, height };
+  });
+  const scale = Math.min(box.width / view.width, box.height / view.height);
+  const left = box.x + (box.width - view.width * scale) / 2;
+  const top = box.y + (box.height - view.height * scale) / 2;
+  await page.touchscreen.tap(
+    left + ((spot.x + 25) * 10 - view.x) * scale,
+    top + ((spot.y + 5.25) * 10 - view.y) * scale,
+  );
+}
+
+/** Turns the Shot chart setting on or off in Settings, as the parent would. */
+export async function setShotChart(page: Page, on: boolean) {
+  await page.goto(appUrl(paths.settings));
+  const toggle = page.getByRole('switch', { name: 'Shot chart' });
+  if ((await toggle.getAttribute('aria-checked')) !== String(on)) await toggle.tap();
+  await expect(toggle).toHaveAttribute('aria-checked', String(on));
+}
+
 /**
  * Waits until every tap so far is saved. (The screen counts a tap from the moment it's
  * made, so the numbers on it don't say that.)
