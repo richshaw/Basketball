@@ -74,6 +74,7 @@ describe('player', () => {
     expect(updated).toEqual({
       id: created.id,
       name: 'Ava S.',
+      jerseyNumber: '12',
       createdAt: T0,
       updatedAt: T0 + 1,
     });
@@ -81,9 +82,16 @@ describe('player', () => {
     expect(await db.players.count()).toBe(1);
   });
 
-  it('clears the jersey number when it is empty', async () => {
+  it('keeps the jersey number when it is left out, and clears it with null or ""', async () => {
     await savePlayer({ name: 'Ava', jerseyNumber: '12' });
-    expect((await savePlayer({ name: 'Ava', jerseyNumber: '' })).jerseyNumber).toBeUndefined();
+    expect((await savePlayer({ name: 'Ava' })).jerseyNumber).toBe('12');
+    expect((await savePlayer({ name: 'Ava', jerseyNumber: undefined })).jerseyNumber).toBe('12');
+    expect(await savePlayer({ name: 'Ava', jerseyNumber: '' })).not.toHaveProperty('jerseyNumber');
+
+    await savePlayer({ name: 'Ava', jerseyNumber: '3' });
+    expect(await savePlayer({ name: 'Ava', jerseyNumber: null })).not.toHaveProperty(
+      'jerseyNumber',
+    );
     expect(await getPlayer()).not.toHaveProperty('jerseyNumber');
   });
 
@@ -188,13 +196,61 @@ describe('updateGame', () => {
       notes: 'Great game',
     });
     expect(updated).not.toHaveProperty('homeAway');
+    expect(await getGame(game.id)).toEqual(updated);
+  });
 
-    const cleared = await updateGame(game.id, { season: '', notes: null, teamScore: undefined });
-    expect(cleared).not.toHaveProperty('season');
-    expect(cleared).not.toHaveProperty('notes');
-    expect(cleared).not.toHaveProperty('teamScore');
-    expect(cleared.opponentScore).toBe(38);
-    expect(await getGame(game.id)).toEqual(cleared);
+  it('keeps every field that is undefined', async () => {
+    freezeClock();
+    const game = await newGame({ season: 'Fall 2026', homeAway: 'home' });
+    await updateGame(game.id, { teamScore: 40, opponentScore: 38, notes: 'Close one' });
+    const kept = await updateGame(game.id, {
+      opponent: undefined,
+      date: undefined,
+      season: undefined,
+      homeAway: undefined,
+      periodFormat: undefined,
+      teamScore: undefined,
+      opponentScore: undefined,
+      notes: undefined,
+    });
+    expect(kept).toEqual({
+      ...game,
+      teamScore: 40,
+      opponentScore: 38,
+      notes: 'Close one',
+      updatedAt: T0 + 2,
+    });
+  });
+
+  it('clears optional fields with null or ""', async () => {
+    const game = await newGame({ season: 'Fall 2026', homeAway: 'home' });
+    await updateGame(game.id, { teamScore: 40, opponentScore: 38, notes: 'Close one' });
+    const cleared = await updateGame(game.id, {
+      season: '',
+      homeAway: '' as unknown as null,
+      teamScore: null,
+      opponentScore: '' as unknown as null,
+      notes: '  ',
+    });
+    for (const field of ['season', 'homeAway', 'teamScore', 'opponentScore', 'notes']) {
+      expect(cleared, field).not.toHaveProperty(field);
+    }
+    const again = await updateGame(game.id, { notes: 'x', season: 'JV' });
+    expect(await updateGame(game.id, { notes: null, season: null })).toEqual({
+      ...again,
+      notes: undefined,
+      season: undefined,
+      updatedAt: expect.any(Number) as number,
+    });
+  });
+
+  it("can't clear a required field", async () => {
+    const game = await newGame();
+    await expect(updateGame(game.id, { opponent: null as unknown as string })).rejects.toThrow(
+      /opponent/,
+    );
+    await expect(updateGame(game.id, { date: '' })).rejects.toThrow(/date/);
+    expect(await getGame(game.id)).toEqual(game);
   });
 
   it('bumps updatedAt, even within the same millisecond', async () => {
@@ -333,11 +389,18 @@ describe('recordStat', () => {
   it('rejects bad input', async () => {
     const game = await newGame();
     await expect(recordStat(game.id, 'dunk' as 'ast')).rejects.toThrow('Unknown stat type: dunk');
-    await expect(recordStat(game.id, 'fg2_made', { x: Number.NaN, y: 3 })).rejects.toThrow(
-      TypeError,
-    );
     await expect(recordStat('nope', 'ast')).rejects.toThrow('Game not found: nope');
     expect(await getAllEvents()).toEqual([]);
+  });
+
+  it("keeps the tap when the location isn't a real point", async () => {
+    // e.g. a tap measured on a court drawn at zero size.
+    const game = await newGame();
+    const nan = await recordStat(game.id, 'fg2_made', { x: Number.NaN, y: 3 });
+    const infinite = await recordStat(game.id, 'fg3_miss', { x: 4, y: Infinity });
+    expect(nan).not.toHaveProperty('location');
+    expect(infinite).not.toHaveProperty('location');
+    expect((await getGameEvents(game.id)).map((e) => e.type)).toEqual(['fg2_made', 'fg3_miss']);
   });
 
   it('bumps the game updatedAt', async () => {
@@ -372,6 +435,21 @@ describe('setStatLocation', () => {
     const freeThrow = await recordStat(game.id, 'ft_made');
     await expect(setStatLocation(freeThrow.id, { x: 0, y: 13.75 })).rejects.toThrow(TypeError);
     expect(await getGameEvents(game.id)).toEqual([freeThrow]);
+  });
+
+  it("rejects a point that isn't real and keeps the stat as it was", async () => {
+    const game = await newGame();
+    const shot = await recordStat(game.id, 'fg2_made', { x: 1, y: 2 });
+    await expect(setStatLocation(shot.id, { x: Number.NaN, y: 2 })).rejects.toThrow(TypeError);
+    expect(await getGameEvents(game.id)).toEqual([shot]);
+  });
+
+  it('keeps the location when it is undefined', async () => {
+    const game = await newGame();
+    const shot = await recordStat(game.id, 'fg2_made', { x: 1, y: 2 });
+    const before = await getLastChangeAt();
+    expect(await setStatLocation(shot.id, undefined as unknown as null)).toEqual(shot);
+    expect(await getLastChangeAt()).toBe(before);
   });
 
   it('resolves to undefined for a stat that is gone', async () => {
@@ -455,8 +533,10 @@ describe('endGame and reopenGame', () => {
     expect(ended).not.toHaveProperty('opponentScore');
 
     vi.setSystemTime(T0 + 60_000);
-    const edited = await endGame(game.id, { opponentScore: 18, teamScore: null });
-    expect(edited.endedAt).toBe(T0);
+    const kept = await endGame(game.id, { teamScore: undefined, opponentScore: 18 });
+    expect(kept).toMatchObject({ teamScore: 20, opponentScore: 18, endedAt: T0 });
+
+    const edited = await endGame(game.id, { teamScore: null });
     expect(edited.opponentScore).toBe(18);
     expect(edited).not.toHaveProperty('teamScore');
   });
@@ -577,6 +657,18 @@ describe('settings', () => {
     expect(await getSettings()).toEqual({ shotChart: false, defaultPeriodFormat: 'halves' });
   });
 
+  it('keeps a setting that is undefined, and clears lastSeason with null or ""', async () => {
+    await updateSettings({ shotChart: false, lastSeason: 'JV' });
+    await updateSettings({ shotChart: undefined, lastSeason: undefined });
+    expect(await getSettings()).toEqual({
+      shotChart: false,
+      defaultPeriodFormat: 'quarters',
+      lastSeason: 'JV',
+    });
+    await updateSettings({ lastSeason: '' });
+    expect(await getSettings()).toEqual({ shotChart: false, defaultPeriodFormat: 'quarters' });
+  });
+
   it('rejects invalid values', async () => {
     await expect(updateSettings({ shotChart: 'yes' as unknown as boolean })).rejects.toThrow(
       TypeError,
@@ -587,14 +679,33 @@ describe('settings', () => {
     expect(await getSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
-  it('falls back to defaults for unreadable stored values', async () => {
+  it('falls back to the default for each unreadable stored value', async () => {
     await db.meta.put({
       key: META_KEYS.settings,
       value: { shotChart: 'no', defaultPeriodFormat: 'halves', lastSeason: 7 },
     });
     expect(await getSettings()).toEqual({ shotChart: true, defaultPeriodFormat: 'halves' });
+    await db.meta.put({
+      key: META_KEYS.settings,
+      value: { shotChart: false, defaultPeriodFormat: 'thirds', lastSeason: '' },
+    });
+    expect(await getSettings()).toEqual({ shotChart: false, defaultPeriodFormat: 'quarters' });
+    await db.meta.put({ key: META_KEYS.settings, value: { lastSeason: 'S'.repeat(61) } });
+    expect(await getSettings()).toEqual(DEFAULT_SETTINGS);
     await db.meta.put({ key: META_KEYS.settings, value: 'garbage' });
     expect(await getSettings()).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('reads exactly the settings the schema knows', async () => {
+    await db.meta.put({
+      key: META_KEYS.settings,
+      value: { shotChart: false, lastSeason: 'JV', theme: 'dark' },
+    });
+    expect(await getSettings()).toEqual({
+      shotChart: false,
+      defaultPeriodFormat: 'quarters',
+      lastSeason: 'JV',
+    });
   });
 });
 

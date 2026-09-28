@@ -6,13 +6,15 @@
  * watches. Getters return `undefined` for a missing record (hooks return `null`).
  * Invalid input (a bug in the caller) rejects with a TypeError; a missing game
  * rejects with an Error.
+ *
+ * Changing an existing record, everywhere: a field that's missing or `undefined`
+ * keeps its value, and `null` or '' clears it.
  */
 import { clampToHalfCourt } from '@/lib/court';
 import { newId } from '@/lib/id';
 import { db, eventsOfGame, META_KEYS, nextTimestamp, touchLastChange } from './db';
 import { isFieldGoalType } from './stats';
 import {
-  PERIOD_FORMATS,
   STAT_TYPES,
   type CourtPoint,
   type Game,
@@ -42,6 +44,20 @@ function optionalText(value: string | null | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+/** A changed optional text field: undefined keeps `current`; null or '' clears it. */
+function patchText(
+  current: string | undefined,
+  value: string | null | undefined,
+): string | undefined {
+  return value === undefined ? current : optionalText(value);
+}
+
+/** A changed optional field: undefined keeps `current`; null or '' clears it. */
+function patchValue<T>(current: T | undefined, value: T | null | undefined): T | undefined {
+  if (value === undefined) return current;
+  return value === null || value === '' ? undefined : value;
+}
+
 // ---------------------------------------------------------------------------
 // Player
 
@@ -69,7 +85,7 @@ export async function getPlayer(): Promise<Player | undefined> {
 
 export interface PlayerInput {
   name: string;
-  /** Empty, null or missing clears it. */
+  /** Leave it out (or undefined) to keep the current number; null or '' clears it. */
   jerseyNumber?: string | null;
 }
 
@@ -82,8 +98,8 @@ export function savePlayer(input: PlayerInput): Promise<Player> {
       playerSchema,
       {
         id: existing?.id ?? newId(),
-        name: input.name.trim(),
-        jerseyNumber: optionalText(input.jerseyNumber),
+        name: input.name === undefined ? (existing?.name ?? '') : (input.name ?? '').trim(),
+        jerseyNumber: patchText(existing?.jerseyNumber, input.jerseyNumber),
         createdAt: existing?.createdAt ?? now,
         updatedAt: nextTimestamp(now, existing?.updatedAt),
       },
@@ -170,7 +186,7 @@ export function createGame(input: NewGame): Promise<Game> {
         opponent: input.opponent.trim(),
         date: input.date,
         season: optionalText(input.season),
-        homeAway: input.homeAway ?? undefined,
+        homeAway: input.homeAway || undefined,
         periodFormat: input.periodFormat,
         currentPeriod: 1,
         status: 'live',
@@ -193,8 +209,8 @@ export function createGame(input: NewGame): Promise<Game> {
 }
 
 /**
- * Changes to a game's details. Leave a key out to keep its value; pass null (or
- * undefined, or '' for text) to clear an optional one.
+ * Changes to a game's details. A key that's missing or undefined keeps its value;
+ * null or '' clears an optional one (clearing a required one is rejected).
  */
 export interface GamePatch {
   opponent?: string;
@@ -209,14 +225,15 @@ export interface GamePatch {
 
 function applyGamePatch(game: Game, patch: GamePatch): Game {
   const next: Game = { ...game };
-  if (patch.opponent !== undefined) next.opponent = patch.opponent.trim();
+  // Required fields: null or '' "clears" them, which validation then rejects.
+  if (patch.opponent !== undefined) next.opponent = (patch.opponent ?? '').trim();
   if (patch.date !== undefined) next.date = patch.date;
   if (patch.periodFormat !== undefined) next.periodFormat = patch.periodFormat;
-  if ('season' in patch) next.season = optionalText(patch.season);
-  if ('homeAway' in patch) next.homeAway = patch.homeAway ?? undefined;
-  if ('teamScore' in patch) next.teamScore = patch.teamScore ?? undefined;
-  if ('opponentScore' in patch) next.opponentScore = patch.opponentScore ?? undefined;
-  if ('notes' in patch) next.notes = optionalText(patch.notes);
+  next.season = patchText(game.season, patch.season);
+  next.homeAway = patchValue(game.homeAway, patch.homeAway);
+  next.teamScore = patchValue(game.teamScore, patch.teamScore);
+  next.opponentScore = patchValue(game.opponentScore, patch.opponentScore);
+  next.notes = patchText(game.notes, patch.notes);
   return next;
 }
 
@@ -253,7 +270,8 @@ export interface FinalScore {
 
 /**
  * Marks the game final (endedAt = now, kept if it was already final) and sets the
- * scores that are given; a score left out keeps its current value.
+ * scores that are given. A score that's missing or undefined keeps its current
+ * value; null clears it.
  */
 export function endGame(gameId: string, score: FinalScore = {}): Promise<Game> {
   return modifyGame(gameId, (game, now) => ({
@@ -292,7 +310,15 @@ export function getAllEvents(): Promise<StatEvent[]> {
   return db.events.orderBy('[gameId+createdAt]').toArray();
 }
 
-/** Checks that a stat of `type` may have a location, and clamps it onto the half court. */
+function isRealPoint(point: CourtPoint): boolean {
+  return Number.isFinite(point.x) && Number.isFinite(point.y);
+}
+
+/**
+ * Checks that a stat of `type` may have a location, and clamps it onto the half
+ * court. A point that isn't real (NaN or Infinity, e.g. measured on a court drawn
+ * at zero size) is dropped rather than rejected, so it can never cost the tap.
+ */
 function shotLocation(
   type: StatType,
   location: CourtPoint | null | undefined,
@@ -301,6 +327,7 @@ function shotLocation(
   if (!isFieldGoalType(type)) {
     throw new TypeError(`Only 2PT and 3PT shots can have a location, not ${type}`);
   }
+  if (!isRealPoint(location)) return undefined;
   const { x, y } = clampToHalfCourt(location);
   // Store -0 as 0: JSON (and so a backup) can't tell them apart.
   return { x: x === 0 ? 0 : x, y: y === 0 ? 0 : y };
@@ -314,8 +341,9 @@ async function touchGame(gameId: string, now: number): Promise<void> {
 
 /**
  * Records one stat in the game's current period. `location` (feet, see CourtPoint)
- * is only allowed on 2PT/3PT shots and is clamped onto the half court. Works on
- * final games too, for corrections.
+ * is only allowed on 2PT/3PT shots and is clamped onto the half court; a location
+ * that isn't a real point is dropped and the stat is still saved. Works on final
+ * games too, for corrections.
  */
 export function recordStat(
   gameId: string,
@@ -355,6 +383,7 @@ export function recordStat(
  * Sets where a recorded 2PT/3PT shot was taken (null removes it). For a shot chart
  * that asks for the spot after the stat is saved, so the tap itself is never lost.
  * Resolves to the updated event, or undefined if it's gone (e.g. undone meanwhile).
+ * A point that isn't real (NaN or Infinity) rejects; the stat itself stays saved.
  */
 export function setStatLocation(
   eventId: string,
@@ -362,7 +391,11 @@ export function setStatLocation(
 ): Promise<StatEvent | undefined> {
   return db.transaction('rw', [db.games, db.events, db.meta], async () => {
     const event = await db.events.get(eventId);
-    if (!event) return undefined;
+    // undefined keeps the current location: nothing to do.
+    if (!event || location === undefined) return event;
+    if (location !== null && !isRealPoint(location)) {
+      throw new TypeError('A shot location must be finite numbers of feet');
+    }
     const now = Date.now();
     const updated = validRecord(
       statEventSchema,
@@ -404,19 +437,20 @@ export function deleteStat(eventId: string): Promise<StatEvent | undefined> {
 // ---------------------------------------------------------------------------
 // Settings and change tracking
 
-function isPeriodFormat(value: unknown): value is PeriodFormat {
-  return (PERIOD_FORMATS as readonly unknown[]).includes(value);
-}
-
-/** Defaults, overridden by each valid stored value. */
+/**
+ * Each setting the schema knows, from the stored value when that field is valid on
+ * its own, else its default. Driven by settingsSchema, so a new setting is read
+ * (and exported) without touching this.
+ */
 function resolveSettings(stored: unknown): Settings {
-  const settings: Settings = { ...DEFAULT_SETTINGS };
-  if (typeof stored !== 'object' || stored === null) return settings;
-  const { shotChart, defaultPeriodFormat, lastSeason } = stored as Record<string, unknown>;
-  if (typeof shotChart === 'boolean') settings.shotChart = shotChart;
-  if (isPeriodFormat(defaultPeriodFormat)) settings.defaultPeriodFormat = defaultPeriodFormat;
-  if (typeof lastSeason === 'string' && lastSeason) settings.lastSeason = lastSeason;
-  return settings;
+  const settings: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+  if (typeof stored === 'object' && stored !== null) {
+    for (const [key, field] of Object.entries(settingsSchema.shape)) {
+      const result = field.safeParse((stored as Record<string, unknown>)[key]);
+      if (result.success && result.data !== undefined) settings[key] = result.data;
+    }
+  }
+  return settings as unknown as Settings;
 }
 
 /** The app settings, with defaults for anything never set. */
@@ -434,11 +468,14 @@ async function putSettings(settings: Settings): Promise<Settings> {
 export interface SettingsPatch {
   shotChart?: boolean;
   defaultPeriodFormat?: PeriodFormat;
-  /** null, undefined or '' clears it. */
+  /** Missing or undefined keeps it; null or '' clears it. */
   lastSeason?: string | null;
 }
 
-/** Changes some settings (keys left out keep their value). Resolves to the new settings. */
+/**
+ * Changes some settings: a key that's missing or undefined keeps its value.
+ * Resolves to the new settings.
+ */
 export function updateSettings(patch: SettingsPatch): Promise<Settings> {
   return db.transaction('rw', [db.meta], async () => {
     const now = Date.now();
@@ -447,7 +484,7 @@ export function updateSettings(patch: SettingsPatch): Promise<Settings> {
     if (patch.defaultPeriodFormat !== undefined) {
       next.defaultPeriodFormat = patch.defaultPeriodFormat;
     }
-    if ('lastSeason' in patch) next.lastSeason = optionalText(patch.lastSeason);
+    next.lastSeason = patchText(next.lastSeason, patch.lastSeason);
     const settings = await putSettings(next);
     await touchLastChange(now);
     return settings;
