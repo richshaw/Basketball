@@ -133,20 +133,25 @@ export function CloudRestoreScreen() {
 
   const listOlder = async () => {
     if (!olderFor || loading) return;
+    const current = attempt.current;
     setLoading('list');
     setProblem(undefined);
     const result = await listCloudVersions(olderFor);
     setLoading(null);
+    // The code was changed meanwhile: these are some other code's backups.
+    if (current !== attempt.current) return;
     if (result.ok) setVersions(result.value);
     else setProblem(result.error.message);
   };
 
   const openVersion = async (version: BackupVersion) => {
     if (!olderFor || loading) return;
+    const current = attempt.current;
     setLoading(version.version);
     setProblem(undefined);
     const result = await fetchCloudBackup(olderFor, { version: version.version });
     setLoading(null);
+    if (current !== attempt.current) return;
     if (!result.ok) {
       setProblem(result.error.message);
       return;
