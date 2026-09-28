@@ -45,6 +45,14 @@ export function ChartIcon(props: IconProps) {
   );
 }
 
+export function CheckmarkIcon(props: IconProps) {
+  return (
+    <Icon strokeWidth={2.75} {...props}>
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </Icon>
+  );
+}
+
 export function GearIcon(props: IconProps) {
   return (
     <Icon {...props}>

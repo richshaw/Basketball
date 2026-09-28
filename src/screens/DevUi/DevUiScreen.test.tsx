@@ -36,6 +36,14 @@ describe('DevUiScreen', () => {
     }
   });
 
+  it('opens a game from a tap anywhere on a game log row (linkedRows)', async () => {
+    const { user, router } = await openGallery();
+    const log = screen.getByRole('table', { name: 'Game log' });
+    const row = within(log).getByRole('row', { name: /Hawks/ });
+    await user.click(within(row).getByRole('cell', { name: '9' }));
+    expect(router.state.location.pathname).toBe(paths.gameReport('demo'));
+  });
+
   it('opens a sheet whose Save closes it and shows a toast', async () => {
     const { user } = await openGallery();
     await user.click(screen.getByRole('button', { name: 'Edit game' }));
