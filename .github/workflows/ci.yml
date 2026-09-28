@@ -23,7 +23,12 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
       - run: npm ci
+      # The backup client's tests also run against the real server app (in process).
+      - run: npm ci --prefix server --omit=dev
       - run: npm run lint
       - run: npm run format:check
       - run: npm run typecheck

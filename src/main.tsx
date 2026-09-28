@@ -3,6 +3,7 @@ import './styles/tokens.css';
 import './styles/global.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { cloudBackupConsole, startBackupScheduler } from '@/data/backup/cloudBackup';
 import { seedDemoData } from '@/data/demo';
 import { replayPendingStats } from '@/data/pendingStats';
 import { requestPersistentStorage } from '@/data/persistence';
@@ -13,7 +14,10 @@ import { App } from './App';
 void requestPersistentStorage();
 
 // Console, e2e and screenshot helpers (typed in src/global.d.ts).
-window.hoopStats = { seedDemoData, clearAllData, exportAll };
+window.hoopStats = { seedDemoData, clearAllData, exportAll, backup: cloudBackupConsole };
+
+// Automatic cloud backup, once it's turned on. Returns at once; all work happens later.
+startBackupScheduler();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Missing #root element in index.html');

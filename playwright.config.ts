@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { E2E_BACKUP_API_URL } from './e2e/support/backup';
 
 // Each worktree running e2e in parallel needs its own port: E2E_PORT=4174 npm run e2e.
 const PORT = Number(process.env.E2E_PORT ?? 4173);
@@ -35,6 +36,9 @@ export default defineConfig({
   ],
   webServer: {
     command: `npm run build && npm run preview -- --port ${PORT} --strictPort --base ${BASE_PATH}`,
+    // Cloud backup talks to a fake server that e2e/backup-engine.spec.ts routes in the page;
+    // any other spec's requests there just fail (no such host), never reaching a real one.
+    env: { VITE_BACKUP_API_URL: E2E_BACKUP_API_URL },
     url: baseURL,
     // Always test this checkout's fresh build, never a server someone else left running.
     reuseExistingServer: false,
