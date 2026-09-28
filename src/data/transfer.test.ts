@@ -3,6 +3,8 @@ import { db, META_KEYS } from './db';
 import { buildDemoData } from './demo';
 import {
   createGame,
+  deleteGame,
+  deleteStat,
   endGame,
   getGame,
   getGameEvents,
@@ -13,6 +15,8 @@ import {
   recordStat,
   savePlayer,
   setCurrentPeriod,
+  setStatLocation,
+  undoLastStat,
   updateGame,
   updateSettings,
 } from './repo';
@@ -205,9 +209,13 @@ describe('importAll merge', () => {
     expect(await getGameEvents('g2')).toEqual([event({ id: 'e2', gameId: 'g2', type: 'stl' })]);
   });
 
-  it('keeps whichever copy of a game was updated most recently', async () => {
+  it('keeps whichever copy of a game was updated most recently, with its events', async () => {
+    const localG2Event = event({ id: 'local-g2', gameId: 'g2', type: 'blk' });
     await importAll(
-      file({ games: [game(), game({ id: 'g2', opponent: 'Local newer', updatedAt: 9000 })] }),
+      file({
+        games: [game(), game({ id: 'g2', opponent: 'Local newer', updatedAt: 9000 })],
+        events: [event(), localG2Event],
+      }),
       'replace',
     );
     const summary = await importAll(
@@ -216,25 +224,81 @@ describe('importAll merge', () => {
           game({ opponent: 'File newer', updatedAt: 5000, teamScore: 50, opponentScore: 40 }),
           game({ id: 'g2', opponent: 'File older', updatedAt: 4000 }),
         ],
-        events: [],
+        events: [event({ id: 'file-g2', gameId: 'g2', type: 'tov' })],
       }),
       'merge',
     );
     expect(summary).toEqual({ games: 1, events: 0 });
+    // The file's newer g1 has no stats, so it replaces g1's stats with none.
     expect(await getGame('g1')).toMatchObject({ opponent: 'File newer', teamScore: 50 });
+    expect(await getGameEvents('g1')).toEqual([]);
+    // The device's newer g2 keeps its own stats and gets none of the file's.
     expect(await getGame('g2')).toMatchObject({ opponent: 'Local newer' });
+    expect(await getGameEvents('g2')).toEqual([localG2Event]);
   });
 
-  it('adds missing events by id and never deletes any', async () => {
-    await importAll(
-      file({ events: [event(), event({ id: 'local-only', type: 'blk', createdAt: 2600 })] }),
-      'replace',
-    );
-    await importAll(
-      file({ events: [event(), event({ id: 'file-only', type: 'tov', createdAt: 2700 })] }),
+  it('skips an older copy of a game with its events, so undone stats stay undone', async () => {
+    const tracked = await createGame({
+      opponent: 'Lincoln',
+      date: '2026-09-20',
+      periodFormat: 'quarters',
+    });
+    const made = await recordStat(tracked.id, 'fg2_made');
+    await recordStat(tracked.id, 'fg3_made'); // A mis-tap...
+    const backup = await exportAll();
+    await undoLastStat(tracked.id); // ...undone after the backup was made.
+    const lastChange = await getLastChangeAt();
+
+    expect(await importAll(backup, 'merge')).toEqual({ games: 0, events: 0 });
+    expect(await getGameEvents(tracked.id)).toEqual([made]);
+    expect(await getLastChangeAt()).toBe(lastChange);
+  });
+
+  it('takes a newer copy of a game whole, with stats deleted and moved there', async () => {
+    const tracked = await createGame({
+      opponent: 'Lincoln',
+      date: '2026-09-20',
+      periodFormat: 'quarters',
+    });
+    const shot = await recordStat(tracked.id, 'fg2_made', { x: 2, y: 3 });
+    const mistake = await recordStat(tracked.id, 'fg3_made');
+    const older = await exportAll();
+    await setStatLocation(shot.id, { x: -4, y: 10 });
+    await deleteStat(mistake.id);
+    const assist = await recordStat(tracked.id, 'ast');
+    const newer = await exportAll();
+
+    // The phone goes back to the older backup, then the newer one is merged in.
+    await importAll(older, 'replace');
+    expect(await importAll(newer, 'merge')).toEqual({ games: 1, events: 2 });
+    expect(await getGameEvents(tracked.id)).toEqual([
+      { ...shot, location: { x: -4, y: 10 } },
+      assist,
+    ]);
+    expect(withoutExportedAt(await exportAll())).toEqual(withoutExportedAt(newer));
+  });
+
+  it("keeps the device's copy of a game updated at the same moment", async () => {
+    await importAll(file(), 'replace');
+    const summary = await importAll(
+      file({
+        games: [game({ opponent: 'Same age' })],
+        events: [event({ id: 'e2', type: 'blk' })],
+      }),
       'merge',
     );
-    expect((await getGameEvents('g1')).map((e) => e.id)).toEqual(['e1', 'local-only', 'file-only']);
+    expect(summary).toEqual({ games: 0, events: 0 });
+    expect(await getGame('g1')).toEqual(game());
+    expect(await getGameEvents('g1')).toEqual([event()]);
+  });
+
+  it('brings back a game that was deleted on the device', async () => {
+    await importAll(file(), 'replace');
+    const backup = await exportAll();
+    await deleteGame('g1');
+    expect(await importAll(backup, 'merge')).toEqual({ games: 1, events: 1 });
+    expect(await getGame('g1')).toEqual(game());
+    expect(await getGameEvents('g1')).toEqual([event()]);
   });
 
   it("keeps one player when the file's player has a different id", async () => {
@@ -299,7 +363,10 @@ describe('importAll safety', () => {
     const before = await exportAll();
     const lastChange = await getLastChangeAt();
 
-    const bulkAdd = vi.spyOn(db.events, 'bulkAdd').mockRejectedValue(new Error('Disk full'));
+    // Each mode fails on its last write, after clearing or replacing other data.
+    const diskFull = new Error('Disk full');
+    const bulkAdd = vi.spyOn(db.events, 'bulkAdd').mockRejectedValue(diskFull);
+    const bulkPut = vi.spyOn(db.events, 'bulkPut').mockRejectedValue(diskFull);
     await expect(importAll(file(), 'replace')).rejects.toThrow('Disk full');
     await expect(
       importAll(
@@ -307,9 +374,11 @@ describe('importAll safety', () => {
         'merge',
       ),
     ).rejects.toThrow('Disk full');
-    expect(bulkAdd).toHaveBeenCalledTimes(2);
+    expect(bulkAdd).toHaveBeenCalledOnce();
+    expect(bulkPut).toHaveBeenCalledOnce();
 
     bulkAdd.mockRestore();
+    bulkPut.mockRestore();
     expect(withoutExportedAt(await exportAll())).toEqual(withoutExportedAt(before));
     expect(await getLastChangeAt()).toBe(lastChange);
   });
@@ -321,6 +390,40 @@ describe('importAll safety', () => {
     await expect(importAll(bad, 'replace')).rejects.toThrow(ExportFileError);
     await expect(importAll(file(), 'overwrite' as 'merge')).rejects.toThrow(TypeError);
     expect(withoutExportedAt(await exportAll())).toEqual(withoutExportedAt(before));
+  });
+});
+
+describe('imports and lastChangeAt', () => {
+  it('moves only when an import changes something', async () => {
+    await seedWithRepo();
+    const backup = await exportAll();
+    const start = await getLastChangeAt();
+
+    // Merging or restoring exactly what the device holds changes nothing.
+    expect(await importAll(backup, 'merge')).toEqual({ games: 0, events: 0 });
+    expect(await importAll(backup, 'replace')).toEqual({ games: 2, events: 5 });
+    await importAll(parseExportFile(viaJson(backup)), 'replace');
+    expect(await getLastChangeAt()).toBe(start);
+
+    // Bringing in a game does.
+    const ava = await getPlayer();
+    await importAll(
+      file({
+        players: backup.players,
+        games: [game({ id: 'new', playerId: ava?.id ?? '' })],
+        events: [event({ gameId: 'new' })],
+      }),
+      'merge',
+    );
+    expect(await getLastChangeAt()).toBeGreaterThan(start ?? 0);
+  });
+
+  it('does not move when clearing a device that is already empty', async () => {
+    await clearAllData();
+    expect(await getLastChangeAt()).toBeUndefined();
+    await db.meta.put({ key: 'backup', value: { enabled: true } });
+    await clearAllData();
+    expect(await getLastChangeAt()).toBeUndefined();
   });
 });
 
@@ -366,10 +469,20 @@ describe('parseExportFile', () => {
     expect(error.name).toBe('ExportFileError');
   });
 
-  it('rejects files from a newer version', () => {
-    expect(rejection({ ...file(), schemaVersion: 2 }).message).toBe(
-      'This backup is from a newer version of Hoop Stats. Update the app, then try again.',
-    );
+  it('asks to update the app for a file from a newer version, whatever it holds', () => {
+    const UPDATE =
+      'This backup is from a newer version of Hoop Stats. Update the app, then try again.';
+    expect(rejection({ ...file(), schemaVersion: 2 }).message).toBe(UPDATE);
+
+    // What a newer version might add: a new field, a new stat type, a looser limit.
+    const newer = {
+      ...file({ events: [event({ type: 'dunk' as 'ast' })] }),
+      games: [{ ...game({ opponent: 'O'.repeat(500) }), venue: 'Main gym' }],
+      schemaVersion: 2,
+      teams: [{ id: 't1' }],
+    };
+    expect(rejection(newer).message).toBe(UPDATE);
+    expect(rejection(JSON.stringify(newer)).message).toBe(UPDATE);
   });
 
   it.each([

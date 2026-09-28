@@ -1,0 +1,42 @@
+# Fly.io config for the Hoop Stats backup server (see README.md for the one-time setup).
+# Deployed by .github/workflows/deploy-server.yml with `flyctl deploy --remote-only --ha=false`.
+
+app = "richshaw-hoop-stats"
+# Must match the region of the hoop_data volume. Change both if you pick another region.
+primary_region = "ord"
+
+# The server finishes in-flight uploads on SIGINT/SIGTERM; give it time before a hard kill.
+kill_signal = "SIGTERM"
+kill_timeout = "15s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  DATA_DIR = "/data"
+  ALLOWED_ORIGINS = "https://richshaw.github.io"
+
+# One small volume holds all backups. A volume lives on one host, so this app runs exactly one
+# machine (hence --ha=false); Fly takes daily snapshots of the volume.
+[mounts]
+  source = "hoop_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

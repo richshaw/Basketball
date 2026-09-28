@@ -60,6 +60,25 @@ const screens: Screen[] = [
       await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
     },
   },
+  {
+    name: 'dev-ui-toast-top',
+    path: paths.devUi,
+    viewportOnly: true,
+    interact: async (page) => {
+      await page.getByRole('button', { name: 'Top toast' }).tap();
+      await expect(page.getByRole('status', { name: 'Notifications' })).toHaveText('Saved');
+    },
+  },
+  {
+    name: 'dev-ui-sheet-toast',
+    path: paths.devUi,
+    viewportOnly: true,
+    interact: async (page) => {
+      await openDialog('Pick opponent', 'dialog', 'Pick opponent')(page);
+      await page.getByRole('button', { name: 'Copy list' }).tap();
+      await expect(page.getByRole('status', { name: 'Notifications' })).toContainText('Copied');
+    },
+  },
 ];
 
 const outputDir = process.env.SCREENSHOT_DIR || 'screenshots';

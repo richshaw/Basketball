@@ -79,10 +79,17 @@ describe('StatTable', () => {
     expect(totals).toHaveTextContent('Total104-74');
   });
 
-  it('highlights one row', () => {
+  it('highlights one row, and says so to screen readers', () => {
     renderTable({ highlightedRow: 1 });
     expect(screen.getByRole('row', { name: /Q2/ })).toHaveClass('highlighted');
+    expect(screen.getByRole('rowheader', { name: 'Q2, current' })).toBeInTheDocument();
     expect(screen.getByRole('row', { name: /Q1/ })).not.toHaveClass('highlighted');
+    expect(screen.getByRole('rowheader', { name: 'Q1' })).toBeInTheDocument();
+  });
+
+  it('says what the highlight means when told', () => {
+    renderTable({ highlightedRow: 0, highlightLabel: 'season high' });
+    expect(screen.getByRole('rowheader', { name: 'Q1, season high' })).toBeInTheDocument();
   });
 
   it('is not focusable while everything fits', () => {

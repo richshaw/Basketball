@@ -52,9 +52,17 @@
   --tap-target: 44px; /* minimum size of anything tappable */
   --tap-target-lg: 56px;
   --icon-size-nav: 26px; /* tab bar and back-button icons */
+  --icon-size-sm: 18px; /* list-row chevrons */
+  --icon-size-xs: 16px; /* small glyphs, e.g. the sheet's close X */
+  --icon-circle-size: 30px; /* round backdrop of a small icon button (sheet close) */
+  --list-icon-size: 28px; /* emoji or icon at the start of a list row */
   --illustration-size: 80px; /* the round icon of an empty state */
+  --stat-tile-min-width: 76px; /* fits four stat tiles across a 390px iPhone */
+  --focus-ring-width: 3px;
+  --border-width-emphasis: 2px; /* accent outline of a card that must stand out (a live game) */
   --header-bar-height: 44px;
   --tab-bar-height: 50px;
+  --update-banner-height: 64px; /* the app-update banner above the tab bar */
   --content-max-width: 640px;
 
   /* Safe areas: the home indicator (bottom) and, in landscape, the sensor housing (sides). */
@@ -64,15 +72,19 @@
   --safe-left: env(safe-area-inset-left, 0px);
 
   /*
-   * How far floating UI (toasts) stays above the bottom edge: the home indicator,
-   * plus the tab bar while it's on screen (TabBar.module.css raises it).
+   * How far floating UI (toasts) stays above the bottom edge: the home indicator, plus
+   * the tab bar and the update banner while they're on screen (their CSS sets the
+   * raises). A screen with its own bottom controls can set --overlay-inset-bottom.
    */
-  --overlay-inset-bottom: var(--safe-bottom);
+  --overlay-inset-bottom: calc(
+    var(--safe-bottom) + var(--overlay-raise-tab-bar, 0px) + var(--overlay-raise-banner, 0px)
+  );
 
-  /* Layers (sheets and dialogs use the browser's top layer, above all of these) */
+  /* Layers (open sheets and dialogs use the browser's top layer, above all of these) */
   --z-header: 10;
   --z-tab-bar: 20;
   --z-banner: 30;
+  --z-sheet-exit: 35; /* a sheet animating away after it has closed */
   --z-toast: 40;
 
   /* Motion */

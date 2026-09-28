@@ -14,7 +14,7 @@
 
 /* While the tab bar is on screen, floating UI (toasts) stays above it. */
 :global(:root):has(.tabBar) {
-  --overlay-inset-bottom: calc(var(--tab-bar-height) + var(--safe-bottom));
+  --overlay-raise-tab-bar: var(--tab-bar-height);
 }
 
 .tab {

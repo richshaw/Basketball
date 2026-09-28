@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formatAvg, formatPct } from '@/lib/format';
 import {
   addStatLines,
   computeStatLine,
@@ -182,6 +183,18 @@ describe('percentage', () => {
   it('is null with no attempts', () => {
     expect(percentage(0, 0)).toBeNull();
   });
+
+  it('keeps a true .5 exact, so it rounds up', () => {
+    // (23 / 40) * 100 is 57.49999999999999 in floating point, which would show 57%.
+    for (const [made, attempted] of [
+      [23, 40],
+      [46, 80],
+      [115, 200],
+    ] as const) {
+      expect(percentage(made, attempted), `${made}/${attempted}`).toBe(57.5);
+      expect(formatPct(percentage(made, attempted)), `${made}/${attempted}`).toBe('58%');
+    }
+  });
 });
 
 describe('periods', () => {
@@ -341,6 +354,28 @@ describe('summarizeGames', () => {
     expect(summary.totals).toMatchObject({ pts: 25, fgm: 10, fga: 19, ast: 3, reb: 7 });
     expect(summary.averages).toMatchObject({ pts: 12.5, fgm: 5, fga: 9.5, ast: 1.5, reb: 3.5 });
     expect(Object.keys(summary.averages)).toEqual([...STAT_LINE_KEYS]);
+  });
+
+  it('rounds averages half up to one decimal, from the totals', () => {
+    // Each total over 20 games lands on a true .x5, which floating point would round down.
+    const cases = [
+      [17, 0.9, '0.9'],
+      [19, 1, '1.0'],
+      [7, 0.4, '0.4'],
+      [3, 0.2, '0.2'],
+      [41, 2.1, '2.1'],
+      [29, 1.5, '1.5'],
+    ] as const;
+    for (const [total, average, shown] of cases) {
+      const entries = Array.from({ length: 20 }, (_, index) => ({
+        game: game({ id: `g${index}` }),
+        line: line({ ast: index < total % 20 ? Math.ceil(total / 20) : Math.floor(total / 20) }),
+      }));
+      const summary = summarizeGames(entries);
+      expect(summary.totals.ast, `${total}/20`).toBe(total);
+      expect(summary.averages.ast, `${total}/20`).toBe(average);
+      expect(formatAvg(summary.averages.ast), `${total}/20`).toBe(shown);
+    }
   });
 
   it('computes shooting from totals, not an average of percentages', () => {

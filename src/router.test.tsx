@@ -23,8 +23,14 @@ describe('app routes', () => {
     'renders the $title screen at $path',
     async ({ path, title }) => {
       renderRoute(path);
-      // Screens that load a game from the database show their heading once it has loaded.
-      expect(await screen.findByRole('heading', { level: 1, name: title })).toBeInTheDocument();
+      // findBy: screens that load a game from the database show their heading once it
+      // has loaded, and some (the UI kit gallery) load on demand, slowly on a cold start.
+      const heading = await screen.findByRole(
+        'heading',
+        { level: 1, name: title },
+        { timeout: 5000 },
+      );
+      expect(heading).toBeInTheDocument();
     },
   );
 

@@ -82,3 +82,19 @@ test('updating never reloads a live game open in another window', async ({ conte
   await updateBanner(game).getByRole('button', { name: 'Update' }).tap();
   await expect(runningBuild(game)).toHaveAttribute('content', 'b', { timeout: 15_000 });
 });
+
+test('toasts rise above the update banner while it shows', async ({ page }) => {
+  await page.goto(server.url);
+  await waitForServiceWorkerControl(page);
+  server.deploy('b');
+  await checkForUpdate(page);
+  const banner = updateBanner(page);
+  await expect(banner.getByRole('button', { name: 'Update' })).toBeVisible({ timeout: 15_000 });
+
+  // Where a toast's bottom edge would sit: its strip is there, empty, until one shows.
+  const toastBottom = await page
+    .getByRole('status', { name: 'Notifications' })
+    .evaluate((strip) => strip.getBoundingClientRect().bottom);
+  const bannerTop = (await banner.boundingBox())?.y ?? 0;
+  expect(toastBottom).toBeLessThanOrEqual(bannerTop);
+});
