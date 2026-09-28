@@ -206,9 +206,13 @@ export function statLinesByPeriod(
   return lines;
 }
 
-/** Shooting percentage from 0 to 100 (not a fraction), or null with no attempts. */
+/**
+ * Shooting percentage from 0 to 100 (not a fraction), or null with no attempts.
+ * Multiplies before dividing so a true .5 stays exact: 23/40 is 57.5 (shown as 58%),
+ * where (23 / 40) * 100 would be 57.49999… (shown as 57%).
+ */
 export function percentage(made: number, attempted: number): number | null {
-  return attempted > 0 ? (made / attempted) * 100 : null;
+  return attempted > 0 ? (made * 100) / attempted : null;
 }
 
 export type GameResult = 'W' | 'L' | 'T';
@@ -265,7 +269,11 @@ export interface GamesSummary {
   /** Only games with a result count (final, with both scores). */
   record: { wins: number; losses: number; ties: number };
   totals: StatLine;
-  /** Per-game averages of every field (unrounded). All 0 when no games were passed. */
+  /**
+   * Per-game averages of every field, rounded half up to one decimal from the integer
+   * totals (17 in 20 games is 0.9, not the 0.8 that 0.85 in floating point gives).
+   * All 0 when no games were passed.
+   */
   averages: StatLine;
   /** From the totals (made / attempted over all games), 0-100 or null. */
   shooting: {
@@ -324,7 +332,10 @@ export function summarizeGames(entries: readonly GameStatLine[]): GamesSummary {
 
   const averages = emptyStatLine();
   if (gamesPlayed > 0) {
-    for (const key of STAT_LINE_KEYS) averages[key] = totals[key] / gamesPlayed;
+    // total * 10 / games is exact at a true .x5, so Math.round rounds it up as it should.
+    for (const key of STAT_LINE_KEYS) {
+      averages[key] = Math.round((totals[key] * 10) / gamesPlayed) / 10;
+    }
   }
 
   return {

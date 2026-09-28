@@ -56,9 +56,14 @@ export function formatPct(value: number | null | undefined): string {
     : `${Math.round(value)}%`;
 }
 
-/** A per-game average with one decimal: '12.3', '0.0'. */
+/**
+ * A per-game average with one decimal, rounded half up: '12.3', '0.9', '0.0'.
+ * `summarizeGames` averages are already rounded exactly. For other values, rounding
+ * the tenths first stops binary noise from rounding a true .x5 down (0.85 is stored
+ * as 0.8499…, which `toFixed(1)` alone shows as '0.8').
+ */
 export function formatAvg(value: number): string {
-  return Number.isFinite(value) ? value.toFixed(1) : '–';
+  return Number.isFinite(value) ? (Math.round(value * 10) / 10).toFixed(1) : '–';
 }
 
 /** Makes and attempts as '5/9'. */

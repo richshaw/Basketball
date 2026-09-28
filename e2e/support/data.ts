@@ -11,6 +11,11 @@ export interface DemoOptions {
   today?: string;
   /** Also add a live game today, in the third quarter. */
   liveGame?: boolean;
+  /**
+   * Replace data the test itself created, too. Seeding refuses to touch anything but
+   * earlier demo data without it (a fresh Playwright context starts empty).
+   */
+  force?: boolean;
 }
 
 /** The parts of an export file that tests look at (see ExportFile in src/data/transfer.ts). */

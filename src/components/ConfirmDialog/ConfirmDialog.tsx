@@ -19,6 +19,8 @@ export interface ConfirmDialogProps {
   onConfirm: () => void;
   /** Tapped Cancel, tapped the dimmed page or pressed Escape. Set `open` to false in response. */
   onCancel: () => void;
+  /** Called once the dialog has finished closing (see Sheet's `onClosed`). */
+  onClosed?: () => void;
 }
 
 /**
@@ -35,6 +37,7 @@ export function ConfirmDialog({
   destructive = false,
   onConfirm,
   onCancel,
+  onClosed,
 }: ConfirmDialogProps) {
   const confirmRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -43,6 +46,7 @@ export function ConfirmDialog({
     <Sheet
       open={open}
       onClose={onCancel}
+      onClosed={onClosed}
       title={title}
       description={message}
       role="alertdialog"

@@ -36,6 +36,11 @@ export interface StatTableProps<K extends string> {
   totalRow?: StatTableRow<K>;
   /** Index of a row in `rows` to highlight, e.g. the current quarter. */
   highlightedRow?: number;
+  /**
+   * What the highlight means, read by screen readers after the row's label, e.g.
+   * "season high". Defaults to "current".
+   */
+  highlightLabel?: string;
   /** Stable row keys when rows can be added, removed or reordered. Defaults to the index. */
   rowKey?: (row: StatTableRow<K>, index: number) => Key;
   className?: string;
@@ -88,6 +93,7 @@ export function StatTable<K extends string>({
   rows,
   totalRow,
   highlightedRow,
+  highlightLabel = 'current',
   rowKey,
   className,
 }: StatTableProps<K>) {
@@ -102,11 +108,13 @@ export function StatTable<K extends string>({
       alignClass[column.align ?? (index === 0 ? 'start' : 'center')],
     );
 
-  const renderRow = (row: StatTableRow<K>) =>
+  const renderRow = (row: StatTableRow<K>, highlighted = false) =>
     columns.map((column, index) =>
       index === 0 ? (
         <th key={column.key} scope="row" className={cellClassName(column, index)}>
           {row[column.key]}
+          {/* The highlight is only a background color, so say what it means too. */}
+          {highlighted ? <span className="visually-hidden">, {highlightLabel}</span> : null}
         </th>
       ) : (
         <td key={column.key} className={cellClassName(column, index)}>
@@ -161,7 +169,7 @@ export function StatTable<K extends string>({
               key={rowKey ? rowKey(row, index) : index}
               className={cx(styles.bodyRow, index === highlightedRow && styles.highlighted)}
             >
-              {renderRow(row)}
+              {renderRow(row, index === highlightedRow)}
             </tr>
           ))}
         </tbody>
