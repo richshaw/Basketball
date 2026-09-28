@@ -1,12 +1,18 @@
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
-import { appUrl, emulateIPhoneSafeArea, screenHeading } from './support/app';
+import {
+  appUrl,
+  emulateIPhoneSafeArea,
+  IPHONE_SAFE_BOTTOM,
+  IPHONE_VIEWPORT,
+  screenHeading,
+} from './support/app';
 
 // Real-browser checks for the shared components, using the /dev/ui gallery. Unit tests
 // cover the logic; these cover what jsdom can't: <dialog>, focus, layout and CSS.
 
-const VIEWPORT = { width: 390, height: 844 };
-const SAFE_BOTTOM = 34; // emulateIPhoneSafeArea
+const VIEWPORT = IPHONE_VIEWPORT;
+const SAFE_BOTTOM = IPHONE_SAFE_BOTTOM;
 const TAB_BAR_HEIGHT = 50; // --tab-bar-height
 const TOAST_GAP = 12; // --space-3
 
