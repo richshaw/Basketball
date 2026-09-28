@@ -18,13 +18,7 @@ import { cx } from '@/lib/cx';
 import { formatAvg, formatGameDate } from '@/lib/format';
 import { paths } from '@/routes';
 import { barLayout, columnPath, niceAxis, scaleY, slotIndexAt } from './chartScale';
-import {
-  formatDateRange,
-  formatGameCount,
-  formatResult,
-  formatShortDate,
-  opponentLabel,
-} from './gameLabels';
+import { formatDateRange, formatGameCount, formatResult, opponentLabel } from './gameLabels';
 import { readSessionValue, writeSessionValue } from './seasonFilter';
 import {
   describePoint,
@@ -105,6 +99,8 @@ export interface TrendChartProps {
   entries: readonly GameStatLine[];
   /** Per-game averages over the same games (from summarizeGames). */
   averages: StatLine;
+  /** Show the dates' years (the games span more than one year). */
+  withYear: boolean;
 }
 
 /**
@@ -112,7 +108,7 @@ export interface TrendChartProps {
  * left, with the average as a line across them. Tap or drag across the bars to read
  * one game; the arrow keys do the same. Every value is also in the game log.
  */
-export function TrendChart({ entries, averages }: TrendChartProps) {
+export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
   const [metric, setMetric] = useState<TrendMetric>(readRememberedMetric);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { ref: plotRef, width } = useElementWidth<HTMLDivElement>(FALLBACK_WIDTH);
@@ -137,10 +133,9 @@ export function TrendChart({ entries, averages }: TrendChartProps) {
   const selected = points[selectedIndex];
   const first = points[0];
   const last = points.at(-1);
-  // The axis dates need their years when the games span New Year (e.g. all seasons).
-  const withYear = Boolean(
-    first && last && first.game.date.slice(0, 4) !== last.game.date.slice(0, 4),
-  );
+  /** A short date for the axis: 'Aug 1', or 'Aug 1, 2025' when the games span years. */
+  const axisDate = (point: TrendPoint) =>
+    formatGameDate(point.game.date, { withYear, weekday: false });
 
   // Scales
   const plotWidth = Math.max(width - GUTTER, 0);
@@ -270,7 +265,7 @@ export function TrendChart({ entries, averages }: TrendChartProps) {
       <div className={styles.readout}>
         <div className={styles.readoutText}>
           <p className={styles.readoutLabel}>
-            {selected ? formatGameDate(selected.game.date) : 'Average'}
+            {selected ? formatGameDate(selected.game.date, { withYear }) : 'Average'}
           </p>
           <p className={styles.readoutFigure}>
             <span className={styles.readoutValue}>
@@ -284,7 +279,7 @@ export function TrendChart({ entries, averages }: TrendChartProps) {
             {selected
               ? [opponentLabel(selected.game), result].filter(Boolean).join(' · ')
               : first && last
-                ? `${formatGameCount(points.length)} · ${formatDateRange(first.game.date, last.game.date)}`
+                ? `${formatGameCount(points.length)} · ${formatDateRange(first.game.date, last.game.date, { withYear })}`
                 : formatGameCount(0)}
           </p>
         </div>
@@ -292,14 +287,14 @@ export function TrendChart({ entries, averages }: TrendChartProps) {
           <Link
             to={paths.gameReport(selected.game.id)}
             className={styles.readoutLink}
-            aria-label={`Game report, ${opponentLabel(selected.game)}, ${formatShortDate(selected.game.date)}`}
+            aria-label={`Game report, ${opponentLabel(selected.game)}, ${formatGameDate(selected.game.date, { withYear })}`}
           >
             Game report
             <ChevronRightIcon className={styles.readoutChevron} />
           </Link>
         ) : null}
         <span id={summaryId} className="visually-hidden">
-          {describeTrend(points, metric, averages)}
+          {describeTrend(points, metric, averages, { withYear })}
         </span>
       </div>
 
@@ -406,15 +401,15 @@ export function TrendChart({ entries, averages }: TrendChartProps) {
                 y={HEIGHT - 6}
                 textAnchor="middle"
               >
-                {formatShortDate(first.game.date, { withYear })}
+                {axisDate(first)}
               </text>
             ) : (
               <>
                 <text className={styles.dateLabel} x={0} y={HEIGHT - 6}>
-                  {formatShortDate(first.game.date, { withYear })}
+                  {axisDate(first)}
                 </text>
                 <text className={styles.dateLabel} x={plotWidth} y={HEIGHT - 6} textAnchor="end">
-                  {formatShortDate(last.game.date, { withYear })}
+                  {axisDate(last)}
                 </text>
               </>
             )
@@ -446,7 +441,7 @@ export function TrendChart({ entries, averages }: TrendChartProps) {
               data-index={index}
               tabIndex={index === tabStop ? 0 : -1}
               aria-pressed={index === selectedIndex}
-              aria-label={describePoint(point, metric)}
+              aria-label={describePoint(point, metric, { withYear })}
               onFocus={(event) => handleFocus(index, event)}
               onClick={(event) => {
                 // Enter or Space (detail 0) toggles; pointer taps are handled on press.

@@ -5,32 +5,39 @@ import {
   formatRecord,
   formatResult,
   formatScore,
-  formatShortDate,
   opponentLabel,
+  spansYears,
 } from './gameLabels';
 
-describe('formatShortDate', () => {
-  it('shows the month and day of a local date', () => {
-    expect(formatShortDate('2026-09-12')).toBe('Sep 12');
-    expect(formatShortDate('2026-01-01', { withYear: true })).toBe('Jan 1, 2026');
+describe('spansYears', () => {
+  it('is true once the games fall in more than one calendar year', () => {
+    expect(spansYears([{ date: '2026-09-24' }, { date: '2026-01-02' }])).toBe(false);
+    expect(spansYears([{ date: '2026-01-02' }, { date: '2025-12-30' }])).toBe(true);
+    expect(
+      spansYears([{ date: '2026-09-24' }, { date: '2026-08-01' }, { date: '2023-09-04' }]),
+    ).toBe(true);
   });
 
-  it('returns anything that is not a date unchanged', () => {
-    expect(formatShortDate('someday')).toBe('someday');
+  it('is false for one game or none', () => {
+    expect(spansYears([{ date: '2026-09-24' }])).toBe(false);
+    expect(spansYears([])).toBe(false);
   });
 });
 
 describe('formatDateRange', () => {
-  it('joins two dates in the same year', () => {
+  it('joins the first and last day, without weekdays', () => {
     expect(formatDateRange('2026-08-01', '2026-09-24')).toBe('Aug 1 – Sep 24');
   });
 
-  it('adds the years when the range crosses New Year', () => {
-    expect(formatDateRange('2025-12-12', '2026-02-03')).toBe('Dec 12, 2025 – Feb 3, 2026');
+  it('adds the years when asked', () => {
+    expect(formatDateRange('2025-12-12', '2026-02-03', { withYear: true })).toBe(
+      'Dec 12, 2025 – Feb 3, 2026',
+    );
   });
 
   it('shows one date for a single day', () => {
     expect(formatDateRange('2026-09-24', '2026-09-24')).toBe('Sep 24');
+    expect(formatDateRange('2026-09-24', '2026-09-24', { withYear: true })).toBe('Sep 24, 2026');
   });
 });
 

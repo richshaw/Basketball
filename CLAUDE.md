@@ -138,7 +138,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 ### Formatting (`lib/format.ts`)
 
 - `todayLocalISO()`.
-- `formatGameDate('2026-09-27')` gives 'Sun, Sep 27' (`{ withYear: true }` adds ', 2026').
+- `formatGameDate('2026-09-27')` gives 'Sun, Sep 27' (`{ withYear: true }` adds ', 2026'; `{ weekday: false }` gives 'Sep 27'). Use it for every game date; it's cheap to call in lists.
 - `formatPct(45.4)` gives '45%' (null gives '–').
 - `formatAvg(12.34)` gives '12.3' (rounded half up, so `formatAvg(17 / 20)` is '0.9').
 - `formatMadeAttempted(5, 9)` gives '5/9'.

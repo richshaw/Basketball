@@ -7,9 +7,9 @@ import {
 import { gameResult, type GameStatLine } from '@/data/stats';
 import type { Game } from '@/data/types';
 import { cx } from '@/lib/cx';
-import { formatMadeAttempted } from '@/lib/format';
+import { formatGameDate, formatMadeAttempted } from '@/lib/format';
 import { paths } from '@/routes';
-import { formatScore, formatShortDate, opponentLabel } from './gameLabels';
+import { formatScore, opponentLabel } from './gameLabels';
 import styles from './SeasonStatsScreen.module.css';
 
 type LogKey =
@@ -46,16 +46,18 @@ function Result({ game }: { game: Game }) {
 export interface GameLogProps {
   /** Games to list, newest first, each with its stat line. */
   entries: readonly GameStatLine[];
+  /** Show the dates' years (the games span more than one year). */
+  withYear: boolean;
 }
 
 /** Every game's box score line, newest first. Tapping a row opens that game's report. */
-export function GameLog({ entries }: GameLogProps) {
+export function GameLog({ entries, withYear }: GameLogProps) {
   const rows: StatTableRow<LogKey>[] = entries.map(({ game, line }) => ({
     game: (
       <Link to={paths.gameReport(game.id)} className={styles.gameLink}>
         <span className={styles.gameOpponent}>{opponentLabel(game)}</span>
         <span className="visually-hidden">, </span>
-        <span className={styles.gameDate}>{formatShortDate(game.date)}</span>
+        <span className={styles.gameDate}>{formatGameDate(game.date, { withYear })}</span>
       </Link>
     ),
     result: <Result game={game} />,

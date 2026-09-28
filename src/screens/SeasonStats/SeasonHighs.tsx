@@ -2,8 +2,9 @@ import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { HIGH_STATS, type GamesSummary, type HighStat } from '@/data/stats';
 import type { Game } from '@/data/types';
+import { formatGameDate } from '@/lib/format';
 import { paths } from '@/routes';
-import { formatShortDate, opponentLabel } from './gameLabels';
+import { opponentLabel } from './gameLabels';
 import styles from './SeasonStatsScreen.module.css';
 
 const HIGH_LABELS: Record<HighStat, string> = {
@@ -21,10 +22,12 @@ export interface SeasonHighsProps {
   highs: GamesSummary['highs'];
   /** The games the highs came from, by id. */
   games: ReadonlyMap<string, Game>;
+  /** Show the dates' years (the games span more than one year). */
+  withYear: boolean;
 }
 
 /** The best single game for each stat; each row opens that game's report. */
-export function SeasonHighs({ title, highs, games }: SeasonHighsProps) {
+export function SeasonHighs({ title, highs, games, withYear }: SeasonHighsProps) {
   return (
     <GroupedList header={title}>
       {HIGH_STATS.map((stat) => {
@@ -37,14 +40,14 @@ export function SeasonHighs({ title, highs, games }: SeasonHighsProps) {
         return (
           <ListRow
             key={stat}
-            // Screen readers hear "Points: 18, vs Lincoln · Sep 12".
+            // Screen readers hear "Points: 18, vs Lincoln · Sat, Sep 12".
             title={
               <>
                 {label}
                 <span className="visually-hidden">: {high.value},</span>
               </>
             }
-            subtitle={`${opponentLabel(game)} · ${formatShortDate(game.date)}`}
+            subtitle={`${opponentLabel(game)} · ${formatGameDate(game.date, { withYear })}`}
             value={
               <span className={styles.highValue} aria-hidden="true">
                 {high.value}

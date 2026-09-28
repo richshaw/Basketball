@@ -1,24 +1,24 @@
 /** Compact text for games on the Stats screen. Pure: no React, no DOM. */
 import { gameResult, type GamesSummary } from '@/data/stats';
 import type { Game } from '@/data/types';
-import { parseLocalDate } from '@/lib/format';
+import { formatGameDate } from '@/lib/format';
 
-/** 'Sep 12' ('Sep 12, 2026' with `withYear`). Anything that isn't a valid date comes back as is. */
-export function formatShortDate(isoDate: string, { withYear = false } = {}): string {
-  const date = parseLocalDate(isoDate);
-  if (!date) return isoDate;
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    ...(withYear ? { year: 'numeric' } : {}),
-  });
+/**
+ * Whether the games' dates need their years to be told apart: they fall in more than
+ * one calendar year (e.g. all seasons, or a season that runs past New Year).
+ */
+export function spansYears(games: readonly Pick<Game, 'date'>[]): boolean {
+  const year = games[0]?.date.slice(0, 4);
+  return games.some((game) => game.date.slice(0, 4) !== year);
 }
 
-/** 'Sep 12 – Oct 3', with the years when the range crosses New Year. One date for a single day. */
-export function formatDateRange(first: string, last: string): string {
-  if (first === last) return formatShortDate(first);
-  const withYear = first.slice(0, 4) !== last.slice(0, 4);
-  return `${formatShortDate(first, { withYear })} – ${formatShortDate(last, { withYear })}`;
+/**
+ * 'Aug 1 – Sep 24' ('Aug 1, 2025 – Sep 24, 2026' with `withYear`): the first and last
+ * game days, without weekdays. One date for a single day.
+ */
+export function formatDateRange(first: string, last: string, { withYear = false } = {}): string {
+  const day = (date: string) => formatGameDate(date, { withYear, weekday: false });
+  return first === last ? day(first) : `${day(first)} – ${day(last)}`;
 }
 
 /** 'vs Lincoln' for home and neutral games, 'at Lincoln' for away games. */

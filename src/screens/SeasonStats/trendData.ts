@@ -1,8 +1,13 @@
 /** Data for the per-game trend chart: which stats it can show, its points and its text. */
 import type { GameStatLine, StatLine } from '@/data/stats';
 import type { Game } from '@/data/types';
-import { formatAvg } from '@/lib/format';
-import { formatDateRange, formatGameCount, formatShortDate, opponentLabel } from './gameLabels';
+import { formatAvg, formatGameDate } from '@/lib/format';
+import { formatDateRange, formatGameCount, opponentLabel } from './gameLabels';
+
+export interface TrendTextOptions {
+  /** Give every date its year (when the games span more than one year). */
+  withYear?: boolean;
+}
 
 export const TREND_METRICS = ['pts', 'reb', 'ast'] as const;
 export type TrendMetric = (typeof TREND_METRICS)[number];
@@ -34,9 +39,13 @@ export function trendPoints(entries: readonly GameStatLine[], metric: TrendMetri
   return entries.map(({ game, line }) => ({ game, value: line[metric] }));
 }
 
-/** What one bar says to a screen reader: 'Sep 12, vs Lincoln: 18 points'. */
-export function describePoint({ game, value }: TrendPoint, metric: TrendMetric): string {
-  return `${formatShortDate(game.date)}, ${opponentLabel(game)}: ${value} ${TREND_METRIC_INFO[metric].unit(value)}`;
+/** What one bar says to a screen reader: 'Sat, Sep 12, vs Lincoln: 18 points'. */
+export function describePoint(
+  { game, value }: TrendPoint,
+  metric: TrendMetric,
+  { withYear = false }: TrendTextOptions = {},
+): string {
+  return `${formatGameDate(game.date, { withYear })}, ${opponentLabel(game)}: ${value} ${TREND_METRIC_INFO[metric].unit(value)}`;
 }
 
 /** The first game with the highest value (ties go to the earlier game, like season highs). */
@@ -55,12 +64,13 @@ function lowestPoint(points: readonly TrendPoint[]): TrendPoint | undefined {
 
 /**
  * A text summary of the chart, e.g. 'Points in 10 games, Aug 1 – Sep 24. Average 12.4
- * a game. High 18 vs Lincoln on Sep 12. Low 6 at Westview on Aug 22.'
+ * a game. High 18 vs Lincoln on Sat, Sep 12. Low 6 at Westview on Sat, Aug 22.'
  */
 export function describeTrend(
   points: readonly TrendPoint[],
   metric: TrendMetric,
   averages: Pick<StatLine, TrendMetric>,
+  { withYear = false }: TrendTextOptions = {},
 ): string {
   const first = points[0];
   const last = points.at(-1);
@@ -69,12 +79,12 @@ export function describeTrend(
   if (!first || !last || !high || !low) return `${TREND_METRIC_INFO[metric].label}: no games yet.`;
 
   const sentences = [
-    `${TREND_METRIC_INFO[metric].label} in ${formatGameCount(points.length)}, ${formatDateRange(first.game.date, last.game.date)}.`,
+    `${TREND_METRIC_INFO[metric].label} in ${formatGameCount(points.length)}, ${formatDateRange(first.game.date, last.game.date, { withYear })}.`,
     `Average ${formatAvg(averages[metric])} a game.`,
   ];
   if (points.length > 1) {
     const at = (point: TrendPoint) =>
-      `${point.value} ${opponentLabel(point.game)} on ${formatShortDate(point.game.date)}`;
+      `${point.value} ${opponentLabel(point.game)} on ${formatGameDate(point.game.date, { withYear })}`;
     sentences.push(`High ${at(high)}.`, `Low ${at(low)}.`);
   }
   return sentences.join(' ');

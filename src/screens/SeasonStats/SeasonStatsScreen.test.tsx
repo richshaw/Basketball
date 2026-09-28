@@ -11,10 +11,10 @@ import {
 } from '@/data/stats';
 import { importAll, type ExportFile } from '@/data/transfer';
 import type { Game, StatType } from '@/data/types';
-import { formatAvg, formatMadeAttempted, formatPct } from '@/lib/format';
+import { formatAvg, formatGameDate, formatMadeAttempted, formatPct } from '@/lib/format';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
-import { formatShortDate, opponentLabel } from './gameLabels';
+import { opponentLabel } from './gameLabels';
 import { clearSessionValues } from './seasonFilter';
 import { buildSeasonRecap } from './seasonRecap';
 
@@ -149,7 +149,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
           name: new RegExp(`^${labels[stat]}: ${high.value},`),
         });
         expect(link).toHaveAttribute('href', paths.gameReport(game.id));
-        expect(link).toHaveTextContent(`${opponentLabel(game)} · ${formatShortDate(game.date)}`);
+        expect(link).toHaveTextContent(`${opponentLabel(game)} · ${formatGameDate(game.date)}`);
       }
 
       await user.click(within(highs).getByRole('link', { name: /^Points:/ }));
@@ -241,7 +241,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       const [first] = rows;
       if (!first || !line) throw new Error('Missing the first row');
       expect(within(first).getByRole('rowheader')).toHaveTextContent(
-        `${opponentLabel(newest)}, ${formatShortDate(newest.date)}`,
+        `${opponentLabel(newest)}, ${formatGameDate(newest.date)}`,
       );
       expect(
         within(first)
@@ -279,7 +279,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       if (!oldest || !oldestLine) throw new Error('Missing the oldest demo game');
       // Oldest on the left.
       expect(bars[0]).toHaveAccessibleName(
-        `${formatShortDate(oldest.date)}, ${opponentLabel(oldest)}: ${oldestLine.line.pts} points`,
+        `${formatGameDate(oldest.date)}, ${opponentLabel(oldest)}: ${oldestLine.line.pts} points`,
       );
       expect(screen.getByText('points per game')).toBeInTheDocument();
       expect(
@@ -544,6 +544,65 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       const axisText = [...container.querySelectorAll('svg text')].map((text) => text.textContent);
       expect(axisText).toEqual(expect.arrayContaining(['Dec 12, 2025', 'Jan 10, 2026']));
       expect(screen.getByText('2 games · Dec 12, 2025 – Jan 10, 2026')).toBeInTheDocument();
+    });
+
+    it('gives every date its year once the games shown span more than one year', async () => {
+      // A year apart, against the same team, on the same weekday: only the year tells them apart.
+      await addFinalGame(
+        { opponent: 'Lincoln', date: '2025-09-13', season: 'Fall 2025' },
+        ['fg2_made'],
+        [30, 20],
+      );
+      await addFinalGame(
+        { opponent: 'Lincoln', date: '2026-09-12', season: 'Fall 2026' },
+        ['fg3_made'],
+        [30, 20],
+      );
+      const { user } = renderRoute(paths.stats);
+      await waitForStats();
+      const logHeaders = () =>
+        within(screen.getByRole('table', { name: 'Game log' }))
+          .getAllByRole('rowheader')
+          .map((header) => header.textContent);
+      const pointsHigh = (list: string) =>
+        within(screen.getByRole('list', { name: list })).getByRole('link', {
+          name: /^Points: 3,/,
+        });
+
+      // One season in one year: no years.
+      expect(logHeaders()).toEqual(['vs Lincoln, Sat, Sep 12']);
+      expect(
+        within(pointsHigh('Season highs')).getByText('vs Lincoln · Sat, Sep 12'),
+      ).toBeVisible();
+
+      await user.click(screen.getByRole('radio', { name: 'All' }));
+      await waitFor(() =>
+        expect(logHeaders()).toEqual([
+          'vs Lincoln, Sat, Sep 12, 2026',
+          'vs Lincoln, Sat, Sep 13, 2025',
+        ]),
+      );
+      expect(
+        within(pointsHigh('Career highs')).getByText('vs Lincoln · Sat, Sep 12, 2026'),
+      ).toBeVisible();
+
+      const chart = screen.getByRole('group', { name: 'Points by game' });
+      const bars = within(chart).getAllByRole('button');
+      expect(bars.map((bar) => bar.getAttribute('aria-label'))).toEqual([
+        'Sat, Sep 13, 2025, vs Lincoln: 2 points',
+        'Sat, Sep 12, 2026, vs Lincoln: 3 points',
+      ]);
+      expect(chart).toHaveAccessibleDescription(
+        'Points in 2 games, Sep 13, 2025 – Sep 12, 2026. Average 2.5 a game. ' +
+          'High 3 vs Lincoln on Sat, Sep 12, 2026. Low 2 vs Lincoln on Sat, Sep 13, 2025.',
+      );
+      expect(screen.getByText('2 games · Sep 13, 2025 – Sep 12, 2026')).toBeInTheDocument();
+
+      await user.click(bars[0] as HTMLElement);
+      expect(screen.getByText('Sat, Sep 13, 2025', { selector: 'p' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('link', { name: 'Game report, vs Lincoln, Sat, Sep 13, 2025' }),
+      ).toBeInTheDocument();
     });
   });
 

@@ -13,7 +13,7 @@ import { formatAvg, formatMadeAttempted, formatPct, formatPlayerName } from '@/l
 import { shareText } from '@/lib/share';
 import { paths } from '@/routes';
 import { GameLog } from './GameLog';
-import { formatGameCount, formatRecord, opponentLabel } from './gameLabels';
+import { formatGameCount, formatRecord, opponentLabel, spansYears } from './gameLabels';
 import { SeasonHighs } from './SeasonHighs';
 import { SeasonPicker } from './SeasonPicker';
 import { ALL_GAMES_LABEL, buildSeasonRecap } from './seasonRecap';
@@ -174,6 +174,8 @@ export function SeasonStatsScreen() {
     () => new Map(entries?.map((entry) => [entry.game.id, entry.game])),
     [entries],
   );
+  // Games from more than one year (e.g. all seasons): every date shows its year.
+  const withYear = useMemo(() => spansYears(entries?.map((entry) => entry.game) ?? []), [entries]);
 
   const chooseSeason = (next: SeasonKey) => {
     setRemembered(next);
@@ -238,11 +240,17 @@ export function SeasonStatsScreen() {
                 title={season ? 'Season highs' : 'Career highs'}
                 highs={summary.highs}
                 games={gamesById}
+                withYear={withYear}
               />
 
               <Section title="Game by game">
                 {/* A new season starts the chart afresh: no game still selected from the last. */}
-                <TrendChart key={key} entries={oldestFirst} averages={summary.averages} />
+                <TrendChart
+                  key={key}
+                  entries={oldestFirst}
+                  averages={summary.averages}
+                  withYear={withYear}
+                />
               </Section>
 
               <Section title="Totals">
@@ -250,7 +258,7 @@ export function SeasonStatsScreen() {
               </Section>
 
               <Section title="Game log">
-                <GameLog entries={entries} />
+                <GameLog entries={entries} withYear={withYear} />
               </Section>
 
               {/* Placeholder: a later PR puts the season ShotMap here. */}
