@@ -44,10 +44,11 @@ export function stopBackupScheduler(): void {
 }
 
 /**
- * Turns cloud backup on with a new backup code, and starts the first upload (watch
- * `useCloudBackupStatus()` for its progress). Resolves to the code to show the parent.
- * If backup is already on, resolves to the existing code. Rejects only if cloud
- * backup isn't available (check isCloudBackupAvailable first) or storage fails.
+ * Turns cloud backup on and starts an upload (watch `useCloudBackupStatus()` for its
+ * progress). Resolves to the backup code to show the parent: the code this phone kept
+ * when backup was turned off, if any (same code, same cloud copy), else a new one. If
+ * backup is already on, the current code. Rejects only if cloud backup isn't
+ * available (check isCloudBackupAvailable first) or storage fails.
  */
 export function enableCloudBackup(): Promise<string> {
   return engine.enable();
@@ -61,8 +62,8 @@ export interface EnableWithCodeOptions {
 /**
  * Turns cloud backup on with an existing code, after restoring from it on this phone
  * (importAll), and starts an upload. The code must have a backup on the server: its
- * size becomes the baseline for the shrink guard, so a phone with much less data
- * can't replace it by accident. Replaces any other code this phone had.
+ * games become the shrink guard's baseline, so a phone without them can't replace it
+ * by accident. Replaces any other code this phone had (on or kept while off).
  */
 export function enableCloudBackupWithCode(
   code: string,
@@ -77,9 +78,11 @@ export interface DisableOptions {
 }
 
 /**
- * Turns cloud backup off: this phone forgets the code and stops uploading. With
- * `deleteCloudCopy`, the server's copies are deleted first; if that fails (no signal,
- * say), backup stays on and the error says why.
+ * Turns cloud backup off: this phone stops uploading but keeps the code, so turning
+ * it on again carries on with the same cloud copy. With `deleteCloudCopy`, the
+ * server's copies are deleted and the phone forgets the code; if the delete fails (no
+ * signal, say), nothing changes and the error says why. Works while backup is off too
+ * (deleting the kept code's copy).
  */
 export function disableCloudBackup(options: DisableOptions = {}): Promise<CloudResult<void>> {
   return engine.disable(options);
@@ -96,8 +99,9 @@ export interface BackUpNowOptions {
 /**
  * Uploads a snapshot right away: also when nothing changed, during a backoff, or while
  * automatic backup waits for the parent (e.g. "Try again" after an error). Resolves
- * once it's done, with the new version or why it failed ('shrink' means the phone
- * has much less data than the last backup: ask, then pass `force: true`).
+ * once it's done, with the new version or why it failed. 'shrink' (games in the last
+ * backup aren't on this phone) and 'other-device' (another phone backed up since this
+ * one did) are questions for the parent: ask, then pass `force: true` to replace it.
  */
 export function backUpNow(options: BackUpNowOptions = {}): Promise<CloudResult<BackupResult>> {
   return engine.backUpNow(options);
@@ -126,7 +130,10 @@ export function listCloudVersions(code: string): Promise<CloudResult<BackupVersi
   return engine.listVersions(code);
 }
 
-/** This phone's backup code ('7K3M-9QXA-…'), or undefined when cloud backup is off. */
+/**
+ * This phone's backup code ('7K3M-9QXA-…'), also while backup is off with the code
+ * kept (turning backup on reuses it); undefined when the phone has no code.
+ */
 export function getBackupCode(): Promise<string | undefined> {
   return engine.getCode();
 }

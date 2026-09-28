@@ -32,6 +32,7 @@ export interface BackupStatus {
   enabled: boolean;
   state: string;
   pendingChanges: boolean;
+  shrink?: { backedUpGames: number; missingGames: number };
 }
 
 type Result = { ok: true; value?: Record<string, unknown> } | { ok: false; error: unknown };
