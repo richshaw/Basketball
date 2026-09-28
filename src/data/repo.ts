@@ -10,6 +10,7 @@
  * Changing an existing record, everywhere: a field that's missing or `undefined`
  * keeps its value, and `null` or '' clears it.
  */
+import { Dexie } from 'dexie';
 import { clampToHalfCourt } from '@/lib/court';
 import { newId } from '@/lib/id';
 import { db, eventsOfGame, META_KEYS, nextTimestamp, touchLastChange } from './db';
@@ -499,4 +500,19 @@ export function updateSettings(patch: SettingsPatch): Promise<Settings> {
 export async function getLastChangeAt(): Promise<number | undefined> {
   const record = await db.meta.get(META_KEYS.lastChangeAt);
   return typeof record?.value === 'number' ? record.value : undefined;
+}
+
+/**
+ * Calls `listener` as soon as a write to the data commits, in this tab or another:
+ * before the hooks have re-read anything. Returns a function that stops it. For code
+ * that keeps its own copy of the data, e.g. a backup file ready to share from a tap.
+ */
+export function subscribeToChanges(listener: () => void): () => void {
+  const onMutated = () => {
+    listener();
+  };
+  Dexie.on.storagemutated.subscribe(onMutated);
+  return () => {
+    Dexie.on.storagemutated.unsubscribe(onMutated);
+  };
 }

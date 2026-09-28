@@ -125,6 +125,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - `getGame(id)`, `listGames()`, `getLiveGame()`, `getGameEvents(gameId)`, `getAllEvents()`, `listSeasons()`: promise versions of the hooks.
 - `getSettings()` / `updateSettings(patch)`: `shotChart` (default true), `defaultPeriodFormat` (default 'quarters') and `lastSeason`.
 - `getLastChangeAt()`: when the data last changed (for the backup; read it before exporting).
+- `subscribeToChanges(listener)`: calls `listener` the moment any write commits (this tab or another), before the hooks re-read; returns a function that stops it. For code that keeps its own copy of the data, like the backup file Settings prepares so the share sheet can open straight from a tap.
 
 ### Stats math (`data/stats.ts`, pure)
 

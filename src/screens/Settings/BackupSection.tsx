@@ -1,8 +1,7 @@
-import { useLiveQuery } from 'dexie-react-hooks';
 import { useRef, useState, type ChangeEvent } from 'react';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { useToast } from '@/components/Toast/toastContext';
-import { exportAll, ExportFileError, NOT_A_BACKUP } from '@/data/transfer';
+import { ExportFileError, NOT_A_BACKUP } from '@/data/transfer';
 import type { Game } from '@/data/types';
 import { ActionRow } from './ActionRow';
 import {
@@ -16,19 +15,27 @@ import {
 import { buildGamesCsv } from './gamesCsv';
 import { RestoreSheet, type RestoreRequest } from './RestoreSheet';
 import { saveFile, type SaveFileResult } from './saveFile';
+import type { BackupSnapshot } from './useBackupSnapshot';
 
 const SAVE_FAILED = "Couldn't save the file. Try again.";
 const UNREADABLE = "This file couldn't be opened. Try choosing it again.";
+
+export interface BackupSectionProps {
+  games: readonly Game[];
+  /** Everything on the phone, read ahead of time (see useBackupSnapshot). */
+  snapshot: BackupSnapshot;
+  /** Whether `snapshot` holds the latest change; saving waits until it does. */
+  fresh: boolean;
+  /** The snapshot if it's up to date at this very moment, for the tap handlers. */
+  currentSnapshot: () => BackupSnapshot | undefined;
+}
 
 /**
  * Backup files: save one (share sheet or download), restore one, and export the
  * games as a spreadsheet.
  */
-export function BackupSection({ games }: { games: readonly Game[] }) {
+export function BackupSection({ games, snapshot, fresh, currentSnapshot }: BackupSectionProps) {
   const toast = useToast();
-  // Everything, kept ready: the share sheet only opens straight from a tap, with no
-  // waiting on the database in between.
-  const snapshot = useLiveQuery(exportAll);
   const [lastSavedAt, setLastSavedAt] = useState(readLastBackupSavedAt);
   const [sharing, setSharing] = useState(false);
   const sharingRef = useRef(false);
@@ -36,8 +43,9 @@ export function BackupSection({ games }: { games: readonly Game[] }) {
   const [restoreRequest, setRestoreRequest] = useState<RestoreRequest | null>(null);
   const [restoreOpen, setRestoreOpen] = useState(false);
 
-  const hasData = Boolean(snapshot && (snapshot.games.length > 0 || snapshot.players.length > 0));
-  const hasFinalGames = games.some((game) => game.status === 'final');
+  const { file: data } = snapshot;
+  const hasData = data.games.length > 0 || data.players.length > 0;
+  const hasFinalGames = data.games.some((game) => game.status === 'final');
 
   /** Opens the share sheet (or downloads) with a file built right now, from the tap. */
   const share = async (file: File): Promise<SaveFileResult> => {
@@ -52,9 +60,13 @@ export function BackupSection({ games }: { games: readonly Game[] }) {
   };
 
   const saveBackup = async () => {
-    if (!snapshot || sharingRef.current) return;
+    // Read at the tap: a write may have landed since this render. Then the data is
+    // being read again and the row is about to turn off, so nothing is saved.
+    const current = currentSnapshot();
+    if (!current || sharingRef.current) return;
     const now = new Date();
-    const result = await share(createBackupFile(snapshot, now));
+    // Stamped with when the data was read (its exportedAt), named for the day it's saved.
+    const result = await share(createBackupFile(current.file, now));
     if (result === 'shared' || result === 'downloaded') {
       rememberBackupSaved(now.getTime());
       setLastSavedAt(now.getTime());
@@ -65,10 +77,10 @@ export function BackupSection({ games }: { games: readonly Game[] }) {
   };
 
   const exportSpreadsheet = async () => {
-    if (!snapshot || sharingRef.current) return;
-    const now = new Date();
-    const csv = buildGamesCsv(snapshot.games, snapshot.events);
-    const result = await share(createSpreadsheetFile(csv, now));
+    const current = currentSnapshot();
+    if (!current || sharingRef.current) return;
+    const csv = buildGamesCsv(current.file.games, current.file.events);
+    const result = await share(createSpreadsheetFile(csv, new Date()));
     if (result === 'shared') toast.show({ message: 'Spreadsheet saved' });
     else if (result === 'downloaded') toast.show({ message: 'Spreadsheet downloaded' });
     else if (result === 'failed') toast.show({ message: SAVE_FAILED });
@@ -99,7 +111,7 @@ export function BackupSection({ games }: { games: readonly Game[] }) {
 
   let saveSubtitle = 'Not saved on this phone yet';
   if (lastSavedAt !== undefined) saveSubtitle = `Last saved: ${formatDayWithYear(lastSavedAt)}`;
-  if (snapshot && !hasData) saveSubtitle = 'Nothing to back up yet';
+  if (!hasData) saveSubtitle = 'Nothing to back up yet';
 
   return (
     <div>
@@ -111,7 +123,7 @@ export function BackupSection({ games }: { games: readonly Game[] }) {
           title="Save a backup file"
           subtitle={saveSubtitle}
           onClick={saveBackup}
-          disabled={!hasData || sharing}
+          disabled={!fresh || !hasData || sharing}
         />
         <ActionRow
           title="Restore from a backup file"
@@ -126,7 +138,7 @@ export function BackupSection({ games }: { games: readonly Game[] }) {
               : 'Available once a game is finished'
           }
           onClick={exportSpreadsheet}
-          disabled={!snapshot || !hasFinalGames || sharing}
+          disabled={!fresh || !hasFinalGames || sharing}
         />
       </GroupedList>
       <input

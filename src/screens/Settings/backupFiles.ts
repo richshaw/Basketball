@@ -21,10 +21,12 @@ export function spreadsheetFileName(now: Date): string {
   return `hoop-stats-games-${todayLocalISO(now)}.csv`;
 }
 
-/** The backup as a readable JSON file, stamped with the time it's saved. */
+/**
+ * The backup as a readable JSON file, named for the day it's saved. It keeps its own
+ * `exportedAt` (when the data was read), which says what it holds.
+ */
 export function createBackupFile(backup: ExportFile, now: Date): File {
-  const contents: ExportFile = { ...backup, exportedAt: now.toISOString() };
-  return new File([JSON.stringify(contents, null, 2)], backupFileName(now), {
+  return new File([JSON.stringify(backup, null, 2)], backupFileName(now), {
     type: 'application/json',
   });
 }

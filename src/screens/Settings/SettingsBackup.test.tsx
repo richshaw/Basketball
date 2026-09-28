@@ -1,5 +1,5 @@
-import { screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { restoreStubs } from '@/components/InstallBanner/testing';
 import { seedDemoData } from '@/data/demo';
 import {
@@ -10,9 +10,10 @@ import {
   listGames,
   recordStat,
   savePlayer,
+  updateGame,
   updateSettings,
 } from '@/data/repo';
-import { importAll, parseExportFile, type ExportFile } from '@/data/transfer';
+import { exportAll, importAll, parseExportFile, type ExportFile } from '@/data/transfer';
 import { todayLocalISO } from '@/lib/format';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
@@ -20,6 +21,30 @@ import fixtureJson from '../../../e2e/fixtures/settings-backup.json?raw';
 import { formatDayWithYear } from './backupFiles';
 import { GAMES_CSV_HEADERS } from './gamesCsv';
 import { captureDownloads, sharedFile, stubFileSharing } from './testUtils';
+import type * as TransferModule from '@/data/transfer';
+
+// exportAll as usual, but a test can hold it back (see holdExports).
+vi.mock('@/data/transfer', async (importOriginal) => {
+  const actual = await importOriginal<typeof TransferModule>();
+  return { ...actual, exportAll: vi.fn(actual.exportAll) };
+});
+
+/**
+ * Makes every export from now on wait until `release()`, then read the data as it is
+ * by then. For catching a tap that lands before the backup has re-read a change.
+ */
+async function holdExports() {
+  const actual = await vi.importActual<typeof TransferModule>('@/data/transfer');
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(exportAll).mockImplementation(async () => {
+    await released;
+    return actual.exportAll();
+  });
+  return release;
+}
 
 const notifications = () => screen.getByRole('status', { name: 'Notifications' });
 
@@ -72,6 +97,8 @@ async function seedPhoneGame() {
 afterEach(() => {
   restoreStubs();
   localStorage.clear();
+  // Back to the real exportAll, even if a test failed before releasing held exports.
+  vi.mocked(exportAll).mockReset();
 });
 
 describe('Settings: save a backup file', () => {
@@ -149,6 +176,52 @@ describe('Settings: save a backup file', () => {
       expect(save).toHaveTextContent('Nothing to back up yet');
     });
     expect(save).toBeDisabled();
+  });
+});
+
+describe('Settings: data that changes while Settings is open', () => {
+  it('never saves a backup file that misses the latest change', async () => {
+    const game = await seedPhoneGame();
+    const share = stubFileSharing();
+    const { user } = await renderSettings();
+    const save = await enabledButton(/Save a backup file/);
+    const release = await holdExports();
+
+    // A change lands (from this screen, another screen or another tab)...
+    await updateGame(game.id, { opponent: 'Lincoln Prep' });
+    // ...and the parent taps before the backup has read it: nothing is saved.
+    fireEvent.click(save);
+    expect(share).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(save).toBeDisabled();
+    });
+
+    release();
+    await user.click(await enabledButton(/Save a backup file/));
+    const backup = parseExportFile(await sharedFile(share).text());
+    expect(backup.games.map(({ opponent }) => opponent)).toEqual(['Lincoln Prep']);
+    // Stamped with when the data was read, not when the file was saved.
+    const { updatedAt } = backup.games[0] ?? game;
+    expect(Date.parse(backup.exportedAt)).toBeGreaterThanOrEqual(updatedAt);
+  });
+
+  it('never exports a spreadsheet that misses the latest change', async () => {
+    const game = await seedPhoneGame();
+    const share = stubFileSharing();
+    const { user } = await renderSettings();
+    const csv = await enabledButton(/Export spreadsheet/);
+    const release = await holdExports();
+
+    await updateGame(game.id, { opponent: 'Lincoln Prep' });
+    fireEvent.click(csv);
+    expect(share).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(csv).toBeDisabled();
+    });
+
+    release();
+    await user.click(await enabledButton(/Export spreadsheet/));
+    expect(await sharedFile(share).text()).toContain(',Lincoln Prep,');
   });
 });
 

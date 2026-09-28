@@ -33,14 +33,14 @@ describe('file names', () => {
 });
 
 describe('createBackupFile', () => {
-  it('is a JSON file that restores exactly, stamped with when it was saved', async () => {
+  it('is a JSON file that restores exactly, named for the day it is saved', async () => {
     const backup = demo();
     const file = createBackupFile(backup, EVENING);
 
     expect(file.name).toBe('hoop-stats-backup-2026-09-28.json');
     expect(file.type).toBe('application/json');
-    const restored = parseExportFile(await file.text());
-    expect(restored).toEqual({ ...backup, exportedAt: EVENING.toISOString() });
+    // Including its exportedAt: when the data was read, not when the file was saved.
+    expect(parseExportFile(await file.text())).toEqual(backup);
   });
 });
 
