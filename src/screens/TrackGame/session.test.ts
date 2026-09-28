@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { savePendingStat } from '@/data/pendingSaves';
-import { hasPendingStats, listPendingStats, type PendingStat } from '@/data/pendingStats';
+import {
+  addPendingStat,
+  hasPendingStats,
+  listPendingStats,
+  type PendingStat,
+} from '@/data/pendingStats';
 import * as repo from '@/data/repo';
 import { createGame, deleteGame, deleteStat, getGameEvents, setCurrentPeriod } from '@/data/repo';
 import type { StatEvent, StatType } from '@/data/types';
@@ -269,16 +274,13 @@ describe('TrackingSession', () => {
     await vi.waitFor(() => expect(before.getSnapshot().unsaved).toEqual([block]));
     expect(keptIds()).toEqual([block.id]);
 
-    // The page reloads: memory is gone, the journal isn't. The new session lists the
-    // tap as not saved (so it's counted, can be undone, and says so) and saves it.
+    // The page reloads: memory is gone, the journal isn't. The new session counts the
+    // tap (it can be undone too) and saves it.
     const after = new TrackingSession(game.id, 2);
-    expect(after.getSnapshot()).toMatchObject({
-      pending: [block],
-      unsaved: [block],
-      unsavedKept: true,
-    });
+    expect(after.getSnapshot()).toMatchObject({ pending: [block], unsaved: [] });
     after.retry();
-    await vi.waitFor(() => expect(after.getSnapshot().unsaved).toEqual([]));
+    await vi.waitFor(() => expect(keptIds()).toEqual([]));
+    expect(after.getSnapshot().unsaved).toEqual([]);
     expect(await getGameEvents(game.id)).toEqual([
       { id: block.id, gameId: game.id, type: 'blk', period: 2, createdAt: block.at },
     ]);
@@ -286,6 +288,23 @@ describe('TrackingSession', () => {
     after.retry();
     await flush();
     expect(await getGameEvents(game.id)).toHaveLength(1);
+  });
+
+  it('counts the taps an earlier page kept, and says one is not saved only once a save of it fails', async () => {
+    addPendingStat({ id: 'kept', gameId: 'g', type: 'stl', period: 1, at: 5 });
+    const { session, saves, fail, pendingTypes, unsavedTypes } = setUp();
+    // No "not saved" before any save of it was tried on this page.
+    expect(pendingTypes()).toEqual(['stl']);
+    expect(unsavedTypes()).toEqual([]);
+    expect(saves).toHaveLength(0);
+
+    session.retry(); // as the screen opens
+    expect(saves).toHaveLength(1);
+    expect(session.getSnapshot()).toMatchObject({ unsaved: [], retrying: false });
+    fail(0);
+    await flush();
+    expect(unsavedTypes()).toEqual(['stl']);
+    expect(session.getSnapshot().unsavedKept).toBe(true);
   });
 
   it("starts with its own game's kept taps only", () => {

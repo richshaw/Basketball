@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
 import { demoGameId, seedDemoData } from '@/data/demo';
 import { replayPendingStats, retryPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
-import { listPendingStats } from '@/data/pendingStats';
+import { addPendingStat, listPendingStats, newPendingStat } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
 import {
   createGame,
@@ -288,6 +288,27 @@ describe('TrackGameScreen', () => {
     // Said once it's done: a saved stat only counts as removed once it's gone.
     await waitFor(() => expect(lastAction()).toHaveTextContent('Removed FT Made'));
     await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['fg2_made']));
+  });
+
+  it('after a relaunch, counts and saves a tap the earlier page kept, without calling it not saved', async () => {
+    const game = await newGame();
+    addPendingStat(newPendingStat({ gameId: game.id, type: 'stl', period: 1 }));
+    const alerts: string[] = [];
+    const watch = new MutationObserver(() => {
+      for (const alert of screen.queryAllByRole('alert')) alerts.push(alert.textContent);
+    });
+    watch.observe(document.body, { childList: true, subtree: true, characterData: true });
+    try {
+      await renderTracking(game);
+      await expectStrip('Steals: 1');
+      await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
+      await expectStrip('Steals: 1');
+      // Never painted (or announced) as "not saved": no save of it had failed.
+      expect(alerts).toEqual([]);
+      expect(lastAction()).toHaveTextContent('Steal · Q1');
+    } finally {
+      watch.disconnect();
+    }
   });
 
   it("the line's Undo ignores taps for a moment after the grid's Undo, just above it", async () => {

@@ -71,9 +71,16 @@ export interface Tap {
 
 interface TapRecord {
   readonly stat: PendingStat;
-  /** 'saving': a save is under way. 'failed': the last one failed. 'saved': one landed. */
+  /**
+   * 'saving': a save is under way. 'saved': one landed. 'failed': neither, so it's
+   * tried again: the last save failed, or (a tap an earlier page kept) none was tried
+   * on this page yet.
+   */
   status: 'saving' | 'failed' | 'saved';
-  /** A save of it has failed: it's listed as not saved until one lands. */
+  /**
+   * A save of it has failed on this page: it's listed as not saved until one lands. Not
+   * before, so a tap an earlier page kept isn't called "not saved" before it's tried.
+   */
   hasFailed: boolean;
   /** It's in the journal, so it outlives the page. */
   kept: boolean;
@@ -190,12 +197,14 @@ export class TrackingSession implements UnsavedTapHolder {
     this.deps = deps;
     this.period = period;
     this.savedPeriod = period;
-    // Taps an earlier page kept but couldn't save (or didn't hear back about).
+    // Taps an earlier page kept but couldn't save (or didn't hear back about): counted
+    // at once, and saved by the next retry (the screen retries as it opens). Only a
+    // save that fails here lists one as not saved.
     for (const stat of listPendingStats(gameId)) {
       this.taps.push({
         stat,
         status: 'failed',
-        hasFailed: true,
+        hasFailed: false,
         kept: true,
         autoRetried: false,
         quiet: false,
