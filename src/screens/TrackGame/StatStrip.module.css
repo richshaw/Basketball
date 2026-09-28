@@ -65,17 +65,12 @@
   margin-top: 2px;
 }
 
-/* Shooting reads as one line: label, then made/attempted. */
+/*
+ * Shooting, made/attempted: two columns each, and the label under the value like the
+ * counting stats, so even "12/25" fits on the smallest iPhone.
+ */
 .shooting {
   grid-column: span 2;
-  flex-direction: row;
-  align-items: baseline;
-  justify-content: center;
-  gap: var(--space-1);
-}
-
-.shooting .label {
-  order: -1;
 }
 
 .shooting .value {

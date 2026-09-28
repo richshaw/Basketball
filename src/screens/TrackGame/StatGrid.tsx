@@ -1,4 +1,4 @@
-import { memo, useId, useLayoutEffect, useRef, type RefObject } from 'react';
+import { Fragment, memo, useId, useLayoutEffect, useRef, type RefObject } from 'react';
 import { STAT_DEFS } from '@/data/stats';
 import type { StatType } from '@/data/types';
 import { cx } from '@/lib/cx';
@@ -86,7 +86,13 @@ const StatButton = memo(function StatButton({ type, count, onRecord }: StatButto
       }}
     >
       <span className={styles.label} data-fit-label="">
-        {label}
+        {/* One word per line, the same on every screen size ("2PT" over "Made"). */}
+        {label.split(' ').map((word, index) => (
+          <Fragment key={word}>
+            {index > 0 ? ' ' : null}
+            <span className={styles.word}>{word}</span>
+          </Fragment>
+        ))}
       </span>
       {count > 0 ? (
         <>

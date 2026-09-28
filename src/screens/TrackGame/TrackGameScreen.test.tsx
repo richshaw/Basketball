@@ -107,8 +107,10 @@ describe('TrackGameScreen', () => {
     await renderTracking(game);
 
     fireEvent.click(statButton('3PT Made'));
-    // Confirmed on the spot, before the database has answered.
+    // Confirmed on the spot, before the database has answered, in the fixed line: never
+    // in a floating toast, which would cover the bottom row of stat buttons.
     expect(lastAction()).toHaveTextContent('3PT Made · Q1');
+    expect(notifications()).toBeEmptyDOMElement();
     await expectStrip('Points: 3', '3-pointers: 1 of 1', 'Field goals: 1 of 1');
     await waitFor(() => expect(statButton('3PT Made')).toHaveAccessibleDescription('1 this game'));
     expect(statButton('2PT Made')).not.toHaveAccessibleDescription();

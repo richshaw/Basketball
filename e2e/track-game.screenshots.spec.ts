@@ -148,6 +148,12 @@ const shots: Shot[] = [
       await seedDemoData(page);
       await openTracking(page, demoGameId(10));
       await expect(page.getByText('Editing a finished game')).toBeVisible();
+      // A correction: one more foul puts her in foul trouble (4).
+      await page
+        .getByRole('group', { name: 'Record a stat' })
+        .getByRole('button', { name: 'Foul' })
+        .tap();
+      await expect(stats(page).getByText('Fouls: 4 (foul trouble)')).toBeAttached();
     },
   },
 ];

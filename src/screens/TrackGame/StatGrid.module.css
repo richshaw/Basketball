@@ -33,11 +33,6 @@
   filter: brightness(0.9);
 }
 
-/* Keep the ring clear of the neighbouring buttons. */
-.button:focus-visible {
-  outline-offset: -4px;
-}
-
 .made {
   background-color: var(--color-made);
   color: var(--color-on-made);
@@ -73,7 +68,10 @@
   max-width: 100%;
   font-size: min(var(--font-size-xl), 22cqb, calc(96cqi / var(--label-em, 5)));
   line-height: var(--line-height-tight);
-  text-wrap: balance;
+}
+
+.word {
+  display: block;
 }
 
 /*
