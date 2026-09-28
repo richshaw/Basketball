@@ -401,11 +401,12 @@ describe('GameReportScreen', () => {
       );
       expect(screen.queryByText('No score entered')).not.toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'Add or fix stats' })).not.toBeInTheDocument();
-      // The current quarter stands out in the table.
+      // The current quarter stands out in the table, and says so to screen readers.
       const table = screen.getByRole('table', { name: 'Stats by quarter' });
-      expect(within(table).getByRole('rowheader', { name: 'Q3' }).closest('tr')).toHaveClass(
-        'highlighted',
-      );
+      expect(
+        within(table).getByRole('rowheader', { name: 'Q3, current' }).closest('tr'),
+      ).toHaveClass('highlighted');
+      expect(within(table).getByRole('rowheader', { name: 'Q2' })).toBeInTheDocument();
 
       await user.click(screen.getByRole('link', { name: 'Resume tracking' }));
       expect(router.state.location.pathname).toBe(paths.trackGame('g1'));
