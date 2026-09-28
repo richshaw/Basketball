@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import indexHtml from '../../index.html?raw';
+import viteConfig from '../../vite.config.ts?raw';
 import { AA_TEXT_CONTRAST, AA_UI_CONTRAST, contrastRatio } from '@/lib/color';
 import tokensCss from './tokens.css?raw';
 
@@ -70,5 +71,12 @@ describe('index.html', () => {
       'i',
     ).exec(indexHtml);
     expect(meta?.[1]).toBe(color(theme, '--color-bg'));
+  });
+});
+
+describe('web app manifest', () => {
+  it('uses the dark background for its theme and splash colors', () => {
+    const constant = /const DARK_BACKGROUND = '(#[\da-f]{6})';/i.exec(viteConfig);
+    expect(constant?.[1]).toBe(color('dark', '--color-bg'));
   });
 });
