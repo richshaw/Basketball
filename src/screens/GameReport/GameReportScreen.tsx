@@ -116,6 +116,11 @@ function statsCount(count: number): string {
   return count === 1 ? ' and its 1 stat' : ` and all ${count} of its stats`;
 }
 
+/** The shot chart's note when no shot has a spot. A live game's next shot may have one. */
+function noSpotsNote(live: boolean): string {
+  return live ? 'No shot spots recorded yet.' : 'No shot spots were recorded in this game.';
+}
+
 function GameReport({ game, events, player, askForSpots, onLeaving }: GameReportProps) {
   const confirm = useConfirm();
   const toast = useToast();
@@ -198,7 +203,7 @@ function GameReport({ game, events, player, askForSpots, onLeaving }: GameReport
         {shotChart ? (
           <ReportSection
             title="Shot chart"
-            note={shotChart === 'noSpots' ? 'No shot spots were recorded in this game.' : undefined}
+            note={shotChart === 'noSpots' ? noSpotsNote(live) : undefined}
           >
             {shotChart === 'map' ? (
               <>

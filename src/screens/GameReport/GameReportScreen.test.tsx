@@ -569,15 +569,25 @@ describe('GameReportScreen', () => {
       ]);
     });
 
-    it('says no spots were recorded when the setting asks for them', async () => {
-      // Her five shots, none with a spot; the setting is on by default.
-      await seed();
-      await renderReport();
+    it.each([
+      { game: makeGame(), note: 'No shot spots were recorded in this game.' },
+      // More shots may come, with spots.
+      {
+        game: makeGame({ status: 'live', endedAt: undefined }),
+        note: 'No shot spots recorded yet.',
+      },
+    ])(
+      'says when no spot was recorded and the setting asks for them: $game.status game',
+      async ({ game, note }) => {
+        // Her five shots, none with a spot; the setting is on by default.
+        await seed(game);
+        await renderReport();
 
-      const section = screen.getByRole('region', { name: 'Shot chart' });
-      expect(section).toHaveTextContent('No shot spots were recorded in this game.');
-      expect(within(section).queryByRole('figure')).not.toBeInTheDocument();
-    });
+        const section = screen.getByRole('region', { name: 'Shot chart' });
+        expect(section).toHaveTextContent(note);
+        expect(within(section).queryByRole('figure')).not.toBeInTheDocument();
+      },
+    );
 
     it('leaves the section out when no spot was recorded and the setting is off', async () => {
       await seed();
