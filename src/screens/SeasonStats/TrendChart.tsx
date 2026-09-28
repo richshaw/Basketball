@@ -137,6 +137,10 @@ export function TrendChart({ entries, averages }: TrendChartProps) {
   const selected = points[selectedIndex];
   const first = points[0];
   const last = points.at(-1);
+  // The axis dates need their years when the games span New Year (e.g. all seasons).
+  const withYear = Boolean(
+    first && last && first.game.date.slice(0, 4) !== last.game.date.slice(0, 4),
+  );
 
   // Scales
   const plotWidth = Math.max(width - GUTTER, 0);
@@ -257,7 +261,7 @@ export function TrendChart({ entries, averages }: TrendChartProps) {
   return (
     <div className={styles.chart}>
       <SegmentedControl
-        aria-label="Chart"
+        aria-label="Stat to chart"
         options={METRIC_OPTIONS}
         value={metric}
         onChange={chooseMetric}
@@ -402,15 +406,15 @@ export function TrendChart({ entries, averages }: TrendChartProps) {
                 y={HEIGHT - 6}
                 textAnchor="middle"
               >
-                {formatShortDate(first.game.date)}
+                {formatShortDate(first.game.date, { withYear })}
               </text>
             ) : (
               <>
                 <text className={styles.dateLabel} x={0} y={HEIGHT - 6}>
-                  {formatShortDate(first.game.date)}
+                  {formatShortDate(first.game.date, { withYear })}
                 </text>
                 <text className={styles.dateLabel} x={plotWidth} y={HEIGHT - 6} textAnchor="end">
-                  {formatShortDate(last.game.date)}
+                  {formatShortDate(last.game.date, { withYear })}
                 </text>
               </>
             )

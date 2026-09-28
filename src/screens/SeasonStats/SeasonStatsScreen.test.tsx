@@ -84,455 +84,485 @@ beforeEach(() => {
 });
 
 describe('SeasonStatsScreen', () => {
-  it('shows the record, games played and averages that summarizeGames computes', async () => {
-    const demo = await seedDemo();
-    renderRoute(paths.stats);
-    await waitForStats();
+  describe('with the demo season', () => {
+    let demo: ExportFile;
 
-    const expected = expectedSummary(demo.games, demo.events);
-    expect(expected.gamesPlayed).toBe(10);
-    expectAverages(expected);
-    expect(screen.getByText('Ava')).toBeInTheDocument();
-    expect(screen.getByText('Fall 2026 · 10 games')).toBeInTheDocument();
-    expect(screen.getByText('Record')).toBeInTheDocument();
-    expect(screen.getByText('7–3')).toBeInTheDocument();
+    beforeEach(async () => {
+      demo = await seedDemo();
+    });
 
-    // Shooting tiles show the made/attempted totals too.
-    const { totals } = expected;
-    const averages = screen.getByLabelText('Averages per game');
-    expect(
-      within(averages).getByText(formatMadeAttempted(totals.fgm, totals.fga)),
-    ).toBeInTheDocument();
-    expect(totalsCell('PTS')).toBe(String(totals.pts));
-    expect(totalsCell('GP')).toBe('10');
-  });
+    it('shows the record, games played and averages that summarizeGames computes', async () => {
+      renderRoute(paths.stats);
+      await waitForStats();
 
-  it('lists season highs, each opening the game it came from', async () => {
-    const demo = await seedDemo();
-    const { user, router } = renderRoute(paths.stats);
-    const highs = await screen.findByRole('list', { name: 'Season highs' });
+      const expected = expectedSummary(demo.games, demo.events);
+      expect(expected.gamesPlayed).toBe(10);
+      expectAverages(expected);
+      expect(screen.getByText('Ava')).toBeInTheDocument();
+      expect(screen.getByText('Fall 2026 · 10 games')).toBeInTheDocument();
+      expect(screen.getByText('Record')).toBeInTheDocument();
+      expect(screen.getByText('7–3')).toBeInTheDocument();
 
-    const expected = expectedSummary(demo.games, demo.events);
-    const labels: Record<HighStat, string> = {
-      pts: 'Points',
-      reb: 'Rebounds',
-      ast: 'Assists',
-      stl: 'Steals',
-      blk: 'Blocks',
-      deflections: 'Deflections',
-    };
-    for (const stat of HIGH_STATS) {
-      const high = expected.highs[stat];
-      if (!high) throw new Error(`The demo season has no ${stat} high`);
-      const game = demo.games.find((candidate) => candidate.id === high.gameId);
-      if (!game) throw new Error(`Missing game ${high.gameId}`);
-      const link = within(highs).getByRole('link', {
-        name: new RegExp(`^${labels[stat]}: ${high.value},`),
-      });
-      expect(link).toHaveAttribute('href', paths.gameReport(game.id));
-      expect(link).toHaveTextContent(`${opponentLabel(game)} · ${formatShortDate(game.date)}`);
-    }
+      // Shooting tiles show the made/attempted totals too.
+      const { totals } = expected;
+      const averages = screen.getByLabelText('Averages per game');
+      expect(
+        within(averages).getByText(formatMadeAttempted(totals.fgm, totals.fga)),
+      ).toBeInTheDocument();
+      expect(totalsCell('PTS')).toBe(String(totals.pts));
+      expect(totalsCell('GP')).toBe('10');
+    });
 
-    await user.click(within(highs).getByRole('link', { name: /^Points:/ }));
-    expect(router.state.location.pathname).toBe(paths.gameReport(expected.highs.pts?.gameId ?? ''));
-  });
+    it('lists season highs, each opening the game it came from', async () => {
+      const { user, router } = renderRoute(paths.stats);
+      const highs = await screen.findByRole('list', { name: 'Season highs' });
 
-  it('leaves games in progress out of every number, and says so', async () => {
-    const demo = await seedDemo({ liveGame: true });
-    renderRoute(paths.stats);
-    await waitForStats();
+      const expected = expectedSummary(demo.games, demo.events);
+      const labels: Record<HighStat, string> = {
+        pts: 'Points',
+        reb: 'Rebounds',
+        ast: 'Assists',
+        stl: 'Steals',
+        blk: 'Blocks',
+        deflections: 'Deflections',
+      };
+      for (const stat of HIGH_STATS) {
+        const high = expected.highs[stat];
+        if (!high) throw new Error(`The demo season has no ${stat} high`);
+        const game = demo.games.find((candidate) => candidate.id === high.gameId);
+        if (!game) throw new Error(`Missing game ${high.gameId}`);
+        const link = within(highs).getByRole('link', {
+          name: new RegExp(`^${labels[stat]}: ${high.value},`),
+        });
+        expect(link).toHaveAttribute('href', paths.gameReport(game.id));
+        expect(link).toHaveTextContent(`${opponentLabel(game)} · ${formatShortDate(game.date)}`);
+      }
 
-    const finalOnly = expectedSummary(demo.games, demo.events);
-    const withLive = summarizeGames(statLinesForGames(demo.games, demo.events));
-    expect(withLive.totals.pts).toBeGreaterThan(finalOnly.totals.pts);
+      await user.click(within(highs).getByRole('link', { name: /^Points:/ }));
+      expect(router.state.location.pathname).toBe(
+        paths.gameReport(expected.highs.pts?.gameId ?? ''),
+      );
+    });
 
-    expectAverages(finalOnly);
-    expect(screen.getByText('Fall 2026 · 10 games')).toBeInTheDocument();
-    expect(totalsCell('PTS')).toBe(String(finalOnly.totals.pts));
-    expect(
-      within(screen.getByRole('table', { name: 'Game log' })).getAllByRole('row'),
-    ).toHaveLength(
-      11, // the header and ten final games
-    );
-    expect(screen.queryByRole('link', { name: /Westfield/ })).not.toBeInTheDocument();
-    expect(
-      screen.getByText('The game vs Westfield is still in progress. It counts once it’s final.'),
-    ).toBeInTheDocument();
-  });
-
-  it('switches seasons, and the numbers follow', async () => {
-    const demo = await seedDemo();
-    const summerOpener = await addFinalGame(
-      { opponent: 'Harbor', date: '2026-06-10', season: 'Summer 2026' },
-      ['fg3_made', 'fg3_made', 'fg3_made', 'dreb', 'dreb', 'ast', 'stl'],
-      [40, 32],
-    );
-    await addFinalGame(
-      { opponent: 'Bayside', date: '2026-06-20', season: 'Summer 2026' },
-      ['fg2_made', 'fg2_made', 'ft_made', 'ft_miss', 'oreb', 'blk', 'tov'],
-      [28, 35],
-    );
-    const { user } = renderRoute(paths.stats);
-    await waitForStats();
-
-    // The most recent season comes first.
-    const seasons = screen.getByRole('radiogroup', { name: 'Season' });
-    expect(
-      within(seasons)
-        .getAllByRole('radio')
-        .map((radio) => radio.textContent),
-    ).toEqual(['All', 'Fall 2026', 'Summer 2026']);
-    expect(within(seasons).getByRole('radio', { name: 'Fall 2026' })).toBeChecked();
-    expectAverages(expectedSummary(demo.games, demo.events, 'Fall 2026'));
-
-    await user.click(within(seasons).getByRole('radio', { name: 'Summer 2026' }));
-    const allGames = await listGames();
-    const allEvents = await getAllEvents();
-    const summer = expectedSummary(allGames, allEvents, 'Summer 2026');
-    expect(summer.averages.pts).toBe(7);
-    await waitFor(() => expectAverages(summer));
-    expect(screen.getByText('Summer 2026 · 2 games')).toBeInTheDocument();
-    expect(screen.getByText('1–1')).toBeInTheDocument();
-    expect(
-      within(screen.getByRole('list', { name: 'Season highs' })).getByRole('link', {
-        name: /^Points: 9,/,
-      }),
-    ).toHaveAttribute('href', paths.gameReport(summerOpener.id));
-
-    await user.click(within(seasons).getByRole('radio', { name: 'All' }));
-    await waitFor(() => expectAverages(expectedSummary(allGames, allEvents)));
-    expect(screen.getByText('All seasons · 12 games')).toBeInTheDocument();
-    expect(screen.getByText('8–4')).toBeInTheDocument();
-    expect(screen.getByRole('list', { name: 'Career highs' })).toBeInTheDocument();
-    expect(totalsCell('Season')).toBe('All games');
-  });
-
-  it('remembers the chosen season while the app stays open', async () => {
-    await seedDemo();
-    await addFinalGame(
-      { opponent: 'Harbor', date: '2026-06-10', season: 'Summer 2026' },
-      ['fg2_made'],
-      [40, 32],
-    );
-    const { user } = renderRoute(paths.stats);
-    await waitForStats();
-    await user.click(screen.getByRole('radio', { name: 'Summer 2026' }));
-    expect(await screen.findByText('Summer 2026 · 1 game')).toBeInTheDocument();
-
-    const tabs = screen.getByRole('navigation', { name: 'Main' });
-    await user.click(within(tabs).getByRole('link', { name: 'Games' }));
-    await user.click(within(tabs).getByRole('link', { name: 'Stats' }));
-    await waitForStats();
-    expect(screen.getByRole('radio', { name: 'Summer 2026' })).toBeChecked();
-    expect(screen.getByText('Summer 2026 · 1 game')).toBeInTheDocument();
-  });
-
-  it('picks the season from a sheet when there are too many to fit', async () => {
-    for (const [season, date, points] of [
-      ['Winter', '2026-01-10', 2],
-      ['Spring', '2026-04-10', 4],
-      ['Summer', '2026-06-10', 6],
-      ['Fall', '2026-09-10', 8],
-    ] as const) {
+    it('switches seasons, and the numbers follow', async () => {
+      const summerOpener = await addFinalGame(
+        { opponent: 'Harbor', date: '2026-06-10', season: 'Summer 2026' },
+        ['fg3_made', 'fg3_made', 'fg3_made', 'dreb', 'dreb', 'ast', 'stl'],
+        [40, 32],
+      );
       await addFinalGame(
-        { opponent: `${season} Opponent`, date, season },
-        Array.from({ length: points / 2 }, () => 'fg2_made' as const),
+        { opponent: 'Bayside', date: '2026-06-20', season: 'Summer 2026' },
+        ['fg2_made', 'fg2_made', 'ft_made', 'ft_miss', 'oreb', 'blk', 'tov'],
+        [28, 35],
+      );
+      const { user } = renderRoute(paths.stats);
+      await waitForStats();
+
+      // The most recent season comes first.
+      const seasons = screen.getByRole('radiogroup', { name: 'Season' });
+      expect(
+        within(seasons)
+          .getAllByRole('radio')
+          .map((radio) => radio.textContent),
+      ).toEqual(['All', 'Fall 2026', 'Summer 2026']);
+      expect(within(seasons).getByRole('radio', { name: 'Fall 2026' })).toBeChecked();
+      expectAverages(expectedSummary(demo.games, demo.events, 'Fall 2026'));
+
+      await user.click(within(seasons).getByRole('radio', { name: 'Summer 2026' }));
+      const allGames = await listGames();
+      const allEvents = await getAllEvents();
+      const summer = expectedSummary(allGames, allEvents, 'Summer 2026');
+      expect(summer.averages.pts).toBe(7);
+      await waitFor(() => expectAverages(summer));
+      expect(screen.getByText('Summer 2026 · 2 games')).toBeInTheDocument();
+      expect(screen.getByText('1–1')).toBeInTheDocument();
+      expect(
+        within(screen.getByRole('list', { name: 'Season highs' })).getByRole('link', {
+          name: /^Points: 9,/,
+        }),
+      ).toHaveAttribute('href', paths.gameReport(summerOpener.id));
+
+      await user.click(within(seasons).getByRole('radio', { name: 'All' }));
+      await waitFor(() => expectAverages(expectedSummary(allGames, allEvents)));
+      expect(screen.getByText('All seasons · 12 games')).toBeInTheDocument();
+      expect(screen.getByText('8–4')).toBeInTheDocument();
+      expect(screen.getByRole('list', { name: 'Career highs' })).toBeInTheDocument();
+      expect(totalsCell('Season')).toBe('All seasons');
+    });
+
+    it('remembers the chosen season while the app stays open', async () => {
+      await addFinalGame(
+        { opponent: 'Harbor', date: '2026-06-10', season: 'Summer 2026' },
+        ['fg2_made'],
+        [40, 32],
+      );
+      const { user } = renderRoute(paths.stats);
+      await waitForStats();
+      await user.click(screen.getByRole('radio', { name: 'Summer 2026' }));
+      expect(await screen.findByText('Summer 2026 · 1 game')).toBeInTheDocument();
+
+      const tabs = screen.getByRole('navigation', { name: 'Main' });
+      await user.click(within(tabs).getByRole('link', { name: 'Games' }));
+      await user.click(within(tabs).getByRole('link', { name: 'Stats' }));
+      await waitForStats();
+      expect(screen.getByRole('radio', { name: 'Summer 2026' })).toBeChecked();
+      expect(screen.getByText('Summer 2026 · 1 game')).toBeInTheDocument();
+    });
+
+    it('lists the games newest first, and a tap anywhere on a row opens its report', async () => {
+      const { user, router } = renderRoute(paths.stats);
+      const log = await screen.findByRole('table', { name: 'Game log' });
+
+      const rows = within(log).getAllByRole('row').slice(1);
+      expect(rows).toHaveLength(10);
+      const links = rows.map((row) => within(row).getByRole('link').getAttribute('href'));
+      expect(links).toEqual(
+        Array.from({ length: 10 }, (_, index) => paths.gameReport(demoGameId(10 - index))),
+      );
+
+      // The newest game's line.
+      const newest = demo.games.find((game) => game.id === demoGameId(10));
+      if (!newest) throw new Error('Missing the newest demo game');
+      const [line] = statLinesForGames([newest], demo.events);
+      const [first] = rows;
+      if (!first || !line) throw new Error('Missing the first row');
+      expect(within(first).getByRole('rowheader')).toHaveTextContent(
+        `${opponentLabel(newest)}, ${formatShortDate(newest.date)}`,
+      );
+      expect(
+        within(first)
+          .getAllByRole('cell')
+          .map((cell) => cell.textContent),
+      ).toEqual([
+        `W ${newest.teamScore}–${newest.opponentScore}`,
+        String(line.line.pts),
+        String(line.line.reb),
+        String(line.line.ast),
+        String(line.line.stl),
+        String(line.line.blk),
+        String(line.line.tov),
+        String(line.line.pf),
+        formatMadeAttempted(line.line.fgm, line.line.fga),
+        formatMadeAttempted(line.line.fg3m, line.line.fg3a),
+        formatMadeAttempted(line.line.ftm, line.line.fta),
+      ]);
+
+      const third = rows[2];
+      if (!third) throw new Error('Missing the third row');
+      await user.click(within(third).getAllByRole('cell')[1] as HTMLElement);
+      expect(router.state.location.pathname).toBe(paths.gameReport(demoGameId(8)));
+    });
+
+    it('charts points by default and switches to rebounds or assists', async () => {
+      const { user } = renderRoute(paths.stats);
+      const chart = await screen.findByRole('group', { name: 'Points by game' });
+      const expected = expectedSummary(demo.games, demo.events);
+
+      const bars = within(chart).getAllByRole('button');
+      expect(bars).toHaveLength(10);
+      const oldest = demo.games[0];
+      const [oldestLine] = statLinesForGames(demo.games.slice(0, 1), demo.events);
+      if (!oldest || !oldestLine) throw new Error('Missing the oldest demo game');
+      // Oldest on the left.
+      expect(bars[0]).toHaveAccessibleName(
+        `${formatShortDate(oldest.date)}, ${opponentLabel(oldest)}: ${oldestLine.line.pts} points`,
+      );
+      expect(screen.getByText('points per game')).toBeInTheDocument();
+      expect(
+        screen.getByText(formatAvg(expected.averages.pts), { selector: 'span' }),
+      ).toBeVisible();
+
+      await user.click(screen.getByRole('radio', { name: 'Rebounds' }));
+      const rebounds = screen.getByRole('group', { name: 'Rebounds by game' });
+      expect(within(rebounds).getAllByRole('button')[0]).toHaveAccessibleName(
+        new RegExp(`: ${oldestLine.line.reb} rebounds?$`),
+      );
+      expect(screen.getByText('rebounds per game')).toBeInTheDocument();
+      expect(rebounds).toHaveAccessibleDescription(
+        new RegExp(
+          `^Rebounds in 10 games, .*Average ${formatAvg(expected.averages.reb)} a game\\.`,
+        ),
+      );
+
+      await user.click(screen.getByRole('radio', { name: 'Assists' }));
+      expect(screen.getByRole('group', { name: 'Assists by game' })).toBeInTheDocument();
+      expect(screen.getByText('assists per game')).toBeInTheDocument();
+    });
+
+    it('reads one game from the chart on a tap, and lets go on a second tap', async () => {
+      const { user, router } = renderRoute(paths.stats);
+      const chart = await screen.findByRole('group', { name: 'Points by game' });
+      const game = demo.games[2];
+      const [entry] = statLinesForGames(demo.games.slice(2, 3), demo.events);
+      if (!game || !entry) throw new Error('Missing the third demo game');
+
+      const bar = within(chart).getAllByRole('button')[2] as HTMLElement;
+      await user.click(bar);
+      expect(bar).toHaveAttribute('aria-pressed', 'true');
+      expect(
+        screen.getByText(`${opponentLabel(game)} · L ${game.teamScore}–${game.opponentScore}`),
+      ).toBeInTheDocument();
+      const report = screen.getByRole('link', { name: /^Game report, / });
+      expect(report).toHaveAttribute('href', paths.gameReport(game.id));
+      expect(screen.queryByText('Average')).not.toBeInTheDocument();
+
+      await user.click(bar);
+      expect(bar).toHaveAttribute('aria-pressed', 'false');
+      expect(screen.getByText('Average')).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /^Game report, / })).not.toBeInTheDocument();
+
+      await user.click(bar);
+      await user.click(screen.getByRole('link', { name: /^Game report, / }));
+      expect(router.state.location.pathname).toBe(paths.gameReport(game.id));
+      expect(entry.line.pts).toBeGreaterThan(0);
+    });
+
+    it('scrubs through the games with a sideways drag, while a scroll selects nothing', async () => {
+      renderRoute(paths.stats);
+      const chart = await screen.findByRole('group', { name: 'Points by game' });
+      // jsdom has no layout: the chart's ten columns are 30px wide each.
+      vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 300,
+        bottom: 196,
+        width: 300,
+        height: 196,
+        toJSON: () => ({}),
+      });
+      const bars = within(chart).getAllByRole('button');
+      const second = bars[1] as HTMLElement;
+      const pressed = () => bars.filter((bar) => bar.getAttribute('aria-pressed') === 'true');
+      const touch = (pointerId: number, clientX: number) => ({
+        pointerId,
+        pointerType: 'touch',
+        clientX,
+      });
+
+      // A finger that lands on the chart and scrolls the page.
+      fireEvent.pointerDown(second, touch(1, 45));
+      fireEvent.pointerCancel(second, touch(1, 45));
+      expect(pressed()).toEqual([]);
+
+      // A small wobble is still a tap...
+      fireEvent.pointerDown(second, touch(2, 45));
+      fireEvent.pointerMove(second, touch(2, 48));
+      expect(pressed()).toEqual([]);
+      // ...but sliding sideways reads each game on the way.
+      fireEvent.pointerMove(second, touch(2, 100));
+      expect(pressed()).toEqual([bars[3]]);
+      fireEvent.pointerMove(second, touch(2, 140));
+      fireEvent.pointerUp(second, touch(2, 140));
+      expect(pressed()).toEqual([bars[4]]);
+
+      // Dragging off the end stops at the last game.
+      fireEvent.pointerDown(second, touch(3, 45));
+      fireEvent.pointerMove(second, touch(3, 900));
+      fireEvent.pointerUp(second, touch(3, 900));
+      expect(pressed()).toEqual([bars[9]]);
+    });
+
+    it('moves through the chart with the arrow keys', async () => {
+      const { user } = renderRoute(paths.stats);
+      const chart = await screen.findByRole('group', { name: 'Points by game' });
+      const bars = within(chart).getAllByRole('button');
+
+      // One tab stop, the newest game, right after the stat picker. Focus reads it out.
+      expect(bars.filter((bar) => bar.tabIndex === 0)).toEqual([bars[9]]);
+      act(() => screen.getByRole('radio', { name: 'Points' }).focus());
+      await user.tab();
+      expect(bars[9]).toHaveFocus();
+      expect(bars[9]).toHaveAttribute('aria-pressed', 'true');
+
+      await user.keyboard('{ArrowLeft}');
+      expect(bars[8]).toHaveFocus();
+      expect(bars[8]).toHaveAttribute('aria-pressed', 'true');
+      expect(bars[9]).toHaveAttribute('aria-pressed', 'false');
+
+      await user.keyboard('{Home}');
+      expect(bars[0]).toHaveFocus();
+      expect(bars[0]).toHaveAttribute('aria-pressed', 'true');
+
+      await user.keyboard('{Escape}');
+      expect(bars[0]).toHaveAttribute('aria-pressed', 'false');
+      expect(screen.getByText('Average')).toBeInTheDocument();
+
+      await user.keyboard('{Enter}');
+      expect(bars[0]).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('shares a season recap, copying it when there is no share sheet', async () => {
+      const { user } = renderRoute(paths.stats);
+      await waitForStats();
+      // No share sheet in jsdom, so the recap goes to user-event's stand-in clipboard.
+      expect('share' in navigator).toBe(false);
+      const writeText = vi.spyOn(navigator.clipboard, 'writeText');
+
+      await user.click(screen.getByRole('button', { name: 'Share' }));
+      const expected = buildSeasonRecap(
+        demo.players[0],
+        'Fall 2026',
+        expectedSummary(demo.games, demo.events),
+      );
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(expected));
+      expect(expected.split('\n')[0]).toBe('Ava — Fall 2026 (7–3)');
+      const toasts = screen.getByRole('status', { name: 'Notifications' });
+      expect(await within(toasts).findByText('Copied')).toBeInTheDocument();
+    });
+
+    it('marks where the season shot chart will go', async () => {
+      renderRoute(paths.stats);
+      await waitForStats();
+      expect(screen.getByRole('heading', { level: 2, name: 'Shot chart' })).toBeInTheDocument();
+      expect(screen.getByText('Season shot chart')).toBeInTheDocument();
+    });
+  });
+
+  describe('with a game in progress', () => {
+    let demo: ExportFile;
+
+    beforeEach(async () => {
+      demo = await seedDemo({ liveGame: true });
+    });
+
+    it('leaves games in progress out of every number, and says so', async () => {
+      renderRoute(paths.stats);
+      await waitForStats();
+
+      const finalOnly = expectedSummary(demo.games, demo.events);
+      const withLive = summarizeGames(statLinesForGames(demo.games, demo.events));
+      expect(withLive.totals.pts).toBeGreaterThan(finalOnly.totals.pts);
+
+      expectAverages(finalOnly);
+      expect(screen.getByText('Fall 2026 · 10 games')).toBeInTheDocument();
+      expect(totalsCell('PTS')).toBe(String(finalOnly.totals.pts));
+      expect(
+        within(screen.getByRole('table', { name: 'Game log' })).getAllByRole('row'),
+      ).toHaveLength(
+        11, // the header and ten final games
+      );
+      expect(screen.queryByRole('link', { name: /Westfield/ })).not.toBeInTheDocument();
+      expect(
+        screen.getByText('The game vs Westfield is still in progress. It counts once it’s final.'),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe('with more seasons than fit a segmented control', () => {
+    beforeEach(async () => {
+      for (const [season, date, points] of [
+        ['Winter', '2026-01-10', 2],
+        ['Spring', '2026-04-10', 4],
+        ['Summer', '2026-06-10', 6],
+        ['Fall', '2026-09-10', 8],
+      ] as const) {
+        await addFinalGame(
+          { opponent: `${season} Opponent`, date, season },
+          Array.from({ length: points / 2 }, () => 'fg2_made' as const),
+          [30, 20],
+        );
+      }
+    });
+
+    it('picks the season from a sheet when there are too many to fit', async () => {
+      const { user } = renderRoute(paths.stats);
+      await waitForStats();
+
+      expect(screen.queryByRole('radiogroup', { name: 'Season' })).not.toBeInTheDocument();
+      const picker = screen.getByRole('button', { name: /^Season/ });
+      expect(picker).toHaveTextContent('Fall');
+      expect(tileValue('Points per game')).toBe('8.0');
+
+      await user.click(picker);
+      const sheet = await screen.findByRole('dialog', { name: 'Season' });
+      const choices = within(sheet).getByRole('list', { name: 'Seasons' });
+      expect(
+        within(choices)
+          .getAllByRole('button')
+          .map((button) => button.textContent),
+      ).toEqual(['All', 'Fall(selected)', 'Summer', 'Spring', 'Winter']);
+
+      await user.click(within(sheet).getByRole('button', { name: 'Spring' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(screen.getByRole('button', { name: /^Season/ })).toHaveTextContent('Spring');
+      expect(tileValue('Points per game')).toBe('4.0');
+    });
+  });
+
+  describe('with games of their own', () => {
+    it('uses the sheet for season names too long for a segment', async () => {
+      await addFinalGame(
+        { opponent: 'Harbor', date: '2026-06-10', season: 'Varsity Summer League' },
+        ['fg2_made'],
         [30, 20],
       );
-    }
-    const { user } = renderRoute(paths.stats);
-    await waitForStats();
+      await addFinalGame(
+        { opponent: 'Bayside', date: '2026-09-10', season: 'JV Fall' },
+        [],
+        [30, 20],
+      );
+      renderRoute(paths.stats);
+      await waitForStats();
 
-    expect(screen.queryByRole('radiogroup', { name: 'Season' })).not.toBeInTheDocument();
-    const picker = screen.getByRole('button', { name: /^Season/ });
-    expect(picker).toHaveTextContent('Fall');
-    expect(tileValue('Points per game')).toBe('8.0');
-
-    await user.click(picker);
-    const sheet = await screen.findByRole('dialog', { name: 'Season' });
-    const choices = within(sheet).getByRole('list', { name: 'Seasons' });
-    expect(
-      within(choices)
-        .getAllByRole('button')
-        .map((button) => button.textContent),
-    ).toEqual(['All', 'Fall(selected)', 'Summer', 'Spring', 'Winter']);
-
-    await user.click(within(sheet).getByRole('button', { name: 'Spring' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /^Season/ })).toHaveTextContent('Spring');
-    expect(tileValue('Points per game')).toBe('4.0');
-  });
-
-  it('uses the sheet for season names too long for a segment', async () => {
-    await addFinalGame(
-      { opponent: 'Harbor', date: '2026-06-10', season: 'Varsity Summer League' },
-      ['fg2_made'],
-      [30, 20],
-    );
-    await addFinalGame(
-      { opponent: 'Bayside', date: '2026-09-10', season: 'JV Fall' },
-      [],
-      [30, 20],
-    );
-    renderRoute(paths.stats);
-    await waitForStats();
-
-    expect(screen.queryByRole('radiogroup', { name: 'Season' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Season/ })).toHaveTextContent('JV Fall');
-  });
-
-  it('shows all games, with no season picker, when no game has a season', async () => {
-    await addFinalGame({ opponent: 'Harbor', date: '2026-06-10' }, ['fg3_made'], [30, 20]);
-    renderRoute(paths.stats);
-    await waitForStats();
-
-    expect(screen.queryByRole('radiogroup', { name: 'Season' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Season/ })).not.toBeInTheDocument();
-    expect(screen.getByText('1 game')).toBeInTheDocument();
-    expect(tileValue('Points per game')).toBe('3.0');
-  });
-
-  it('lists the games newest first, and a tap anywhere on a row opens its report', async () => {
-    const demo = await seedDemo();
-    const { user, router } = renderRoute(paths.stats);
-    const log = await screen.findByRole('table', { name: 'Game log' });
-
-    const rows = within(log).getAllByRole('row').slice(1);
-    expect(rows).toHaveLength(10);
-    const links = rows.map((row) => within(row).getByRole('link').getAttribute('href'));
-    expect(links).toEqual(
-      Array.from({ length: 10 }, (_, index) => paths.gameReport(demoGameId(10 - index))),
-    );
-
-    // The newest game's line.
-    const newest = demo.games.find((game) => game.id === demoGameId(10));
-    if (!newest) throw new Error('Missing the newest demo game');
-    const [line] = statLinesForGames([newest], demo.events);
-    const [first] = rows;
-    if (!first || !line) throw new Error('Missing the first row');
-    expect(within(first).getByRole('rowheader')).toHaveTextContent(
-      `${opponentLabel(newest)}, ${formatShortDate(newest.date)}`,
-    );
-    expect(
-      within(first)
-        .getAllByRole('cell')
-        .map((cell) => cell.textContent),
-    ).toEqual([
-      `W ${newest.teamScore}–${newest.opponentScore}`,
-      String(line.line.pts),
-      String(line.line.reb),
-      String(line.line.ast),
-      String(line.line.stl),
-      String(line.line.blk),
-      String(line.line.tov),
-      String(line.line.pf),
-      formatMadeAttempted(line.line.fgm, line.line.fga),
-      formatMadeAttempted(line.line.fg3m, line.line.fg3a),
-      formatMadeAttempted(line.line.ftm, line.line.fta),
-    ]);
-
-    const third = rows[2];
-    if (!third) throw new Error('Missing the third row');
-    await user.click(within(third).getAllByRole('cell')[1] as HTMLElement);
-    expect(router.state.location.pathname).toBe(paths.gameReport(demoGameId(8)));
-  });
-
-  it('charts points by default and switches to rebounds or assists', async () => {
-    const demo = await seedDemo();
-    const { user } = renderRoute(paths.stats);
-    const chart = await screen.findByRole('group', { name: 'Points by game' });
-    const expected = expectedSummary(demo.games, demo.events);
-
-    const bars = within(chart).getAllByRole('button');
-    expect(bars).toHaveLength(10);
-    const oldest = demo.games[0];
-    const [oldestLine] = statLinesForGames(demo.games.slice(0, 1), demo.events);
-    if (!oldest || !oldestLine) throw new Error('Missing the oldest demo game');
-    // Oldest on the left.
-    expect(bars[0]).toHaveAccessibleName(
-      `${formatShortDate(oldest.date)}, ${opponentLabel(oldest)}: ${oldestLine.line.pts} points`,
-    );
-    expect(screen.getByText('points per game')).toBeInTheDocument();
-    expect(screen.getByText(formatAvg(expected.averages.pts), { selector: 'span' })).toBeVisible();
-
-    await user.click(screen.getByRole('radio', { name: 'Rebounds' }));
-    const rebounds = screen.getByRole('group', { name: 'Rebounds by game' });
-    expect(within(rebounds).getAllByRole('button')[0]).toHaveAccessibleName(
-      new RegExp(`: ${oldestLine.line.reb} rebounds?$`),
-    );
-    expect(screen.getByText('rebounds per game')).toBeInTheDocument();
-    expect(rebounds).toHaveAccessibleDescription(
-      new RegExp(`^Rebounds in 10 games, .*Average ${formatAvg(expected.averages.reb)} a game\\.`),
-    );
-
-    await user.click(screen.getByRole('radio', { name: 'Assists' }));
-    expect(screen.getByRole('group', { name: 'Assists by game' })).toBeInTheDocument();
-    expect(screen.getByText('assists per game')).toBeInTheDocument();
-  });
-
-  it('reads one game from the chart on a tap, and lets go on a second tap', async () => {
-    const demo = await seedDemo();
-    const { user, router } = renderRoute(paths.stats);
-    const chart = await screen.findByRole('group', { name: 'Points by game' });
-    const game = demo.games[2];
-    const [entry] = statLinesForGames(demo.games.slice(2, 3), demo.events);
-    if (!game || !entry) throw new Error('Missing the third demo game');
-
-    const bar = within(chart).getAllByRole('button')[2] as HTMLElement;
-    await user.click(bar);
-    expect(bar).toHaveAttribute('aria-pressed', 'true');
-    expect(
-      screen.getByText(`${opponentLabel(game)} · L ${game.teamScore}–${game.opponentScore}`),
-    ).toBeInTheDocument();
-    const report = screen.getByRole('link', { name: /^Game report, / });
-    expect(report).toHaveAttribute('href', paths.gameReport(game.id));
-    expect(screen.queryByText('Average')).not.toBeInTheDocument();
-
-    await user.click(bar);
-    expect(bar).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByText('Average')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /^Game report, / })).not.toBeInTheDocument();
-
-    await user.click(bar);
-    await user.click(screen.getByRole('link', { name: /^Game report, / }));
-    expect(router.state.location.pathname).toBe(paths.gameReport(game.id));
-    expect(entry.line.pts).toBeGreaterThan(0);
-  });
-
-  it('scrubs through the games with a sideways drag, while a scroll selects nothing', async () => {
-    await seedDemo();
-    renderRoute(paths.stats);
-    const chart = await screen.findByRole('group', { name: 'Points by game' });
-    // jsdom has no layout: the chart's ten columns are 30px wide each.
-    vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({
-      x: 0,
-      y: 0,
-      top: 0,
-      left: 0,
-      right: 300,
-      bottom: 196,
-      width: 300,
-      height: 196,
-      toJSON: () => ({}),
-    });
-    const bars = within(chart).getAllByRole('button');
-    const second = bars[1] as HTMLElement;
-    const pressed = () => bars.filter((bar) => bar.getAttribute('aria-pressed') === 'true');
-    const touch = (pointerId: number, clientX: number) => ({
-      pointerId,
-      pointerType: 'touch',
-      clientX,
+      expect(screen.queryByRole('radiogroup', { name: 'Season' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Season/ })).toHaveTextContent('JV Fall');
     });
 
-    // A finger that lands on the chart and scrolls the page.
-    fireEvent.pointerDown(second, touch(1, 45));
-    fireEvent.pointerCancel(second, touch(1, 45));
-    expect(pressed()).toEqual([]);
+    it('shows all games, with no season picker, when no game has a season', async () => {
+      await addFinalGame({ opponent: 'Harbor', date: '2026-06-10' }, ['fg3_made'], [30, 20]);
+      renderRoute(paths.stats);
+      await waitForStats();
 
-    // A small wobble is still a tap...
-    fireEvent.pointerDown(second, touch(2, 45));
-    fireEvent.pointerMove(second, touch(2, 48));
-    expect(pressed()).toEqual([]);
-    // ...but sliding sideways reads each game on the way.
-    fireEvent.pointerMove(second, touch(2, 100));
-    expect(pressed()).toEqual([bars[3]]);
-    fireEvent.pointerMove(second, touch(2, 140));
-    fireEvent.pointerUp(second, touch(2, 140));
-    expect(pressed()).toEqual([bars[4]]);
-
-    // Dragging off the end stops at the last game.
-    fireEvent.pointerDown(second, touch(3, 45));
-    fireEvent.pointerMove(second, touch(3, 900));
-    fireEvent.pointerUp(second, touch(3, 900));
-    expect(pressed()).toEqual([bars[9]]);
-  });
-
-  it('moves through the chart with the arrow keys', async () => {
-    await seedDemo();
-    const { user } = renderRoute(paths.stats);
-    const chart = await screen.findByRole('group', { name: 'Points by game' });
-    const bars = within(chart).getAllByRole('button');
-
-    // One tab stop, the newest game, right after the stat picker. Focus reads it out.
-    expect(bars.filter((bar) => bar.tabIndex === 0)).toEqual([bars[9]]);
-    act(() => screen.getByRole('radio', { name: 'Points' }).focus());
-    await user.tab();
-    expect(bars[9]).toHaveFocus();
-    expect(bars[9]).toHaveAttribute('aria-pressed', 'true');
-
-    await user.keyboard('{ArrowLeft}');
-    expect(bars[8]).toHaveFocus();
-    expect(bars[8]).toHaveAttribute('aria-pressed', 'true');
-    expect(bars[9]).toHaveAttribute('aria-pressed', 'false');
-
-    await user.keyboard('{Home}');
-    expect(bars[0]).toHaveFocus();
-    expect(bars[0]).toHaveAttribute('aria-pressed', 'true');
-
-    await user.keyboard('{Escape}');
-    expect(bars[0]).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByText('Average')).toBeInTheDocument();
-
-    await user.keyboard('{Enter}');
-    expect(bars[0]).toHaveAttribute('aria-pressed', 'true');
-  });
-
-  it('shares a season recap, copying it when there is no share sheet', async () => {
-    const demo = await seedDemo();
-    const { user } = renderRoute(paths.stats);
-    await waitForStats();
-    // No share sheet in jsdom, so the recap goes to user-event's stand-in clipboard.
-    expect('share' in navigator).toBe(false);
-    const writeText = vi.spyOn(navigator.clipboard, 'writeText');
-
-    await user.click(screen.getByRole('button', { name: 'Share' }));
-    const expected = buildSeasonRecap(
-      demo.players[0],
-      'Fall 2026',
-      expectedSummary(demo.games, demo.events),
-    );
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expected));
-    expect(expected.split('\n')[0]).toBe('Ava — Fall 2026 (7–3)');
-    const toasts = screen.getByRole('status', { name: 'Notifications' });
-    expect(await within(toasts).findByText('Copied')).toBeInTheDocument();
-  });
-
-  it('marks where the season shot chart will go', async () => {
-    await seedDemo();
-    renderRoute(paths.stats);
-    await waitForStats();
-    expect(screen.getByRole('heading', { level: 2, name: 'Shot chart' })).toBeInTheDocument();
-    expect(screen.getByText('Season shot chart')).toBeInTheDocument();
-  });
-
-  it('invites the parent to start a game when there are no stats yet', async () => {
-    renderRoute(paths.stats);
-    expect(await screen.findByRole('heading', { name: 'No stats yet' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Start a game' })).toHaveAttribute(
-      'href',
-      paths.newGame,
-    );
-    expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
-  });
-
-  it('points back to the game in progress when it is the only one', async () => {
-    const live = await createGame({
-      opponent: 'Westfield',
-      date: TODAY,
-      season: 'Fall 2026',
-      periodFormat: 'quarters',
+      expect(screen.queryByRole('radiogroup', { name: 'Season' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Season/ })).not.toBeInTheDocument();
+      expect(screen.getByText('1 game')).toBeInTheDocument();
+      expect(tileValue('Points per game')).toBe('3.0');
     });
-    await recordStat(live.id, 'fg2_made');
-    renderRoute(paths.stats);
 
-    expect(
-      await screen.findByRole('heading', { name: 'No finished games yet' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/The game vs Westfield is still going/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Back to the game' })).toHaveAttribute(
-      'href',
-      paths.trackGame(live.id),
-    );
+    it('dates the chart axis with years when the games span New Year', async () => {
+      await addFinalGame({ opponent: 'Harbor', date: '2025-12-12' }, ['fg2_made'], [30, 20]);
+      await addFinalGame({ opponent: 'Bayside', date: '2026-01-10' }, ['fg3_made'], [30, 20]);
+      const { container } = renderRoute(paths.stats);
+      await screen.findByRole('group', { name: 'Points by game' });
+
+      const axisText = [...container.querySelectorAll('svg text')].map((text) => text.textContent);
+      expect(axisText).toEqual(expect.arrayContaining(['Dec 12, 2025', 'Jan 10, 2026']));
+      expect(screen.getByText('2 games · Dec 12, 2025 – Jan 10, 2026')).toBeInTheDocument();
+    });
+  });
+
+  describe('before any game is finished', () => {
+    it('invites the parent to start a game when there are no stats yet', async () => {
+      renderRoute(paths.stats);
+      expect(await screen.findByRole('heading', { name: 'No stats yet' })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Start a game' })).toHaveAttribute(
+        'href',
+        paths.newGame,
+      );
+      expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+    });
+
+    it('points back to the game in progress when it is the only one', async () => {
+      const live = await createGame({
+        opponent: 'Westfield',
+        date: TODAY,
+        season: 'Fall 2026',
+        periodFormat: 'quarters',
+      });
+      await recordStat(live.id, 'fg2_made');
+      renderRoute(paths.stats);
+
+      expect(
+        await screen.findByRole('heading', { name: 'No finished games yet' }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/The game vs Westfield is still going/)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Back to the game' })).toHaveAttribute(
+        'href',
+        paths.trackGame(live.id),
+      );
+    });
   });
 });

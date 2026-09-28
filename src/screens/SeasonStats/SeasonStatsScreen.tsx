@@ -183,14 +183,15 @@ export function SeasonStatsScreen() {
   const ready =
     games && seasons && player !== undefined && key && entries && summary && oldestFirst;
   const season = key ? seasonOf(key) : null;
+  // What the numbers cover: the season, or every game ("All seasons" once there are some).
+  const scopeLabel = season ?? (seasons?.length ? 'All seasons' : ALL_GAMES_LABEL);
   const hasStats = Boolean(ready && entries.length > 0);
 
   const share = async () => {
     if (!summary) return;
-    const label = season ?? ALL_GAMES_LABEL;
     const result = await shareText({
-      title: `${formatPlayerName(player)} — ${label}`,
-      text: buildSeasonRecap(player, season, summary),
+      title: `${formatPlayerName(player)} — ${scopeLabel}`,
+      text: buildSeasonRecap(player, scopeLabel, summary),
     });
     if (result === 'copied') toast.show({ message: 'Copied' });
     else if (result === 'failed') toast.show({ message: 'Couldn’t share or copy the recap' });
@@ -200,7 +201,11 @@ export function SeasonStatsScreen() {
   if (ready) {
     const liveInView = games.filter((game) => game.status === 'live' && inSeason(game, key));
     const note = liveGamesNote(liveInView);
-    const rangeLabel = season ?? (seasons.length > 0 ? 'All seasons' : null);
+    // With no season labels at all, "All games · 10 games" would say it twice.
+    const caption =
+      seasons.length > 0
+        ? `${scopeLabel} · ${formatGameCount(summary.gamesPlayed)}`
+        : formatGameCount(summary.gamesPlayed);
 
     content =
       finalGames?.length === 0 ? (
@@ -212,13 +217,7 @@ export function SeasonStatsScreen() {
               <SeasonPicker seasons={seasons} value={key} onChange={chooseSeason} />
             ) : null}
             {entries.length > 0 ? (
-              <SummaryCard
-                player={player}
-                caption={[rangeLabel, formatGameCount(summary.gamesPlayed)]
-                  .filter(Boolean)
-                  .join(' · ')}
-                record={summary.record}
-              />
+              <SummaryCard player={player} caption={caption} record={summary.record} />
             ) : null}
             {note ? <p className={styles.footnote}>{note}</p> : null}
           </div>
@@ -242,11 +241,12 @@ export function SeasonStatsScreen() {
               />
 
               <Section title="Game by game">
-                <TrendChart entries={oldestFirst} averages={summary.averages} />
+                {/* A new season starts the chart afresh: no game still selected from the last. */}
+                <TrendChart key={key} entries={oldestFirst} averages={summary.averages} />
               </Section>
 
               <Section title="Totals">
-                <TotalsTable label={season ?? ALL_GAMES_LABEL} summary={summary} />
+                <TotalsTable label={scopeLabel} summary={summary} />
               </Section>
 
               <Section title="Game log">
