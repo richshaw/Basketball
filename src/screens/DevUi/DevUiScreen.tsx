@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import { Badge } from '@/components/Badge/Badge';
 import { Button } from '@/components/Button/Button';
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
@@ -15,6 +16,7 @@ import { TextArea, TextField } from '@/components/TextField/TextField';
 import { useToast } from '@/components/Toast/toastContext';
 import { shareText, type ShareResult } from '@/lib/share';
 import { paths } from '@/routes';
+import { CourtDemo } from './CourtDemo';
 import * as demo from './demoData';
 import styles from './DevUiScreen.module.css';
 
@@ -194,7 +196,10 @@ export function DevUiScreen() {
           </GroupedList>
         </Section>
 
-        <Section title="StatTable" note="Wide tables scroll sideways under a sticky first column.">
+        <Section
+          title="StatTable"
+          note="Wide tables scroll sideways under a sticky first column. The game log has linkedRows: a tap anywhere on a row opens its game."
+        >
           <StatTable
             caption="Box score by quarter"
             columns={demo.boxScoreColumns}
@@ -205,8 +210,16 @@ export function DevUiScreen() {
           <StatTable
             caption="Game log"
             columns={demo.gameLogColumns}
-            rows={demo.gameLogRows}
+            rows={demo.gameLogRows.map((row) => ({
+              ...row,
+              game: (
+                <Link to={paths.gameReport('demo')} className={styles.tableLink}>
+                  {row.game}
+                </Link>
+              ),
+            }))}
             totalRow={demo.gameLogAverage}
+            linkedRows
           />
         </Section>
 
@@ -299,6 +312,13 @@ export function DevUiScreen() {
           <Button size="lg" block>
             Start game
           </Button>
+        </Section>
+
+        <Section
+          title="Court"
+          note="Shot chart pieces with the demo season. Tap the court to pick a spot; the latest game's shots show faintly."
+        >
+          <CourtDemo />
         </Section>
       </ScreenBody>
 

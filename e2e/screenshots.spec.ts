@@ -111,6 +111,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
         await page.goto(appUrl(screen.path));
         await expectRoute(page, screen.path);
         await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
+        // Screens that read data mark it aria-busy until it's in (e.g. Stats): wait for it.
+        await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
         await page.evaluate(() => document.fonts.ready);
         await screen.interact?.(page);
 
