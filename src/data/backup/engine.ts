@@ -314,7 +314,7 @@ export class BackupEngine {
     this.read = options.read ?? readObservation;
     this.lock = options.lock ?? deviceLock;
     this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
-    this.runtime = { uploading: false, online: this.environment.isOnline() };
+    this.runtime = { uploading: false, forced: false, online: this.environment.isOnline() };
   }
 
   // -------------------------------------------------------------------------
@@ -335,7 +335,13 @@ export class BackupEngine {
 
   private setRuntime(change: Partial<BackupRuntime>): void {
     const next = { ...this.runtime, ...change };
-    if (next.uploading === this.runtime.uploading && next.online === this.runtime.online) return;
+    if (
+      next.uploading === this.runtime.uploading &&
+      next.forced === this.runtime.forced &&
+      next.online === this.runtime.online
+    ) {
+      return;
+    }
     this.runtime = next;
     for (const listener of this.listeners) listener();
   }
@@ -644,7 +650,7 @@ export class BackupEngine {
         return await this.tryUpload(options, abort.signal);
       } finally {
         if (this.uploadAbort === abort) this.uploadAbort = undefined;
-        this.setRuntime({ uploading: false });
+        this.setRuntime({ uploading: false, forced: false });
       }
     });
   }
@@ -687,7 +693,7 @@ export class BackupEngine {
     if (stopped()) return skipped('suspended');
 
     this.lastAttemptAt = now;
-    this.setRuntime({ uploading: true });
+    this.setRuntime({ uploading: true, forced: overrides.length > 0 });
     const checkOtherDevice = !overrides.includes('other-device');
     // Held back for a problem other than the ones overridden: the parent is asked
     // about that one, and the overridden ones stay confirmed for the next time.

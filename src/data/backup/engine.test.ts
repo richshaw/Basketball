@@ -29,6 +29,7 @@ import { BackupEngine, observeDatabase, readObservation, type BackupObservation 
 import { deriveBackupKeys } from './keys';
 import { decryptSnapshot, encryptSnapshot } from './snapshot';
 import { loadBackupState, turnOnBackupState } from './state';
+import type { BackupRuntime } from './status';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -1327,6 +1328,35 @@ describe('"Back up anyway" (force)', () => {
     expect(h.server.uploads.at(-1)?.version).not.toBe(theirs.version);
     expect(await loadBackupState()).not.toHaveProperty('confirmedPauses');
     expect((await h.engine.getStatus()).state).toBe('idle');
+  });
+
+  it('says which attempts are forced, so one that will be held keeps its pause on screen', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    await clearAllData();
+    await h.notify();
+    await h.advance(MINUTE);
+    expect((await h.engine.getStatus()).state).toBe('paused-shrink');
+
+    // A plain "Back up now" checks again and is held: it runs unforced, and the status
+    // keeps the pause all along.
+    const seen: BackupRuntime[] = [];
+    const unsubscribe = h.engine.subscribe(() => seen.push(h.engine.getRuntime()));
+    expect(await h.engine.backUpNow()).toMatchObject({ ok: false, error: { kind: 'shrink' } });
+    expect(seen).toContainEqual({ uploading: true, forced: false, online: true });
+
+    // "Back up anyway" runs forced, and shows as backing up until it's done.
+    const release = h.server.hold();
+    const forced = h.engine.backUpNow({ force: true });
+    await vi.waitFor(async () => {
+      expect((await h.engine.getStatus()).state).toBe('backing-up');
+    });
+    expect(h.engine.getRuntime()).toEqual({ uploading: true, forced: true, online: true });
+    release();
+    expect((await forced).ok).toBe(true);
+    expect(h.engine.getRuntime()).toEqual({ uploading: false, forced: false, online: true });
+    unsubscribe();
   });
 
   it('with nothing paused, still checks for another phone', async () => {
