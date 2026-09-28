@@ -494,15 +494,44 @@ describe('recordStat', () => {
       expect((await undoLastStat(game.id))?.id).toBe('third');
     });
 
-    it('moves a tap time another stat of the game has to the next free millisecond', async () => {
-      const game = await newGame();
-      const other = await newGame({ opponent: 'Roosevelt' });
-      await recordStat(game.id, 'ast', undefined, { at: T0 });
-      await recordStat(game.id, 'ast', undefined, { at: T0 + 1 });
-      await recordStat(other.id, 'ast', undefined, { at: T0 + 2 });
-      const stat = await recordStat(game.id, 'stl', undefined, { id: 'late', at: T0 });
-      expect(stat.createdAt).toBe(T0 + 2);
-      expect((await getGameEvents(game.id)).map((e) => e.createdAt)).toEqual([T0, T0 + 1, T0 + 2]);
+    describe('when another stat of the game has its tap time', () => {
+      /** The game's stats as 'id@ms after T0', in order. */
+      async function order(gameId: string) {
+        return (await getGameEvents(gameId)).map((e) => `${e.id}@${e.createdAt - T0}`);
+      }
+
+      it('takes the free millisecond just after it, before any stat tapped later', async () => {
+        const game = await newGame();
+        const other = await newGame({ opponent: 'Roosevelt' });
+        await recordStat(game.id, 'ast', undefined, { id: 'same', at: T0 });
+        await recordStat(game.id, 'blk', undefined, { id: 'later', at: T0 + 2 });
+        await recordStat(other.id, 'ast', undefined, { at: T0 + 1 });
+        const stat = await recordStat(game.id, 'stl', undefined, { id: 'late', at: T0 });
+        expect(stat.createdAt).toBe(T0 + 1);
+        expect(await order(game.id)).toEqual(['same@0', 'late@1', 'later@2']);
+      });
+
+      it('takes the one just before it when the next one is taken, never passing a later stat', async () => {
+        const game = await newGame();
+        // Stats tapped at T0 (in the same millisecond, e.g. in another tab) and after it.
+        for (const [index, type] of (['stl', 'ast', 'blk'] as const).entries()) {
+          await recordStat(game.id, type, undefined, { id: `s${index}`, at: T0 + index });
+        }
+        // A tap kept since T0 is saved late.
+        await recordStat(game.id, 'foul', undefined, { id: 'late', at: T0 });
+        expect(await order(game.id)).toEqual(['late@-1', 's0@0', 's1@1', 's2@2']);
+        expect((await undoLastStat(game.id))?.id).toBe('s2');
+      });
+
+      it('moves on past the taken milliseconds only when both sides are taken', async () => {
+        const game = await newGame();
+        for (const time of [T0 - 1, T0, T0 + 1, T0 + 2]) {
+          await recordStat(game.id, 'ast', undefined, { id: `s${time - T0}`, at: time });
+        }
+        const stat = await recordStat(game.id, 'stl', undefined, { id: 'late', at: T0 });
+        expect(stat.createdAt).toBe(T0 + 3);
+        expect(await order(game.id)).toEqual(['s-1@-1', 's0@0', 's1@1', 's2@2', 'late@3']);
+      });
     });
 
     it('rejects an id another stat has, and a tap time that is not a timestamp', async () => {

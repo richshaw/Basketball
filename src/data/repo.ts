@@ -346,8 +346,10 @@ export interface RecordStatOptions {
   /**
    * When it was tapped (epoch ms), used as its `createdAt`, so it sorts where it was
    * tapped however late it's saved. Make it with `nextTimestamp` after the game's
-   * latest stat; if another stat of the game already has that time, the next free
-   * millisecond is used. Leave it out for "now", just after the game's latest stat.
+   * latest stat; if another stat of the game already has that time, the free
+   * millisecond just after it (or else just before it) is used, so it still sorts
+   * between the stats tapped before and after it. Leave it out for "now", just after
+   * the game's latest stat.
    */
   at?: number;
   /**
@@ -357,12 +359,22 @@ export interface RecordStatOptions {
   period?: number;
 }
 
-/** `at`, or the first millisecond after it that no other stat of the game has. */
+/**
+ * A time for a stat tapped at `at` that no other stat of the game has: `at`, else the
+ * millisecond just after it, else the one just before it. Either way it keeps its place
+ * among the stats tapped before and after it (one tapped in the same millisecond may
+ * end up on either side). Only if all three are taken (stats in three milliseconds in a
+ * row, e.g. from two tabs) does it move on to the next free millisecond after them,
+ * past a stat or two tapped a moment later.
+ */
 async function freeTimestamp(gameId: string, at: number): Promise<number> {
-  let time = at;
-  while ((await db.events.where('[gameId+createdAt]').equals([gameId, time]).count()) > 0) {
-    time += 1;
-  }
+  const taken = async (time: number) =>
+    (await db.events.where('[gameId+createdAt]').equals([gameId, time]).count()) > 0;
+  if (!(await taken(at))) return at;
+  if (!(await taken(at + 1))) return at + 1;
+  if (at > 0 && !(await taken(at - 1))) return at - 1;
+  let time = at + 2;
+  while (await taken(time)) time += 1;
   return time;
 }
 
