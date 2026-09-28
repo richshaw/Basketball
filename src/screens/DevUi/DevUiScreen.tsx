@@ -13,6 +13,7 @@ import { TextArea, TextField } from '@/components/TextField/TextField';
 import { useToast } from '@/components/Toast/toastContext';
 import { shareText, type ShareResult } from '@/lib/share';
 import { paths } from '@/routes';
+import { CourtDemo } from './CourtDemo';
 import * as demo from './demoData';
 import styles from './DevUiScreen.module.css';
 
@@ -274,6 +275,13 @@ export function DevUiScreen() {
           <Button size="lg" block>
             Start game
           </Button>
+        </Section>
+
+        <Section
+          title="Court"
+          note="Shot chart pieces with the demo season. Tap the court to pick a spot; the latest game's shots show faintly."
+        >
+          <CourtDemo />
         </Section>
       </div>
 
