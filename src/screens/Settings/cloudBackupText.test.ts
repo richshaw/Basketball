@@ -1,0 +1,215 @@
+import { describe, expect, it } from 'vitest';
+import type { CloudBackupStatus } from '@/data/backup/cloudBackup';
+import { buildRealData } from '@/test/backupHarness';
+import {
+  backUpAnywayMessage,
+  cloudBackupSummary,
+  codeFromTyped,
+  describeStatus,
+  formatBackupTime,
+  formatWhen,
+  otherDeviceMessage,
+  shareableCode,
+  shrinkMessage,
+  timeAgo,
+} from './cloudBackupText';
+
+/** Sep 28, 2026, 7:42 PM local time. */
+const NOW = new Date(2026, 8, 28, 19, 42).getTime();
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+
+const on = (status: Partial<CloudBackupStatus>): CloudBackupStatus => ({
+  available: true,
+  enabled: true,
+  state: 'idle',
+  pendingChanges: false,
+  ...status,
+});
+
+describe('timeAgo', () => {
+  it.each([
+    [0, 'just now'],
+    [59_999, 'just now'],
+    [MINUTE, 'a minute ago'],
+    [2 * MINUTE + 59_000, '2 minutes ago'],
+    [59 * MINUTE, '59 minutes ago'],
+    [HOUR, 'an hour ago'],
+    [23 * HOUR + 59 * MINUTE, '23 hours ago'],
+    [24 * HOUR, 'on Sep 27'],
+    // A clock that moved back never makes it "in the future".
+    [-5 * MINUTE, 'just now'],
+  ])('%i ms ago is "%s"', (elapsed, text) => {
+    expect(timeAgo(NOW - elapsed, NOW)).toBe(text);
+  });
+
+  it('names the year of a day in another year', () => {
+    expect(timeAgo(new Date(2025, 11, 30, 9).getTime(), NOW)).toBe('on Dec 30, 2025');
+  });
+});
+
+describe('formatWhen', () => {
+  it('gives the time today, and the day too otherwise', () => {
+    expect(formatWhen(new Date(2026, 8, 28, 19, 45).getTime(), NOW)).toBe('at 7:45 PM');
+    expect(formatWhen(new Date(2026, 8, 29, 7, 5).getTime(), NOW)).toBe('on Sep 29 at 7:05 AM');
+  });
+});
+
+describe('cloudBackupSummary', () => {
+  it('says when the phone made the backup, its games and the player', () => {
+    const file = buildRealData();
+    expect(cloudBackupSummary({ exportedAt: NOW, file })).toEqual([
+      'Backup from Sep 28, 2026, 7:42 PM',
+      '10 games',
+      'Ava #12',
+    ]);
+    expect(formatBackupTime(NOW)).toBe('Sep 28, 2026, 7:42 PM');
+    expect(
+      cloudBackupSummary({ exportedAt: NOW, file: { ...file, players: [], games: [] } }),
+    ).toEqual(['Backup from Sep 28, 2026, 7:42 PM', 'No games']);
+  });
+});
+
+describe('describeStatus', () => {
+  it('says when it last backed up, and when newer changes are waiting', () => {
+    expect(describeStatus(on({ lastSuccessAt: NOW - 2 * MINUTE }), NOW)).toEqual({
+      title: 'Backed up 2 minutes ago',
+      detail: undefined,
+      tone: 'ok',
+    });
+    expect(
+      describeStatus(on({ lastSuccessAt: NOW - 2 * MINUTE, pendingChanges: true }), NOW),
+    ).toMatchObject({
+      title: 'Backed up 2 minutes ago',
+      detail: 'Newer changes will back up soon.',
+    });
+    expect(describeStatus(on({ pendingChanges: true }), NOW)).toEqual({
+      title: 'Not backed up yet',
+      detail: 'Will back up soon.',
+      tone: 'waiting',
+    });
+  });
+
+  it('shows a backup running, and one waiting for signal', () => {
+    expect(describeStatus(on({ state: 'backing-up', lastSuccessAt: NOW - HOUR }), NOW)).toEqual({
+      title: 'Backing up…',
+      detail: 'Last backed up an hour ago.',
+      tone: 'busy',
+    });
+    expect(describeStatus(on({ state: 'backing-up' }), NOW).detail).toBeUndefined();
+    expect(
+      describeStatus(on({ state: 'waiting-for-signal', lastSuccessAt: NOW - 3 * HOUR }), NOW),
+    ).toEqual({
+      title: 'Waiting for signal: will back up automatically',
+      detail: 'Your stats are safe on this phone. Last backed up 3 hours ago.',
+      tone: 'offline',
+    });
+    expect(describeStatus(on({ state: 'waiting-for-signal' }), NOW).detail).toBe(
+      'Your stats are safe on this phone. Not backed up yet.',
+    );
+  });
+
+  it("gives the engine's message and when it will try again after a failure", () => {
+    const lastError = { kind: 'server-busy', message: 'The backup server is busy.', at: NOW };
+    expect(
+      describeStatus(on({ state: 'error', lastError, nextAttemptAt: NOW + 5 * MINUTE }), NOW),
+    ).toEqual({
+      title: 'Backup will try again at 7:47 PM',
+      detail: 'The backup server is busy.',
+      tone: 'attention',
+    });
+    // Due already (e.g. the app was asleep): it tries again as soon as it can.
+    expect(
+      describeStatus(on({ state: 'error', lastError, nextAttemptAt: NOW - MINUTE }), NOW).title,
+    ).toBe('Backup will try again soon');
+  });
+
+  it('explains a stop or a pause', () => {
+    const lastError = { kind: 'too-large', message: 'Your stats are too big.', at: NOW };
+    expect(describeStatus(on({ state: 'needs-attention', lastError }), NOW)).toEqual({
+      title: 'Backup stopped',
+      detail: 'Your stats are too big.',
+      tone: 'attention',
+    });
+    expect(
+      describeStatus(
+        on({ state: 'paused-shrink', shrink: { backedUpGames: 10, missingGames: 10 } }),
+        NOW,
+      ),
+    ).toEqual({
+      title: 'Backup paused',
+      detail:
+        'None of the 10 games in your last backup are on this phone, so automatic backup is paused to keep that backup safe.',
+      tone: 'attention',
+    });
+    expect(
+      describeStatus(
+        on({ state: 'paused-other-device', otherDevice: { backedUpAt: NOW - 5 * MINUTE } }),
+        NOW,
+      ),
+    ).toEqual({
+      title: 'Backup paused',
+      detail:
+        'Another phone backed up with this backup code 5 minutes ago, so this phone stopped backing up to keep from replacing that backup.',
+      tone: 'attention',
+    });
+  });
+});
+
+describe('shrinkMessage', () => {
+  it.each([
+    [{ backedUpGames: 1, missingGames: 1 }, "The game in your last backup isn't on this phone"],
+    [
+      { backedUpGames: 2, missingGames: 2 },
+      'Neither of the 2 games in your last backup is on this phone',
+    ],
+    [
+      { backedUpGames: 12, missingGames: 4 },
+      "4 of the 12 games in your last backup aren't on this phone",
+    ],
+    [
+      { backedUpGames: 3, missingGames: 1 },
+      "1 of the 3 games in your last backup isn't on this phone",
+    ],
+    [{ backedUpGames: 5, missingGames: 0 }, 'Your last backup has stats but this phone has none'],
+    [undefined, "Some games in your last backup aren't on this phone"],
+  ])('%o', (shrink, start) => {
+    expect(shrinkMessage(shrink)).toBe(
+      `${start}, so automatic backup is paused to keep that backup safe.`,
+    );
+  });
+});
+
+describe('otherDeviceMessage', () => {
+  it('says when the other phone backed up, if the server said', () => {
+    expect(otherDeviceMessage({}, NOW)).toBe(
+      'Another phone backed up with this backup code since this phone last did, so this phone stopped backing up to keep from replacing that backup.',
+    );
+  });
+});
+
+describe('backUpAnywayMessage', () => {
+  it('says what the backup loses and what the server keeps', () => {
+    const keeps =
+      'Older backups stay available for a while: the server keeps your last 20, plus one for each of the last 180 days you backed up.';
+    expect(backUpAnywayMessage({ backedUpGames: 10, missingGames: 10 })).toBe(
+      `This replaces your online backup with what's on this phone, without the 10 missing games. ${keeps}`,
+    );
+    expect(backUpAnywayMessage({ backedUpGames: 3, missingGames: 1 })).toBe(
+      `This replaces your online backup with what's on this phone, without the missing game. ${keeps}`,
+    );
+    expect(backUpAnywayMessage({ backedUpGames: 3, missingGames: 0 })).toBe(
+      `This replaces your online backup with what's on this phone. ${keeps}`,
+    );
+  });
+});
+
+describe('sharing the code', () => {
+  it('labels a shared code, and reads the label back off a pasted one', () => {
+    const code = '7K3M-9QXA-B2CD-EF45-GH67-JK89-MN0P';
+    expect(shareableCode(code)).toBe(`Hoop Stats backup code: ${code}`);
+    expect(codeFromTyped(shareableCode(code))).toBe(code);
+    expect(codeFromTyped(' hoop stats backup code 7k3m 9qxa ')).toBe('7k3m 9qxa');
+    expect(codeFromTyped(code)).toBe(code);
+  });
+});
