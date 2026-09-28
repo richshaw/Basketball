@@ -1,0 +1,54 @@
+/*
+ * Laid over the stat strip like the "not saved" row (its parent is position: relative),
+ * exactly its size, so nothing below it moves. The inverse fill of a toast: calm, and
+ * clearly a message rather than the stats.
+ */
+.row {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background-color: var(--color-inverse);
+  color: var(--color-on-inverse);
+}
+
+.message {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  line-height: var(--line-height-tight);
+}
+
+.title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+.hint {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* The inverse fill as text on its own text color: the same (AA) pair, the other way round. */
+.reload {
+  flex-shrink: 0;
+  align-self: stretch;
+  min-width: calc(2 * var(--tap-target));
+  min-height: var(--tap-target);
+  padding-inline: var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--color-on-inverse);
+  color: var(--color-inverse);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-heavy);
+}
+
+.reload:active {
+  transform: scale(0.96);
+}

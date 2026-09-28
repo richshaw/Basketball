@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
 import { demoGameId, seedDemoData } from '@/data/demo';
+import { READ_RETRY_DELAYS_MS } from '@/data/hooks';
 import { replayPendingStats, retryPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
 import { addPendingStat, listPendingStats, newPendingStat } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
@@ -1053,6 +1054,101 @@ describe('TrackGameScreen', () => {
       await screen.findByRole('group', { name: 'Record a stat' });
       expect(notSaved()).not.toBeInTheDocument();
       await expectStrip(`Turnovers: ${before.filter((type) => type === 'tov').length}`);
+    });
+  });
+
+  describe('when the saved stats cannot be read', () => {
+    const CANT_READ = "Can't read saved stats right now.";
+    const lost = () =>
+      new DOMException('Connection to Indexed Database server lost.', 'UnknownError');
+    const readNote = () => screen.queryByText(CANT_READ);
+
+    beforeEach(() => {
+      // Each failed read is logged; that's expected here.
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    it('stays up with what it read last, still counts and keeps taps, and reads again once it can', async () => {
+      const game = await newGame();
+      await recordStat(game.id, 'stl');
+      await renderTracking(game);
+      await expectStrip('Steals: 1');
+
+      // Reading the stats fails from now on (as when WebKit loses its connection); the
+      // next tap's save lands, and the screen can't read it back.
+      const reads = vi.spyOn(repo, 'getGameEvents').mockRejectedValue(lost());
+      fireEvent.click(statButton('Steal'));
+      expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+      expect(screen.getByText('Your taps are kept on this phone.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled();
+      expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull();
+      await expectStrip('Steals: 2');
+
+      // Saves fail now too: a tap still counts, at once, and is kept on the phone.
+      const saves = vi.spyOn(repo, 'recordStat').mockRejectedValue(lost());
+      fireEvent.click(statButton('Block'));
+      expect(lastAction()).toHaveTextContent('Block · Q1');
+      await expectStrip('Blocks: 1');
+      await waitFor(() => expect(notSaved()).not.toBeInTheDocument());
+      expect(listPendingStats().map((stat) => stat.type)).toEqual(['blk']);
+      expect(readNote()).toBeInTheDocument();
+
+      // The database works again, and the app comes back into view: it reads again (and
+      // saves the Block), without a reload.
+      reads.mockRestore();
+      saves.mockRestore();
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await waitFor(() => expect(readNote()).not.toBeInTheDocument());
+      await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl', 'stl', 'blk']));
+      await expectStrip('Steals: 2', 'Blocks: 1');
+      expect(listPendingStats()).toEqual([]);
+      expect(notSaved()).not.toBeInTheDocument();
+    });
+
+    it('reads again on its own a moment later', async () => {
+      const game = await newGame();
+      await renderTracking(game);
+      vi.spyOn(repo, 'getGameEvents').mockRejectedValueOnce(lost());
+      fireEvent.click(statButton('Assist'));
+      expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+      await waitFor(() => expect(readNote()).not.toBeInTheDocument(), {
+        timeout: (READ_RETRY_DELAYS_MS[0] ?? 0) + 2000,
+      });
+      await expectStrip('Assists: 1');
+    });
+
+    it("never offers Reload while a tap isn't kept on the phone: it would lose it", async () => {
+      const game = await newGame();
+      await renderTracking(game);
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      });
+      vi.spyOn(repo, 'getGameEvents').mockRejectedValue(lost());
+      fireEvent.click(statButton('Steal')); // saved (but not kept); reading it back fails
+      expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+      // Saved: a reload loses nothing.
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+      vi.spyOn(repo, 'recordStat').mockRejectedValue(lost());
+      fireEvent.click(statButton('Block')); // neither saved nor kept
+      expect(screen.getByText('Keep the app open until your taps are saved.')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+      // Once its save has failed, its own row says so.
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        "Block not saved It's not kept on this phone. Keep the app open until it's saved.",
+      );
+      expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+    });
+
+    it('shows the error screen if even the first read fails: there is nothing to keep yet', async () => {
+      const game = await newGame();
+      vi.spyOn(repo, 'getGame').mockRejectedValue(lost());
+      renderRoute(paths.trackGame(game.id));
+      expect(
+        await screen.findByRole('heading', { name: 'Something went wrong' }),
+      ).toBeInTheDocument();
     });
   });
 

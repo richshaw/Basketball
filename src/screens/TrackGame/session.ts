@@ -146,6 +146,11 @@ export interface SessionSnapshot {
   readonly unsaved: readonly Tap[];
   /** Every one of those is kept in the journal (on this phone, even across a relaunch). */
   readonly unsavedKept: boolean;
+  /**
+   * Every tap that isn't confirmed saved (being saved or not) is kept in the journal, so
+   * a reload would lose none.
+   */
+  readonly allKept: boolean;
   /** Some of them are being saved again right now (not counting quiet background tries). */
   readonly retrying: boolean;
   /**
@@ -242,6 +247,7 @@ export class TrackingSession implements UnsavedTapHolder {
     const pending = this.taps.filter((record) => !record.undone);
     const unsaved = pending.filter((record) => record.hasFailed && record.status !== 'saved');
     const unsavedKept = unsaved.every((record) => record.kept);
+    const allKept = pending.every((record) => record.kept || record.status === 'saved');
     const retrying = unsaved.some((record) => record.status === 'saving' && !record.quiet);
     const takenBack = [
       ...new Set([
@@ -253,6 +259,7 @@ export class TrackingSession implements UnsavedTapHolder {
     if (
       previous?.period === this.period &&
       previous.unsavedKept === unsavedKept &&
+      previous.allKept === allKept &&
       previous.retrying === retrying &&
       sameTaps(previous.pending, pending) &&
       sameTaps(previous.unsaved, unsaved) &&
@@ -265,6 +272,7 @@ export class TrackingSession implements UnsavedTapHolder {
       pending: pending.map(tapOf),
       unsaved: unsaved.map(tapOf),
       unsavedKept,
+      allKept,
       retrying,
       takenBack,
     };

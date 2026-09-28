@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useToast } from '@/components/Toast/toastContext';
-import { useGame, useGameEvents } from '@/data/hooks';
+import { useSteadyGame, useSteadyGameEvents } from '@/data/hooks';
 import { endGame, type FinalScore } from '@/data/repo';
 import { computeStatLine, periodLabel } from '@/data/stats';
 import { MAX_PERIOD, type Game, type StatEvent, type StatType } from '@/data/types';
@@ -17,6 +17,7 @@ import { LastActionLine, type LastAction } from './LastActionLine';
 import { LogSheet } from './LogSheet';
 import { NotSavedSheet } from './NotSavedSheet';
 import { PeriodSheet } from './PeriodSheet';
+import { ReadFailedNote } from './ReadFailedNote';
 import type { NotSaved, TakingBack, Tap } from './session';
 import { StatGrid } from './StatGrid';
 import { StatStrip } from './StatStrip';
@@ -47,8 +48,16 @@ function foulNote(fouls: number): string {
   return fouls >= FOUL_TROUBLE_AT ? ` · ${fouls} fouls` : '';
 }
 
+interface TrackerProps {
+  game: Game;
+  /** The game's saved stats, oldest first. */
+  events: StatEvent[];
+  /** The latest read of the game or its stats failed: `game` and `events` are the last read. */
+  readFailed: boolean;
+}
+
 /** The live tracking UI for a loaded game. */
-function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
+function Tracker({ game, events, readFailed }: TrackerProps) {
   const toast = useToast();
   const confirm = useConfirm();
   const navigate = useNavigate();
@@ -77,7 +86,7 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   // Done on a finished game: the stats that weren't saved, and whether it's busy.
   const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [session, { period, pending, unsaved, unsavedKept, retrying, takenBack }] =
+  const [session, { period, pending, unsaved, unsavedKept, allKept, retrying, takenBack }] =
     useTrackingSession(game.id, game.currentPeriod, events);
   // A double tap on the grid's Undo or on Next acts once.
   const [undoGuard] = useState(() => createTapGuard());
@@ -300,7 +309,17 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
         {isFinal ? <p className={styles.banner}>Editing a finished game</p> : null}
         <div className={styles.stripArea}>
           <StatStrip line={line} />
-          <UnsavedStats unsaved={unsaved} kept={unsavedKept} retrying={retrying} onRetry={retry} />
+          {/* A tap not saved and not kept keeps its own row: it asks to keep the app open. */}
+          {readFailed && (unsaved.length === 0 || unsavedKept) ? (
+            <ReadFailedNote kept={allKept} />
+          ) : (
+            <UnsavedStats
+              unsaved={unsaved}
+              kept={unsavedKept}
+              retrying={retrying}
+              onRetry={retry}
+            />
+          )}
         </div>
         {/*
           The shot chart (a later PR) slots in here, above the grid: the grid takes
@@ -386,16 +405,31 @@ function GameNotFound() {
  * screen on purpose: no tab bar and no update banner may interrupt a live game.
  * Every tap is kept on the phone and saved at once; nothing here ever waits on the
  * database first, and a tap that couldn't be saved stays on screen until it is (see
- * session.ts), even across a relaunch.
+ * session.ts), even across a relaunch. A read of the saved stats that fails doesn't
+ * take the screen down either: it keeps what it read last, says so calmly, and reads
+ * again on its own.
  */
 export function TrackGameScreen() {
   const { gameId } = useParams();
-  const game = useGame(gameId);
-  const events = useGameEvents(gameId);
+  const game = useSteadyGame(gameId);
+  const events = useSteadyGameEvents(gameId);
 
-  if (game === null) return <GameNotFound />;
-  // Still loading (IndexedDB answers within a frame or two): show nothing rather
-  // than a placeholder layout that would jump.
-  if (game === undefined || events === undefined) return null;
-  return <Tracker key={game.id} game={game} events={events} />;
+  if (game.value === null) return <GameNotFound />;
+  if (game.value === undefined || events.value === undefined) {
+    // Nothing on screen to keep yet: a first read that failed gets the route's error
+    // screen (with Reload), like any other screen.
+    if (game.failed) throw game.error;
+    if (events.failed) throw events.error;
+    // Still loading (IndexedDB answers within a frame or two): show nothing rather
+    // than a placeholder layout that would jump.
+    return null;
+  }
+  return (
+    <Tracker
+      key={game.value.id}
+      game={game.value}
+      events={events.value}
+      readFailed={game.failed || events.failed}
+    />
+  );
 }
