@@ -45,6 +45,9 @@ export type GameStatus = (typeof GAME_STATUSES)[number];
  */
 export const MAX_PERIOD = 20;
 
+/** Highest score either team can have (scores are whole numbers from 0). */
+export const MAX_SCORE = 999;
+
 /** Longest text each field accepts. Form inputs can use these as `maxLength`. */
 export const TEXT_LIMITS = {
   playerName: 80,
