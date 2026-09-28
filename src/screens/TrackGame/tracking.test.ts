@@ -48,6 +48,17 @@ describe('withTaps', () => {
       ]).map((stat) => stat.id),
     ).toEqual(['a', 'b', 'c']);
   });
+
+  it('leaves out the stats being taken back, even while they are still saved', () => {
+    const saved = [
+      { id: 'a', type: 'stl' as const },
+      { id: 'b', type: 'ast' as const },
+    ];
+    expect(withTaps(saved, [], ['a']).map((stat) => stat.id)).toEqual(['b']);
+    expect(
+      withTaps(saved, [{ id: 'c', type: 'blk' }], ['b', 'gone']).map((stat) => stat.id),
+    ).toEqual(['a', 'c']);
+  });
 });
 
 describe('not saved yet', () => {

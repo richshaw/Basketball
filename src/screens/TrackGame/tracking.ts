@@ -34,14 +34,21 @@ export interface Counted {
 }
 
 /**
- * The game's saved stats plus the taps not among them yet, each once (by id): what
- * the screen counts, from the moment of each tap.
+ * The game's saved stats plus the taps not among them yet, each once (by id), less the
+ * stats being taken back (`takenBack`, by id): what the screen counts, from the moment
+ * of each tap and each Undo.
  */
-export function withTaps(saved: readonly Counted[], taps: readonly Counted[]): readonly Counted[] {
-  if (taps.length === 0) return saved;
+export function withTaps(
+  saved: readonly Counted[],
+  taps: readonly Counted[],
+  takenBack: readonly string[] = [],
+): readonly Counted[] {
+  const gone = new Set(takenBack);
+  const counted = gone.size === 0 ? saved : saved.filter((stat) => !gone.has(stat.id));
+  if (taps.length === 0) return counted;
   const savedIds = new Set(saved.map((stat) => stat.id));
-  const notSaved = taps.filter((tap) => !savedIds.has(tap.id));
-  return notSaved.length === 0 ? saved : [...saved, ...notSaved];
+  const notSaved = taps.filter((tap) => !savedIds.has(tap.id) && !gone.has(tap.id));
+  return notSaved.length === 0 ? counted : [...counted, ...notSaved];
 }
 
 /**

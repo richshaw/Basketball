@@ -68,11 +68,8 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   // Done on a finished game: the stats that weren't saved, and whether it's busy.
   const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [session, { period, pending, unsaved, unsavedKept, retrying }] = useTrackingSession(
-    game.id,
-    game.currentPeriod,
-    events,
-  );
+  const [session, { period, pending, unsaved, unsavedKept, retrying, takenBack }] =
+    useTrackingSession(game.id, game.currentPeriod, events);
   // A double tap on the grid's Undo or on Next acts once.
   const [undoGuard] = useState(() => createTapGuard());
   const [nextGuard] = useState(() => createTapGuard());
@@ -82,9 +79,10 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   const periodText = periodLabel(period, periodFormat);
   const isFinal = game.status === 'final';
 
-  // The saved stats plus the taps not among them yet, each once: a tap counts from
-  // the moment it's made, saved yet or not.
-  const counted = useMemo(() => withTaps(events, pending), [events, pending]);
+  // The saved stats plus the taps not among them yet, each once, less the stats being
+  // taken back: a tap counts from the moment it's made, saved yet or not, and stops
+  // counting the moment it's undone, even while its stat is still being removed.
+  const counted = useMemo(() => withTaps(events, pending, takenBack), [events, pending, takenBack]);
   const counts = useMemo(() => countByType(counted), [counted]);
   const line = useMemo(() => computeStatLine(counted), [counted]);
 

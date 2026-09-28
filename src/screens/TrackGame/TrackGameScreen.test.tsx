@@ -275,6 +275,30 @@ describe('TrackGameScreen', () => {
     await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
   });
 
+  it('stops counting a stat the moment Undo takes it back, while its removal lands', async () => {
+    const game = await newGame();
+    for (const type of ['stl', 'stl'] as const) await recordStat(game.id, type);
+    await renderTracking(game);
+    await expectStrip('Steals: 2');
+    // A slow removal: it lands only when the test says so.
+    let land = () => {};
+    const { deleteStat: remove } = repo;
+    vi.spyOn(repo, 'deleteStat').mockImplementationOnce(
+      (...args) =>
+        new Promise((resolve) => {
+          land = () => resolve(remove(...args));
+        }),
+    );
+
+    fireEvent.click(statButton('Undo last stat'));
+    await expectStrip('Steals: 1');
+    expect(statButton('Steal')).toHaveAccessibleDescription('1 this game');
+    act(() => land());
+    await waitFor(() => expect(lastAction()).toHaveTextContent('Removed Steal'));
+    await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl']));
+    await expectStrip('Steals: 1');
+  });
+
   it('after a relaunch, the line offers to undo the latest saved stat', async () => {
     const game = await newGame();
     await recordStat(game.id, 'fg2_made');

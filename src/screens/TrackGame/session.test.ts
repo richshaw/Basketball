@@ -16,6 +16,7 @@ import {
   type SessionDeps,
   type TakingBack,
 } from './session';
+import { withTaps } from './tracking';
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -51,6 +52,8 @@ function fakeDeps() {
   const moves: { period: number; answer: Deferred<unknown> }[] = [];
   let stored: StatEvent[] = [];
   let failDeletes = false;
+  // While set, deletes wait here until releaseDeletes().
+  let heldDeletes: (() => void)[] | undefined;
 
   const deps: SessionDeps = {
     recordStat: (stat) => {
@@ -61,9 +64,14 @@ function fakeDeps() {
     deleteStat: (eventId) => {
       deletes.push(eventId);
       if (failDeletes) return Promise.reject(new Error('Disk error'));
-      const event = stored.find((each) => each.id === eventId);
-      stored = stored.filter((each) => each !== event);
-      return Promise.resolve(event);
+      const remove = () => {
+        const event = stored.find((each) => each.id === eventId);
+        stored = stored.filter((each) => each !== event);
+        return event;
+      };
+      const held = heldDeletes;
+      if (held) return new Promise((resolve) => held.push(() => resolve(remove())));
+      return Promise.resolve(remove());
     },
     setCurrentPeriod: (_gameId, period) => {
       const answer = deferred<unknown>();
@@ -112,6 +120,16 @@ function fakeDeps() {
     failDeletes: (value: boolean) => {
       failDeletes = value;
     },
+    /** Deletes from now on wait until releaseDeletes(). */
+    holdDeletes: () => {
+      heldDeletes = [];
+    },
+    /** Lets the deletes held so far land, in order, and holds no more. */
+    releaseDeletes: () => {
+      const held = heldDeletes ?? [];
+      heldDeletes = undefined;
+      for (const release of held) release();
+    },
     storedTypes: () => stored.map((event) => event.type),
   };
 }
@@ -123,7 +141,12 @@ function setUp(period = 1) {
   const pendingTypes = () => session.getSnapshot().pending.map((tap) => tap.type);
   /** Shows the session the saved stats, as the screen does whenever they change. */
   const sync = () => session.syncSavedEvents(fake.stored());
-  return { ...fake, session, unsavedTypes, pendingTypes, sync };
+  /** What the grid and the strip count of `type`: the saved stats as the screen shows them, with the taps. */
+  const screenCount = (type: StatType) => {
+    const { pending, takenBack } = session.getSnapshot();
+    return withTaps(fake.stored(), pending, takenBack).filter((stat) => stat.type === type).length;
+  };
+  return { ...fake, session, unsavedTypes, pendingTypes, sync, screenCount };
 }
 
 /** What an Undo ended up doing: [type, how its removal went]. */
@@ -530,6 +553,65 @@ describe('TrackingSession', () => {
       expect(session.count('foul')).toBe(1);
       await outcome(removal);
       expect(session.count('foul')).toBe(1);
+    });
+
+    describe('on the grid and the strip too (the saved stats on screen, and the taps)', () => {
+      it('stops counting a saved stat while it is being removed, and again if it could not be', async () => {
+        const { session, store, sync, holdDeletes, releaseDeletes, failDeletes, screenCount } =
+          setUp();
+        store(event('f1', 'foul', 1), event('f2', 'foul', 2));
+        sync();
+        holdDeletes();
+        const removal = session.undoLatest();
+        expect(screenCount('foul')).toBe(1);
+        releaseDeletes();
+        await outcome(removal);
+        expect(screenCount('foul')).toBe(1);
+        sync();
+        expect(screenCount('foul')).toBe(1);
+
+        failDeletes(true);
+        const failed = session.undoLatest();
+        expect(screenCount('foul')).toBe(0);
+        expect(await outcome(failed)).toEqual(['foul', 'failed']);
+        expect(screenCount('foul')).toBe(1);
+      });
+
+      it('stops counting a tap undone while it saves, even once its stat shows up before its removal lands', async () => {
+        const { session, save, sync, holdDeletes, releaseDeletes, screenCount } = setUp();
+        holdDeletes();
+        const foul = session.record('foul');
+        const taking = session.undo(foul);
+        expect(taking.immediate).toBe(true); // the line says "Removed Foul" at once
+        expect(screenCount('foul')).toBe(0);
+        // The save lands, and the screen reads the saved stats before the removal lands.
+        save(0);
+        await flush();
+        sync();
+        expect(session.count('foul')).toBe(0);
+        expect(screenCount('foul')).toBe(0);
+        releaseDeletes();
+        expect(await taking.removal).toBe('removed');
+        expect(screenCount('foul')).toBe(0);
+        sync();
+        expect(screenCount('foul')).toBe(0);
+      });
+
+      it('never counts a tap it said it removed, even if a save that seemed to fail landed and removing it failed', async () => {
+        const { session, land, fail, sync, failDeletes, screenCount } = setUp();
+        const foul = session.record('foul');
+        land(0); // it landed...
+        fail(0); // ...but the page heard it failed
+        await flush();
+        failDeletes(true);
+        const taking = session.undo(foul);
+        expect(taking.immediate).toBe(true);
+        expect(await taking.removal).toBe('removed'); // the line says "Removed Foul"
+        sync();
+        await flush();
+        expect(session.count('foul')).toBe(0);
+        expect(screenCount('foul')).toBe(0);
+      });
     });
   });
 

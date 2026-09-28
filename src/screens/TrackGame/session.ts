@@ -36,6 +36,7 @@ import {
 } from '@/data/pendingStats';
 import { deleteStat, setCurrentPeriod } from '@/data/repo';
 import type { StatEvent, StatType } from '@/data/types';
+import { compareIds } from '@/lib/id';
 
 /** How long after a tap couldn't be saved it's tried again on its own. */
 export const AUTO_RETRY_MS = 1000;
@@ -147,6 +148,11 @@ export interface SessionSnapshot {
   readonly unsavedKept: boolean;
   /** Some of them are being saved again right now (not counting quiet background tries). */
   readonly retrying: boolean;
+  /**
+   * Stats being taken back, by id (taps undone, and saved stats being removed), sorted:
+   * they don't count, even while the saved stats on screen still show them.
+   */
+  readonly takenBack: readonly string[];
 }
 
 /** Calls a write, turning a synchronous throw into a rejection. */
@@ -166,6 +172,10 @@ function sameTaps(taps: readonly Tap[], records: readonly TapRecord[]): boolean 
   return (
     taps.length === records.length && taps.every((tap, index) => tap.id === records[index]?.stat.id)
   );
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
 function isTapRecord(item: TapRecord | StatEvent): item is TapRecord {
@@ -231,13 +241,20 @@ export class TrackingSession implements UnsavedTapHolder {
     const unsaved = pending.filter((record) => record.hasFailed && record.status !== 'saved');
     const unsavedKept = unsaved.every((record) => record.kept);
     const retrying = unsaved.some((record) => record.status === 'saving' && !record.quiet);
+    const takenBack = [
+      ...new Set([
+        ...this.taps.filter((record) => record.undone).map((record) => record.stat.id),
+        ...this.removing,
+      ]),
+    ].sort(compareIds);
     const previous = this.snapshot as SessionSnapshot | undefined;
     if (
       previous?.period === this.period &&
       previous.unsavedKept === unsavedKept &&
       previous.retrying === retrying &&
       sameTaps(previous.pending, pending) &&
-      sameTaps(previous.unsaved, unsaved)
+      sameTaps(previous.unsaved, unsaved) &&
+      sameIds(previous.takenBack, takenBack)
     ) {
       return previous;
     }
@@ -247,6 +264,7 @@ export class TrackingSession implements UnsavedTapHolder {
       unsaved: unsaved.map(tapOf),
       unsavedKept,
       retrying,
+      takenBack,
     };
   }
 
@@ -442,10 +460,13 @@ export class TrackingSession implements UnsavedTapHolder {
   /** Removes a saved stat by id: 'removed', 'gone' if it wasn't there, or 'failed'. */
   private removeStat(id: string): Promise<Removal> {
     this.removing.add(id);
+    // It stops counting at once, before the saved stats on screen catch up.
+    this.emit();
     return attempt(() => this.deps.deleteStat(id)).then(
       (event): Removal => (event ? 'removed' : 'gone'),
       (): Removal => {
         this.removing.delete(id);
+        this.emit();
         return 'failed';
       },
     );
