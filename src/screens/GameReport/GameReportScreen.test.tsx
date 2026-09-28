@@ -1,8 +1,16 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import type { UserEvent } from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
-import { deleteStat, getGame, getGameEvents } from '@/data/repo';
+import type * as Repo from '@/data/repo';
+import {
+  deleteGame,
+  deleteStat,
+  getGame,
+  getGameEvents,
+  recordStat,
+  updateGame,
+} from '@/data/repo';
 import { computeStatLine, percentage, statLinesByPeriod } from '@/data/stats';
 import { EXPORT_APP, EXPORT_SCHEMA_VERSION, importAll } from '@/data/transfer';
 import type { Game, Player, StatEvent, StatType } from '@/data/types';
@@ -10,6 +18,16 @@ import { formatMadeAttempted, formatPct } from '@/lib/format';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
 import { buildGameRecap } from './recap';
+
+// The real writes, which a test can make fail once with `mockRejectedValueOnce`.
+vi.mock('@/data/repo', async (importOriginal) => {
+  const actual = await importOriginal<typeof Repo>();
+  return {
+    ...actual,
+    deleteGame: vi.fn(actual.deleteGame),
+    updateGame: vi.fn(actual.updateGame),
+  };
+});
 
 const PLAYER: Player = { id: 'p1', name: 'Ava', jerseyNumber: '12', createdAt: 1, updatedAt: 1 };
 
@@ -121,6 +139,30 @@ async function deletePlay(user: UserEvent, name: RegExp) {
   const dialog = await screen.findByRole('alertdialog', { name: 'Delete this stat?' });
   await user.click(within(dialog).getByRole('button', { name: 'Delete stat' }));
   await waitForNoDialog();
+}
+
+/**
+ * Watches the page for any of `texts`, even ones that show for a moment. The
+ * returned function stops watching and lists the texts that showed up.
+ */
+function watchFor(...texts: string[]): () => string[] {
+  const seen = new Set<string>();
+  const check = (text: string | null) => {
+    for (const wanted of texts) if (text?.includes(wanted)) seen.add(wanted);
+  };
+  const handle = (records: MutationRecord[]) => {
+    for (const record of records) {
+      check(record.target.textContent);
+      record.addedNodes.forEach((node) => check(node.textContent));
+    }
+  };
+  const observer = new MutationObserver(handle);
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  return () => {
+    handle(observer.takeRecords());
+    observer.disconnect();
+    return [...seen];
+  };
 }
 
 afterEach(() => {
@@ -664,6 +706,32 @@ describe('GameReportScreen', () => {
       });
     });
 
+    it('keeps the sheet and what was typed when saving fails, and says so', async () => {
+      await seed();
+      vi.mocked(updateGame).mockRejectedValueOnce(new Error('Disk full'));
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { user } = await renderReport();
+
+      await user.click(screen.getByRole('button', { name: 'Edit details' }));
+      const sheet = screen.getByRole('dialog', { name: 'Edit game' });
+      await user.clear(within(sheet).getByLabelText('Opponent'));
+      await user.type(within(sheet).getByLabelText('Opponent'), 'Lincoln');
+      await user.click(within(sheet).getByRole('button', { name: 'Save' }));
+
+      expect(
+        await within(notifications()).findByText("Couldn't save the changes. Try again."),
+      ).toBeInTheDocument();
+      expect(consoleError).toHaveBeenCalledWith('Saving the game failed', expect.any(Error));
+      expect(screen.getByRole('dialog', { name: 'Edit game' })).toBeInTheDocument();
+      expect(within(sheet).getByLabelText('Opponent')).toHaveValue('Lincoln');
+      expect(await getGame('g1')).toMatchObject({ opponent: 'Central' });
+
+      // Save works again.
+      await user.click(within(sheet).getByRole('button', { name: 'Save' }));
+      await waitForNoDialog();
+      expect(await getGame('g1')).toMatchObject({ opponent: 'Lincoln' });
+    });
+
     it('changes nothing on Cancel', async () => {
       await seed();
       const { user } = await renderReport();
@@ -695,17 +763,39 @@ describe('GameReportScreen', () => {
       expect(dialog).toHaveAccessibleDescription(
         `The game against Central on Sun, Sep 27 and all ${PLAYS.length} of its stats will be gone for good.`,
       );
+      const stopWatching = watchFor('Game not found', 'Game report');
       await user.click(within(dialog).getByRole('button', { name: 'Delete game' }));
 
-      // The report stays up (never "not found") until Games replaces it.
       await waitFor(() => expect(router.state.location.pathname).toBe(paths.home));
+      expect(await screen.findByRole('heading', { level: 1, name: 'Games' })).toBeInTheDocument();
+      // The report stayed up until Games replaced it: no "not found" or loading on the way.
+      expect(stopWatching()).toEqual([]);
       expect(await getGame('g1')).toBeUndefined();
       expect(await getGameEvents('g1')).toEqual([]);
-      expect(await screen.findByRole('heading', { level: 1, name: 'Games' })).toBeInTheDocument();
-      expect(screen.queryByText('Game not found')).not.toBeInTheDocument();
       expect(notifications()).toHaveTextContent('Game deleted');
       // Replaced, so Back doesn't return to the deleted game.
       expect(router.state.historyAction).toBe('REPLACE');
+    });
+
+    it('stays on the report, following its data again, when deleting fails', async () => {
+      await seed();
+      vi.mocked(deleteGame).mockRejectedValueOnce(new Error('Disk full'));
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { user, router } = await renderReport();
+
+      await user.click(screen.getByRole('button', { name: 'Delete game' }));
+      const dialog = screen.getByRole('alertdialog', { name: 'Delete this game?' });
+      await user.click(within(dialog).getByRole('button', { name: 'Delete game' }));
+
+      expect(
+        await within(notifications()).findByText("Couldn't delete the game. Try again."),
+      ).toBeInTheDocument();
+      expect(consoleError).toHaveBeenCalledWith('Deleting the game failed', expect.any(Error));
+      expect(router.state.location.pathname).toBe(paths.gameReport('g1'));
+      expect(await getGame('g1')).toBeDefined();
+      // Not frozen on what it showed when the delete began: a new stat shows up.
+      await recordStat('g1', 'fg3_made');
+      await waitFor(() => expect(tile('Game totals', 'Points').value).toBe('11'));
     });
 
     it('keeps it when cancelled', async () => {
