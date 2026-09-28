@@ -16,5 +16,6 @@ describe('paths', () => {
     expect(matchPath(routePatterns.gameReport, paths.gameReport('g-1'))?.params.gameId).toBe('g-1');
     expect(matchPath(routePatterns.trackGame, paths.trackGame('7'))?.params.gameId).toBe('7');
     expect(matchPath(routePatterns.newGame, paths.newGame)).not.toBeNull();
+    expect(matchPath(routePatterns.devUi, paths.devUi)).not.toBeNull();
   });
 });

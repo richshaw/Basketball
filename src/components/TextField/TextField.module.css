@@ -1,0 +1,82 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+}
+
+.hint,
+.error {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+}
+
+.hint {
+  color: var(--color-text-muted);
+}
+
+.error {
+  color: var(--color-danger-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.control {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--tap-target);
+  margin-top: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  /* 16px or more, or iOS zooms the page when the field is focused. */
+  font-size: max(16px, var(--font-size-md));
+  line-height: var(--line-height-normal);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.control::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+.control:focus-visible {
+  outline-offset: 0;
+}
+
+.control[aria-invalid='true'] {
+  border-color: var(--color-danger-text);
+}
+
+.control:disabled {
+  background-color: var(--color-surface-2);
+  color: var(--color-text-muted);
+  /* iOS dims disabled fields on its own; keep the token color instead. */
+  -webkit-text-fill-color: var(--color-text-muted);
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+/* One height for every single-line field (date inputs otherwise differ by a few pixels). */
+.input {
+  min-height: var(--tap-target-lg);
+}
+
+/* iOS centers the value of date and time inputs; keep it where the other fields put text. */
+.input::-webkit-date-and-time-value {
+  min-height: 1lh;
+  text-align: start;
+}
+
+.textArea {
+  resize: vertical;
+}

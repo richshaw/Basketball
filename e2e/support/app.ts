@@ -23,10 +23,13 @@ export async function expectRoute(page: Page, path: string) {
  * the page, so the viewport is 390x797 with no top inset, and the home indicator
  * overlaps the bottom of the page (34pt inset).
  */
+export const IPHONE_VIEWPORT = { width: 390, height: 844 - 47 };
+export const IPHONE_SAFE_BOTTOM = 34;
+
 export async function emulateIPhoneSafeArea(page: Page) {
-  await page.setViewportSize({ width: 390, height: 844 - 47 });
+  await page.setViewportSize(IPHONE_VIEWPORT);
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setSafeAreaInsetsOverride', {
-    insets: { top: 0, bottom: 34, left: 0, right: 0 },
+    insets: { top: 0, bottom: IPHONE_SAFE_BOTTOM, left: 0, right: 0 },
   });
 }
