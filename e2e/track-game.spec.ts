@@ -161,7 +161,8 @@ test('a double tap on Next moves one period, and a stat right after lands there'
 }) => {
   const gameId = await startGame(page);
   await doubleTap(page, 'Next period');
-  // Tapped straight away, before the new period can have come back from the database.
+  // Tapped right after, as a parent would. (By then the move may well be saved; the
+  // next test taps in the same moment.)
   await tapStats(page, ['Steal']);
   await expect(lastAction(page)).toContainText('Steal · Q2');
   await expect(page.getByRole('button', { name: 'Period Q2' })).toBeVisible();
@@ -170,6 +171,20 @@ test('a double tap on Next moves one period, and a stat right after lands there'
   await expect(page.getByRole('button', { name: 'Period Q2' })).toBeVisible();
   const saved = await exportAll(page);
   expect(saved.games.find((game) => game.id === gameId)).toMatchObject({ status: 'live' });
+});
+
+test('a stat tapped in the same moment as Next lands in the new period', async ({ page }) => {
+  const gameId = await startGame(page);
+  // Both taps in one task, so the stat is recorded before the move can have been saved
+  // (let alone read back from the database).
+  await page.evaluate(() => {
+    const tap = (selector: string) => document.querySelector<HTMLElement>(selector)?.click();
+    tap('button[aria-label="Next period"]');
+    tap('[role="group"][aria-label="Record a stat"] button[aria-label="Steal"]');
+  });
+  await expect(lastAction(page)).toContainText('Steal · Q2');
+  await expect(page.getByRole('button', { name: 'Period Q2' })).toBeVisible();
+  await expect.poll(async () => (await gameEvents(page, gameId)).map((e) => e.period)).toEqual([2]);
 });
 
 test('a stat that could not be saved stays on screen and is saved by the next tap', async ({
