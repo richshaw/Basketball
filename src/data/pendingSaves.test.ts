@@ -3,6 +3,7 @@ import {
   replayPendingStats,
   retryPendingStats,
   savePendingStat,
+  savePendingStatsBeforeExport,
   startPendingStatsRetry,
 } from './pendingSaves';
 import {
@@ -206,16 +207,32 @@ describe('retryPendingStats', () => {
     expect(await eventTypes(game.id)).toEqual(['stl']);
   });
 
-  it('joins a try already under way, and never rejects', async () => {
+  it('never rejects', async () => {
     holdTaps({
       gameId: 'held',
       hasUnsaved: () => true,
       retryQuietly: () => Promise.reject(new Error('Disk error')),
     });
-    const first = retryPendingStats();
-    expect(retryPendingStats()).toBe(first);
-    await expect(first).resolves.toBeUndefined();
-    expect(retryPendingStats()).not.toBe(first);
+    await expect(retryPendingStats()).resolves.toBeUndefined();
+  });
+});
+
+describe('savePendingStatsBeforeExport', () => {
+  it('saves the taps not saved yet', async () => {
+    const game = await newGame();
+    addPendingStat(stat({ gameId: game.id }));
+    await savePendingStatsBeforeExport();
+    expect(await eventTypes(game.id)).toEqual(['stl']);
+  });
+
+  it("doesn't wait long for a save that never answers", async () => {
+    const game = await newGame();
+    addPendingStat(stat({ gameId: game.id }));
+    vi.spyOn(repo, 'recordStat').mockReturnValue(new Promise(() => {}));
+    const started = performance.now();
+    await savePendingStatsBeforeExport(50);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(journalKeys()).toHaveLength(1);
   });
 });
 
@@ -292,6 +309,18 @@ describe('startPendingStatsRetry (the app-wide retry)', () => {
     // Nothing is pending any more: no more tries.
     await sleep(150);
     expect(retryQuietly).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries on past a try that never answers', async () => {
+    let tries = 0;
+    holdTaps({
+      gameId: 'g',
+      hasUnsaved: () => true,
+      // The first try hangs (a save that never answers); the next ones don't.
+      retryQuietly: () => (++tries === 1 ? new Promise(() => {}) : Promise.resolve()),
+    });
+    cleanups.push(startPendingStatsRetry({ delaysMs: [30], tryWaitMs: 50 }));
+    await vi.waitFor(() => expect(tries).toBeGreaterThanOrEqual(3));
   });
 
   it('does nothing while nothing is pending, and nothing once stopped', async () => {

@@ -70,26 +70,48 @@ export async function replayPendingStats(): Promise<ReplayResult> {
   return result;
 }
 
-let round: Promise<void> | undefined;
-
 /**
  * Tries once to save every tap that isn't saved yet: the kept ones (replayPendingStats),
- * then the ones the tracking sessions hold, kept or not, quietly. A call while one is
- * under way joins it. Never rejects.
+ * then the ones the tracking sessions hold, kept or not, quietly. Two at once are
+ * harmless (saving is idempotent). Never rejects.
  */
-export function retryPendingStats(): Promise<void> {
-  round ??= (async () => {
-    try {
-      // Kept taps first: a session then drops a kept tap saved meanwhile, rather than
-      // saving it again.
-      await replayPendingStats();
-      await retryHeldTaps();
-    } finally {
-      round = undefined;
-    }
-  })();
-  return round;
+export async function retryPendingStats(): Promise<void> {
+  // Kept taps first: a session then drops a kept tap saved meanwhile, rather than
+  // saving it again.
+  await replayPendingStats();
+  await retryHeldTaps();
 }
+
+/** Waits for `task` (which never rejects), but no longer than `ms`: it carries on unwatched. */
+async function waitAtMost(task: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    task,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]);
+  clearTimeout(timer);
+}
+
+/** How long preparing an export waits, at most, for the taps not saved yet to be saved. */
+export const EXPORT_SAVE_WAIT_MS = 2000;
+
+/**
+ * Before an export reads the data (a backup file, the spreadsheet): tries once to save
+ * the taps that aren't saved yet (retryPendingStats), so the export has them too. Best
+ * effort: it waits `maxWaitMs` at most, so a database that doesn't answer never holds
+ * the export up, and a tap it can't save now is left for later. Never rejects.
+ */
+export function savePendingStatsBeforeExport(maxWaitMs = EXPORT_SAVE_WAIT_MS): Promise<void> {
+  return waitAtMost(retryPendingStats(), maxWaitMs);
+}
+
+/**
+ * How long the app-wide retry waits for one try to finish: past that, it carries on as
+ * if it had failed, so a save that never answers can't stop the tries after it.
+ */
+export const RETRY_TRY_WAIT_MS = 30_000;
 
 /**
  * How long the app-wide retry waits to try again while a tap isn't saved: the first
@@ -100,6 +122,8 @@ export const PENDING_RETRY_DELAYS_MS: readonly number[] = [15_000, 30_000, 60_00
 export interface PendingStatsRetryOptions {
   /** The waits between tries (PENDING_RETRY_DELAYS_MS by default). */
   delaysMs?: readonly number[];
+  /** How long to wait for one try (RETRY_TRY_WAIT_MS by default). */
+  tryWaitMs?: number;
 }
 
 /**
@@ -113,6 +137,7 @@ export interface PendingStatsRetryOptions {
  */
 export function startPendingStatsRetry({
   delaysMs = PENDING_RETRY_DELAYS_MS,
+  tryWaitMs = RETRY_TRY_WAIT_MS,
 }: PendingStatsRetryOptions = {}): () => void {
   let stopped = false;
   let busy = false;
@@ -145,7 +170,7 @@ export function startPendingStatsRetry({
     timer = undefined;
     busy = true;
     try {
-      await retryPendingStats();
+      await waitAtMost(retryPendingStats(), tryWaitMs);
     } finally {
       busy = false;
     }
