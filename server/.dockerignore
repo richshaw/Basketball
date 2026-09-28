@@ -1,0 +1,9 @@
+# Allowlist: send only what the image build needs. Keeps local data/, .env files,
+# node_modules and build output out of the (remote) build context.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!src
+!docker-entrypoint.sh
