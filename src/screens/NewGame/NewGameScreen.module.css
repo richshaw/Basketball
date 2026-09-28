@@ -1,0 +1,55 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* "You have a game in progress": a card with the way back on the right. */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border: var(--border-width-emphasis) solid var(--color-accent);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+}
+
+.noticeDot {
+  flex-shrink: 0;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+}
+
+.noticeText {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+  overflow-wrap: anywhere;
+}
+
+.noticeLink {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(var(--space-1) / 2);
+  min-height: var(--tap-target);
+  padding-inline: var(--space-2) var(--space-1);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  white-space: nowrap;
+}
+
+.noticeLink:active {
+  opacity: 0.6;
+}
+
+.noticeChevron {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+}
