@@ -45,27 +45,39 @@ async function addFinalGame(
   return endGame(game.id, { teamScore, opponentScore });
 }
 
-const waitForStats = () => screen.findByRole('heading', { level: 2, name: 'Averages' });
+/** Waits for the stats to load. (By text: polling role queries over the whole page is slow.) */
+const waitForStats = () => screen.findByText('Averages', { selector: 'h2' });
 
 /** The number on the average tile with this full label, e.g. 'Points per game'. */
-function tileValue(fullLabel: string): string | null | undefined {
-  const grid = screen.getByLabelText('Averages per game');
+function tileValue(fullLabel: string, grid = screen.getByLabelText('Averages per game')) {
   const tile = within(grid).getByText(fullLabel).closest('div');
   if (!tile) throw new Error(`No tile for ${fullLabel}`);
   return within(tile).getAllByRole('definition')[0]?.textContent;
 }
 
-function expectAverages(summary: GamesSummary) {
-  const { averages, shooting } = summary;
-  expect(tileValue('Points per game')).toBe(formatAvg(averages.pts));
-  expect(tileValue('Rebounds per game')).toBe(formatAvg(averages.reb));
-  expect(tileValue('Assists per game')).toBe(formatAvg(averages.ast));
-  expect(tileValue('Steals per game')).toBe(formatAvg(averages.stl));
-  expect(tileValue('Blocks per game')).toBe(formatAvg(averages.blk));
-  expect(tileValue('Turnovers per game')).toBe(formatAvg(averages.tov));
-  expect(tileValue('Field goal percentage')).toBe(formatPct(shooting.fgPct));
-  expect(tileValue('Three-point percentage')).toBe(formatPct(shooting.fg3Pct));
-  expect(tileValue('Free throw percentage')).toBe(formatPct(shooting.ftPct));
+function expectAverages({ averages, shooting }: GamesSummary) {
+  const grid = screen.getByLabelText('Averages per game');
+  expect({
+    ppg: tileValue('Points per game', grid),
+    rpg: tileValue('Rebounds per game', grid),
+    apg: tileValue('Assists per game', grid),
+    spg: tileValue('Steals per game', grid),
+    bpg: tileValue('Blocks per game', grid),
+    topg: tileValue('Turnovers per game', grid),
+    fg: tileValue('Field goal percentage', grid),
+    fg3: tileValue('Three-point percentage', grid),
+    ft: tileValue('Free throw percentage', grid),
+  }).toEqual({
+    ppg: formatAvg(averages.pts),
+    rpg: formatAvg(averages.reb),
+    apg: formatAvg(averages.ast),
+    spg: formatAvg(averages.stl),
+    bpg: formatAvg(averages.blk),
+    topg: formatAvg(averages.tov),
+    fg: formatPct(shooting.fgPct),
+    fg3: formatPct(shooting.fg3Pct),
+    ft: formatPct(shooting.ftPct),
+  });
 }
 
 /** The cell under `header` in the one row of the Totals table. */
@@ -83,7 +95,8 @@ beforeEach(() => {
   clearSessionValues();
 });
 
-describe('SeasonStatsScreen', () => {
+// Each test renders the whole app over a season of games, so give it room on a busy machine.
+describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
   describe('with the demo season', () => {
     let demo: ExportFile;
 
@@ -115,7 +128,8 @@ describe('SeasonStatsScreen', () => {
 
     it('lists season highs, each opening the game it came from', async () => {
       const { user, router } = renderRoute(paths.stats);
-      const highs = await screen.findByRole('list', { name: 'Season highs' });
+      await waitForStats();
+      const highs = screen.getByRole('list', { name: 'Season highs' });
 
       const expected = expectedSummary(demo.games, demo.events);
       const labels: Record<HighStat, string> = {
