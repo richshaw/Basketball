@@ -1,0 +1,45 @@
+name: Server CI
+
+# deploy-server.yml deploys after this workflow (by this name) passes for a push to main, so
+# keep the push trigger below.
+on:
+  pull_request:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-ci.yml'
+
+permissions:
+  contents: read
+
+# On a PR, a newer push supersedes the running checks. On main every commit's run completes (grouped
+# per commit, never cancelled), so re-running an old run can't cancel a newer one; the deploy
+# workflow skips any commit that is no longer the tip of main.
+concurrency:
+  group: server-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Lint, format, types, tests, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

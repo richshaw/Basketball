@@ -33,7 +33,8 @@ src/
   screens/<Feature>/       one folder per screen: <Feature>Screen.tsx, .module.css, tests, screen-only parts
   data/                    the data layer: model types, Dexie database, repository, hooks, stats math,
                            backup format, demo data (see "Data layer" below)
-  lib/                     pure helpers: no React, no DOM (e.g. cx, color, court, format, id)
+  lib/                     pure helpers, plus thin guarded wrappers over browser APIs: no React,
+                           no DOM elements (e.g. cx, color, court, format, id, share)
   pwa/                     service worker registration and app-update state
   styles/                  tokens.css (design tokens), global.css (element defaults, utilities)
   test/                    Vitest setup and render helpers
@@ -67,16 +68,16 @@ Each lives in `src/components/<Name>/`. See them all, in their main states, at `
 - `ScreenHeader`, `ScreenBody`, `Card`, `EmptyState`: the screen title (optional back link and action), the padded content area (clears the home indicator on full-screen routes), a rounded surface, and the "nothing here yet" placeholder.
 - `SegmentedControl<T>`: pick one of 2–4 options: `options`, `value`, `onChange`, `aria-label` (or `aria-labelledby`), `size`. It's a radio group, so the arrow keys work.
 - `TextField` / `TextArea`: a labelled field with `hint` and `error` (wired to aria-describedby and aria-invalid). Takes every native prop (`type`, `inputMode`, `enterKeyHint`, ...); `suggestions` adds a datalist.
-- `Sheet`: bottom sheet on `<dialog>`: `open`, `onClose`, `title`, `description`, `footer`. The X, Escape and a tap on the dimmed page all call `onClose`; `dismissible={false}` leaves only the sheet's own buttons (use it for forms).
-- `ConfirmDialog` / `useConfirm()`: `if (await confirm({ title, message, confirmLabel: 'Delete game', destructive: true }))`. Prefer undo; confirm only what can't be undone.
-- `useToast()`: `toast.show({ message, actionLabel: 'Undo', onAction })`. One at a time, 4 s by default; it floats above the tab bar and home indicator, and only its action takes taps. Toasts vanish, so never make one the only way to do something.
+- `Sheet`: bottom sheet on `<dialog>`: `open`, `onClose`, `title`, `description`, `footer`, `onClosed`. The X, Escape and a tap on the dimmed page all call `onClose`; `dismissible={false}` leaves only the sheet's own buttons (use it for forms). Closing gives the page back at once (focus returns), then `onClosed` fires once the sheet has slid away. It rides above the iPhone keyboard, and a `ConfirmDialog` inside it closes without closing the sheet.
+- `ConfirmDialog` / `useConfirm()`: `if (await confirm({ title, message, confirmLabel: 'Delete game', destructive: true }))`. Prefer undo; confirm only what can't be undone. One question at a time: a `confirm()` asked while a dialog is on screen opens once that one has closed, with focus on its safe button.
+- `useToast()`: `toast.show({ message, actionLabel: 'Undo', onAction, duration, placement })` returns an id for `toast.hide(id)`; `actionLabel` and `onAction` come together. One at a time, 4 s by default; it floats above the home indicator, tab bar and update banner (`placement: 'top'` puts it under the header bar instead), and only its action takes taps. After a toast's action runs (or it times out) it stays 350 ms, catching taps, so a double tap can't reach what's underneath; a toast shown meanwhile waits. Toasts vanish, so never make one the only way to do something. **Screens with controls along the bottom (the live game screen) show tap feedback inline, not in a toast.**
 - `GroupedList` + `ListRow`: iOS inset grouped list (`header`, `footer`). Rows take `title`, `subtitle`, `value` (text or a `Badge`), `icon`, `chevron`, `destructive`, and `to` (link) or `onClick` (button) or neither (static).
-- `StatTable`: table of numbers: `caption`, `columns` (`{ key, header, fullLabel?, align?, width? }`), `rows`, `totalRow`, `highlightedRow`. Wide tables scroll sideways under a sticky first column.
+- `StatTable`: table of numbers: `caption`, `columns` (`{ key, header, fullLabel?, align?, width? }`), `rows`, `totalRow`, `highlightedRow` (read to screen readers as "current", or your `highlightLabel`). Wide tables scroll sideways under a sticky first column.
 - `StatTileGrid` + `StatTile`: big-number tiles (`value`, `label`, `fullLabel`, `detail`, `highlight`), four across on most iPhones (`columns` fixes the count).
 - `Badge`: small pill label; `tone` is `neutral`, `accent`, `made`, `miss` or `stat`.
 - `shareText({ title, text })` in `src/lib/share.ts`: the share sheet, else the clipboard. Resolves to `'shared' | 'cancelled' | 'copied' | 'failed'` and never throws; call it straight from a tap.
 
-`App` mounts `UiProviders` (toasts and confirmations) once at the root, and the test render helpers include it. A toast shown while a sheet is open appears inside the sheet, at the top. `TabBar` raises `--overlay-inset-bottom` so toasts clear it; a screen with its own bottom bar can do the same.
+`App` mounts `UiProviders` (toasts and confirmations) once at the root, and the test render helpers include it. A toast shown while a sheet is open appears inside the sheet, under its header. `TabBar` and the update banner raise `--overlay-inset-bottom` so toasts clear them; a screen with its own bottom controls can set it on `:root` too.
 
 ## Data layer
 
@@ -108,14 +109,17 @@ Each hook re-renders when its data changes, whoever changed it. **`undefined` me
 
 ### Writing: repository (`data/repo.ts`)
 
-Each write runs in one transaction. It validates what it stores, bumps the game's `updatedAt` and bumps `meta.lastChangeAt` (which the backup watches), then resolves to the saved record. Bad input rejects with a `TypeError` (validate forms first: empty opponent, invalid date, a location on a non-shot…), and an unknown game id rejects with `Error('Game not found: …')`. Getters resolve to `undefined` when a record is missing.
+Each write runs in one transaction. It validates what it stores, bumps the game's `updatedAt` and bumps `meta.lastChangeAt` (which the backup watches), then resolves to the saved record. A write that changes nothing (undo with nothing to undo, a missing id) doesn't bump anything. Bad input rejects with a `TypeError` (validate forms first: empty opponent, invalid date, a location on a non-shot…), and an unknown game id rejects with `Error('Game not found: …')`. Getters resolve to `undefined` when a record is missing.
 
-- `getPlayer()` / `savePlayer({ name, jerseyNumber? })`: creates the single player or updates it. An empty jersey number clears it.
+**Changing a field, everywhere** (`updateGame`, `endGame`, `savePlayer`'s jersey number, `updateSettings`, `setStatLocation`): a field that's missing or `undefined` keeps its value; `null` or `''` clears it. Clearing a required field (opponent, date) is rejected.
+
+- `getPlayer()` / `savePlayer({ name, jerseyNumber? })`: creates the single player or updates it. Leaving out the jersey number keeps it.
 - `createGame({ opponent, date, season?, homeAway?, periodFormat })`: a live game in period 1. It also remembers the period format (and the season, when given) as the defaults for the next new game.
-- `updateGame(id, patch)`: changes opponent, date, season, homeAway, periodFormat, teamScore, opponentScore or notes. Keys left out keep their value; `null` clears an optional field.
+- `updateGame(id, patch)`: changes opponent, date, season, homeAway, periodFormat, teamScore, opponentScore or notes.
 - `setCurrentPeriod(gameId, period)`: 1 to `MAX_PERIOD` (20).
-- `recordStat(gameId, type, location?)`: resolves to the new `StatEvent`, in the game's current period. `createdAt` strictly increases within a game, even for taps in the same millisecond, so order and undo are exact; firing taps without awaiting them is safe. `location` is only allowed on `fg2_*` / `fg3_*` and is clamped onto the court. Works on final games too, for corrections.
-- `setStatLocation(eventId, location | null)`: sets or clears a recorded shot's location. For a shot chart that asks for the spot after the stat is saved, so the tap itself is never lost. Resolves to undefined if the stat is gone.
+- `recordStat(gameId, type, location?)`: resolves to the new `StatEvent`, in the game's current period. `createdAt` strictly increases within a game, even for taps in the same millisecond, so order and undo are exact. `location` is only allowed on `fg2_*` / `fg3_*` and is clamped onto the court; a location that isn't a real point (NaN or Infinity, e.g. from a court measured at zero size) is dropped and the stat is still saved. Works on final games too, for corrections.
+- **Fire-and-forget writes** (e.g. `void recordStat(…)` on each tap) are saved in call order, but a `void` promise hides its failure. Add `.catch()` and surface the error (e.g. a toast), so a tap that wasn't saved never goes unnoticed.
+- `setStatLocation(eventId, location | null)`: sets or clears a recorded shot's location. For a shot chart that asks for the spot after the stat is saved, so the tap itself is never lost. Resolves to undefined if the stat is gone; a point that isn't real rejects (the stat stays saved).
 - `undoLastStat(gameId)` / `deleteStat(eventId)`: remove the game's latest event, or one event. Each resolves to the removed event, or undefined.
 - `endGame(gameId, { teamScore?, opponentScore? })`: final, with `endedAt`. `reopenGame(gameId)`: live again (scores kept). `deleteGame(gameId)`: the game and all its events.
 - `getGame(id)`, `listGames()`, `getLiveGame()`, `getGameEvents(gameId)`, `getAllEvents()`, `listSeasons()`: promise versions of the hooks.
@@ -127,16 +131,16 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - `STAT_DEFS[type]` is the single source of truth for buttons, the event log and reports. It has `label` ('2PT Made', 'Off Reb', 'Charge Taken'), `shortLabel` ('Made 2', 'OReb'), `kind` ('made' | 'miss' | 'other', for colors), `points` and `shot`. `STAT_TYPES` gives the order.
 - `computeStatLine(events)`: a `StatLine` with `pts, fgm, fga, fg2m, fg2a, fg3m, fg3a, ftm, fta, oreb, dreb, reb, ast, stl, blk, tov, pf, deflections, charges`. FG counts 2PT plus 3PT, never free throws. `emptyStatLine()` and `addStatLines(a, b)` round it out.
 - `statLinesByPeriod(events, game)`: `[{ period, label, line }]` for every period through the current one, empty periods included.
-- `percentage(made, attempted)`: 0-100, or null with no attempts. Show it with `formatPct`.
+- `percentage(made, attempted)`: 0-100, or null with no attempts. Show it with `formatPct`. It's exact at a true .5 (23/40 is 57.5, shown as 58%), so don't compute `(made / attempted) * 100` yourself.
 - `gameResult(game)`: 'W', 'L' or 'T', or null unless the game is final with both scores.
-- `statLinesForGames(games, events)`: `[{ game, line }]`. `summarizeGames(entries)` turns those into games played, record, totals, per-game averages, shooting percentages, and highs (`{ value, gameId }`, with ties going to the earliest game). Pass only the games you want, e.g. the final games of one season.
+- `statLinesForGames(games, events)`: `[{ game, line }]`. `summarizeGames(entries)` turns those into games played, record, totals, per-game averages (rounded half up to one decimal from the totals: 17 in 20 games is 0.9), shooting percentages, and highs (`{ value, gameId }`, with ties going to the earliest game). Pass only the games you want, e.g. the final games of one season.
 
 ### Formatting (`lib/format.ts`)
 
 - `todayLocalISO()`.
 - `formatGameDate('2026-09-27')` gives 'Sun, Sep 27' (`{ withYear: true }` adds ', 2026').
 - `formatPct(45.4)` gives '45%' (null gives '–').
-- `formatAvg(12.34)` gives '12.3'.
+- `formatAvg(12.34)` gives '12.3' (rounded half up, so `formatAvg(17 / 20)` is '0.9').
 - `formatMadeAttempted(5, 9)` gives '5/9'.
 - `formatPlayerName(player)`.
 
@@ -145,26 +149,29 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 - `data/transfer.ts`:
   - `exportAll()` returns an `ExportFile`: `{ app: 'hoop-stats', schemaVersion: 1, exportedAt, players, games, events, settings }`.
   - `parseExportFile(jsonTextOrObject)` validates it strictly and throws `ExportFileError`, whose `message` is written for the parent.
-  - `importAll(file, 'replace' | 'merge')` runs in one transaction: all or nothing. `merge` keeps the most recently updated copy of each game, adds missing events and never deletes anything.
+  - `importAll(file, 'replace' | 'merge')` runs in one transaction: all or nothing. `replace` makes the device hold exactly the file's data.
+  - `merge` treats a game and its events as one unit: whichever copy was updated most recently wins, events and all. A newer copy in the file replaces that game's events (so stats deleted or moved there come across); an older or equally old copy is skipped with its events (so stats undone on the phone stay undone). Games on only one side are kept, so **a merge brings back games that were deleted on the phone** (fine for a restore). One player is kept, and the phone keeps its own settings.
+  - `meta.lastChangeAt` only moves when an import actually changed something.
   - `clearAllData()`.
   - A round trip through JSON is exact. Settings are part of the export; `meta.lastChangeAt` isn't.
-- `data/demo.ts`: `seedDemoData({ today?, liveGame? })` replaces all data with "Ava" #12 and ten final "Fall 2026" games. Their ids run from `demo-game-01` (oldest) to `demo-game-10`, and `demo-live` is the optional live game in Q3.
+- `data/demo.ts`: `seedDemoData({ today?, liveGame?, force? })` replaces all data with "Ava" #12 and ten final "Fall 2026" games. Their ids run from `demo-game-01` (oldest) to `demo-game-10`, and `demo-live` is the optional live game in Q3. It refuses to replace a device's own data (anything but earlier demo data) unless `force: true`; a fresh Playwright context starts empty, so tests don't need it.
 - `data/persistence.ts`: `requestPersistentStorage()` (called once at startup) and `getStorageStatus()` (`{ persisted, usage?, quota? }`).
 - `window.hoopStats` (`{ seedDemoData, clearAllData, exportAll }`) is installed in every build, for the console, e2e tests and screenshots.
 - Other modules (e.g. the cloud backup) may keep their own state in the `meta` table under their own keys. `clearAllData` leaves those alone.
 
 ### Changing the schema
 
-- To add a field, update its interface in `types.ts` **and** its schema in `validation.ts`. Typecheck fails until they match, so a backup can never silently drop the field. Add a Dexie index only if you query by it.
+- To add a field, update its interface in `types.ts` **and** its schema in `validation.ts`. Typecheck fails until they match, so this version's backups can never silently drop the field. A new setting also needs its default in `DEFAULT_SETTINGS` (`repo.ts`) unless it's optional.
+- **Any change to what a record can hold** (a new field, a new allowed value such as a stat type or period format, a looser limit) **must bump `EXPORT_SCHEMA_VERSION`** in `transfer.ts`, and `parseExportFile` must learn to read the older versions. An older app then tells the parent to update it, instead of silently dropping the new data (it strips fields it doesn't know) or calling a good backup damaged.
+- Add a Dexie index only if something queries by it: every index is rewritten on every write, and a game is written on every tap.
 - To change indexes or migrate stored data, add `this.version(n + 1)` in `db.ts`. Never edit a version that has shipped.
-- To change the backup format, bump `EXPORT_SCHEMA_VERSION` and upgrade older files in `parseExportFile`.
 
 ## Testing
 
 - Unit-test logic in `src/lib/` and `src/data/` with plain Vitest, stats math most of all.
 - Test screens and components with Testing Library, querying by role and name like a user would. `renderRoute(paths.x)` renders the whole app at a route; `renderWithRouter(<Thing />)` renders one component inside a router. Both live in `src/test/render.tsx`.
 - `fake-indexeddb/auto` is loaded in the test setup, so Dexie runs in unit tests. The setup empties the database before every test, so seed data in `beforeEach` or in the test itself (never `beforeAll`), through `repo.ts` or `importAll`. To freeze time, fake only `Date`: `vi.useFakeTimers({ toFake: ['Date'], now })`. Faking every timer stalls IndexedDB.
-- jsdom can't open a `<dialog>`, so `src/test/dialogPolyfill.ts` stands in for `showModal`, `close` and Escape; `e2e/ui-kit.spec.ts` checks sheets in a real browser. Closing a sheet finishes asynchronously: wait with `waitFor` or a `findBy` query.
+- jsdom can't open a `<dialog>`, so `src/test/dialogPolyfill.ts` stands in for `showModal`, `close` and Escape (like browsers, it marks the page outside the top modal `inert` and fires `close` from a queued task); `e2e/ui-kit.spec.ts` checks sheets in a real browser. Closing a sheet or a toast finishes asynchronously: wait with `waitFor` or a `findBy` query.
 - The toast area is `getByRole('status', { name: 'Notifications' })` and is always on screen, so give your own status messages a name or query them by text.
 - End-to-end tests cover key flows. They build the app and serve it under `/Basketball/`, like GitHub Pages. For data, use `e2e/support/data.ts`: `await seedDemoData(page)` after `page.goto('./')`, then navigate (e.g. to `paths.gameReport(demoGameId(10))`).
 - Add each new screen to `e2e/screenshots.spec.ts` (one line), run `npm run screenshots`, and look at the PNGs in light and dark mode.

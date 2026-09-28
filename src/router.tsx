@@ -1,7 +1,7 @@
 import { createHashRouter, Navigate, type RouteObject } from 'react-router';
 import { AppShell } from '@/components/AppShell/AppShell';
 import { paths, routePatterns } from '@/routes';
-import { DevUiScreen } from '@/screens/DevUi/DevUiScreen';
+import { LazyDevUiScreen } from '@/screens/DevUi/LazyDevUiScreen';
 import { ErrorScreen } from '@/screens/Error/ErrorScreen';
 import { GameReportScreen } from '@/screens/GameReport/GameReportScreen';
 import { HomeScreen } from '@/screens/Home/HomeScreen';
@@ -35,7 +35,7 @@ export const appRoutes: RouteObject[] = [
       { path: routePatterns.gameReport, Component: GameReportScreen },
       { path: routePatterns.trackGame, Component: TrackGameScreen },
       // Component gallery for reviews and screenshots; nothing links here.
-      { path: routePatterns.devUi, Component: DevUiScreen },
+      { path: routePatterns.devUi, Component: LazyDevUiScreen },
       { path: '*', element: <Navigate to={paths.home} replace /> },
     ],
   },
