@@ -1,0 +1,57 @@
+/* The compact picker: an inset row showing the season, like an iOS pop-up button. */
+.trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--tap-target);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  line-height: var(--line-height-tight);
+  text-align: start;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.trigger:active {
+  background-color: var(--color-surface-2);
+}
+
+.triggerLabel {
+  flex-shrink: 0;
+}
+
+.triggerValue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.triggerText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The shared chevron, turned to point down: this opens a list of choices. */
+.triggerChevron {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.5;
+  transform: rotate(90deg);
+}
+
+.check {
+  display: flex;
+  color: var(--color-accent-text);
+}
+
+.checkIcon {
+  width: 20px;
+  height: 20px;
+}

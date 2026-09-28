@@ -72,7 +72,7 @@ Each lives in `src/components/<Name>/`. See them all, in their main states, at `
 - `ConfirmDialog` / `useConfirm()`: `if (await confirm({ title, message, confirmLabel: 'Delete game', destructive: true }))`. Prefer undo; confirm only what can't be undone. One question at a time: a `confirm()` asked while a dialog is on screen opens once that one has closed, with focus on its safe button.
 - `useToast()`: `toast.show({ message, actionLabel: 'Undo', onAction, duration, placement })` returns an id for `toast.hide(id)`; `actionLabel` and `onAction` come together. One at a time, 4 s by default; it floats above the home indicator, tab bar and update banner (`placement: 'top'` puts it under the header bar instead), and only its action takes taps. After a toast's action runs (or it times out) it stays 350 ms, catching taps, so a double tap can't reach what's underneath; a toast shown meanwhile waits. Toasts vanish, so never make one the only way to do something. **Screens with controls along the bottom (the live game screen) show tap feedback inline, not in a toast.**
 - `GroupedList` + `ListRow`: iOS inset grouped list (`header`, `footer`). Rows take `title`, `subtitle`, `value` (text or a `Badge`), `icon`, `chevron`, `destructive`, and `to` (link) or `onClick` (button) or neither (static).
-- `StatTable`: table of numbers: `caption`, `columns` (`{ key, header, fullLabel?, align?, width? }`), `rows`, `totalRow`, `highlightedRow` (read to screen readers as "current", or your `highlightLabel`). Wide tables scroll sideways under a sticky first column.
+- `StatTable`: table of numbers: `caption`, `columns` (`{ key, header, fullLabel?, align?, width? }`), `rows`, `totalRow`, `highlightedRow` (read to screen readers as "current", or your `highlightLabel`), `rowKey`. Wide tables scroll sideways under a sticky first column. `linkedRows` makes each body row one tap target that follows the first link in the row: put a `Link` in every row (e.g. the first column), since that's what keyboard and screen reader users reach. Modified clicks (⌘/Ctrl/Shift/Alt) are left to the browser.
 - `StatTileGrid` + `StatTile`: big-number tiles (`value`, `label`, `fullLabel`, `detail`, `highlight`), four across on most iPhones (`columns` fixes the count).
 - `Badge`: small pill label; `tone` is `neutral`, `accent`, `made`, `miss` or `stat`.
 - `shareText({ title, text })` in `src/lib/share.ts`: the share sheet, else the clipboard. Resolves to `'shared' | 'cancelled' | 'copied' | 'failed'` and never throws; call it straight from a tap.
@@ -138,7 +138,7 @@ Each write runs in one transaction. It validates what it stores, bumps the game'
 ### Formatting (`lib/format.ts`)
 
 - `todayLocalISO()`.
-- `formatGameDate('2026-09-27')` gives 'Sun, Sep 27' (`{ withYear: true }` adds ', 2026').
+- `formatGameDate('2026-09-27')` gives 'Sun, Sep 27' (`{ withYear: true }` adds ', 2026'; `{ weekday: false }` gives 'Sep 27'). Use it for every game date; it's cheap to call in lists.
 - `formatPct(45.4)` gives '45%' (null gives '–').
 - `formatAvg(12.34)` gives '12.3' (rounded half up, so `formatAvg(17 / 20)` is '0.9').
 - `formatMadeAttempted(5, 9)` gives '5/9'.
