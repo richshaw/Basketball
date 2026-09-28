@@ -18,7 +18,13 @@ import {
 } from './validation';
 
 export const EXPORT_APP = 'hoop-stats';
-/** Bump when the file format changes, and teach parseExportFile to upgrade older files. */
+/**
+ * The backup format version. Bump it for ANY change to what a record can hold: a new
+ * field, a new allowed value (such as a stat type) or a looser limit. An older app
+ * then says "update the app" instead of silently dropping the new data (it strips
+ * fields it doesn't know) or calling a good backup damaged. When you bump it, teach
+ * parseExportFile to read the older versions.
+ */
 export const EXPORT_SCHEMA_VERSION = 1;
 
 export interface ExportFile {
@@ -141,6 +147,8 @@ export function parseExportFile(input: unknown): ExportFile {
     throw new ExportFileError(NOT_A_BACKUP, ['app: Expected "hoop-stats"']);
   }
 
+  // Before checking the contents: a newer file may hold fields or values this version
+  // doesn't know, and must get "update the app", never "damaged".
   const version = data.schemaVersion;
   if (typeof version === 'number' && version > EXPORT_SCHEMA_VERSION) {
     throw new ExportFileError(NEWER_VERSION, [`schemaVersion: ${version}`]);
@@ -168,10 +176,48 @@ export function parseExportFile(input: unknown): ExportFile {
 export type ImportMode = 'replace' | 'merge';
 
 export interface ImportSummary {
-  /** Games written from the file (all of them for 'replace'). */
+  /** Games taken from the file: all of them for 'replace'; the new or newer ones for 'merge'. */
   games: number;
-  /** Stat events written from the file. */
+  /** Stat events taken from the file along with those games. */
   events: number;
+}
+
+/** What an import did, and whether the device's data actually changed. */
+interface ImportOutcome {
+  summary: ImportSummary;
+  changed: boolean;
+}
+
+/** A record as JSON with its keys sorted, to tell whether two copies hold the same data. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    inner !== null && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => compareIds(a, b)))
+      : inner,
+  );
+}
+
+/** Whether two lists hold the same records, in any order. */
+function sameRecords(a: readonly { id: string }[], b: readonly { id: string }[]): boolean {
+  if (a.length !== b.length) return false;
+  const byId = new Map(a.map((record) => [record.id, canonical(record)]));
+  return b.every((record) => byId.get(record.id) === canonical(record));
+}
+
+/** Whether the device already holds exactly the file's data (and its settings, if any). */
+async function deviceMatches(file: ExportFile): Promise<boolean> {
+  const [players, games, events, settings] = await Promise.all([
+    db.players.toArray(),
+    db.games.toArray(),
+    db.events.toArray(),
+    getSettings(),
+  ]);
+  return (
+    sameRecords(players, file.players) &&
+    sameRecords(games, file.games) &&
+    sameRecords(events, file.events) &&
+    (!file.settings || canonical(settings) === canonical(file.settings))
+  );
 }
 
 /** The player to keep when merging: details from whichever was set up most recently. */
@@ -190,55 +236,75 @@ function mergePlayers(local: Player, incoming: Player): Player {
   });
 }
 
-async function replaceAll(file: ExportFile): Promise<ImportSummary> {
+async function replaceAll(file: ExportFile): Promise<ImportOutcome> {
+  const summary = { games: file.games.length, events: file.events.length };
+  // Restoring exactly what the device already holds changes nothing.
+  if (await deviceMatches(file)) return { summary, changed: false };
+
   await Promise.all([db.players.clear(), db.games.clear(), db.events.clear()]);
   await db.players.bulkAdd(file.players);
   await db.games.bulkAdd(file.games);
   await db.events.bulkAdd(file.events);
   if (file.settings) await db.meta.put({ key: META_KEYS.settings, value: file.settings });
-  return { games: file.games.length, events: file.events.length };
+  return { summary, changed: true };
 }
 
-async function mergeAll(file: ExportFile): Promise<ImportSummary> {
+async function mergeAll(file: ExportFile): Promise<ImportOutcome> {
+  let changed = false;
+
   // One player: the file's player and this device's player are the same person.
   const localPlayer = primaryPlayer(await db.players.toArray());
   const filePlayer = primaryPlayer(file.players);
   let playerId: string | undefined;
   if (filePlayer) {
     const player = localPlayer ? mergePlayers(localPlayer, filePlayer) : filePlayer;
-    await db.players.put(player);
+    if (!localPlayer || canonical(player) !== canonical(localPlayer)) {
+      await db.players.put(player);
+      changed = true;
+    }
     playerId = player.id;
   }
 
-  // Games: the copy updated most recently wins.
+  // A game and its events are one unit: the copy updated most recently wins whole.
+  // A newer copy in the file replaces the game and all of its events, so stats
+  // deleted or moved there come across too. An older copy (or one just as old) is
+  // skipped with its events, so stats undone on the device stay undone.
   const localGames = await db.games.bulkGet(file.games.map((game) => game.id));
-  const games = file.games
-    .filter((game, index) => {
-      const local = localGames[index];
-      return !local || game.updatedAt > local.updatedAt;
-    })
-    .map((game) => (playerId ? { ...game, playerId } : game));
-  await db.games.bulkPut(games);
-
-  // Events: add the ones this device doesn't have, and keep its copy of the others.
-  const localEvents = await db.events.bulkGet(file.events.map((event) => event.id));
-  const events = file.events.filter((_, index) => !localEvents[index]);
-  await db.events.bulkAdd(events);
+  const newer = file.games.filter((game, index) => {
+    const local = localGames[index];
+    return !local || game.updatedAt > local.updatedAt;
+  });
+  const newerIds = new Set(newer.map((game) => game.id));
+  const events = file.events.filter((event) => newerIds.has(event.gameId));
+  if (newer.length > 0) {
+    await db.events
+      .where('gameId')
+      .anyOf([...newerIds])
+      .delete();
+    await db.games.bulkPut(newer.map((game) => (playerId ? { ...game, playerId } : game)));
+    await db.events.bulkPut(events);
+    changed = true;
+  }
 
   // Settings are this device's preferences: only fill them in if there are none.
   if (file.settings && !(await db.meta.get(META_KEYS.settings))) {
+    if (canonical(await getSettings()) !== canonical(file.settings)) changed = true;
     await db.meta.put({ key: META_KEYS.settings, value: file.settings });
   }
-  return { games: games.length, events: events.length };
+  return { summary: { games: newer.length, events: events.length }, changed };
 }
 
 /**
  * Restores a backup in one transaction: if anything fails, nothing changes.
  * - 'replace': the device ends up with exactly the file's data (its settings too,
  *   if the file has them).
- * - 'merge': adds the file's data to the device's. For games (and the player) the
- *   copy updated most recently wins; events are added by id; nothing is deleted.
- *   Merge keeps one player, with the most recently set-up name and number.
+ * - 'merge': combines the file with the device's data. A game and its events are one
+ *   unit, and whichever copy was updated most recently wins whole: a newer copy in
+ *   the file replaces that game's events too, an older one is skipped (so stats
+ *   undone on the device stay undone). Games on only one side are kept, so a merge
+ *   brings back games deleted on the device. One player is kept, with the most
+ *   recently set-up name and number, and the device keeps its own settings.
+ * `meta.lastChangeAt` only moves if the import changed something.
  * The file is validated again first, so passing an unchecked object is safe.
  */
 export async function importAll(file: ExportFile, mode: ImportMode): Promise<ImportSummary> {
@@ -250,9 +316,11 @@ export async function importAll(file: ExportFile, mode: ImportMode): Promise<Imp
     'rw',
     [db.players, db.games, db.events, db.meta],
     async () => {
-      const result = mode === 'replace' ? await replaceAll(valid) : await mergeAll(valid);
-      await touchLastChange(Date.now());
-      return result;
+      const outcome = mode === 'replace' ? await replaceAll(valid) : await mergeAll(valid);
+      // An import that changes nothing mustn't look like a change (the backup would
+      // upload again after every merge).
+      if (outcome.changed) await touchLastChange(Date.now());
+      return outcome.summary;
     },
   );
   return summary;
@@ -264,6 +332,13 @@ export async function importAll(file: ExportFile, mode: ImportMode): Promise<Imp
  */
 export function clearAllData(): Promise<void> {
   return db.transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
+    const [players, games, events, settings] = await Promise.all([
+      db.players.count(),
+      db.games.count(),
+      db.events.count(),
+      db.meta.get(META_KEYS.settings),
+    ]);
+    if (players + games + events === 0 && settings === undefined) return;
     await Promise.all([
       db.players.clear(),
       db.games.clear(),
