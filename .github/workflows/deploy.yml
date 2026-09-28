@@ -40,6 +40,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          # The encrypted cloud backup's server (server/, on Fly.io). Until it's deployed,
+          # backups fail gracefully and the app says so; the data stays on the phone.
+          VITE_BACKUP_API_URL: https://richshaw-hoop-stats.fly.dev
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
