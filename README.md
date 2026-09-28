@@ -1,6 +1,6 @@
 # Hoop Stats
 
-Hoop Stats is a small web app for iPhone that lets a parent record their daughter's basketball stats during a game with big one-tap buttons, then review a report for each game and totals for the season. It works offline, and everything is stored on the phone itself: no account, no server, and no signal needed once it's installed.
+Hoop Stats is a small web app for iPhone that lets a parent record their daughter's basketball stats during a game with big one-tap buttons, then review a report for each game and totals for the season. It works fully offline and keeps everything on the phone itself: no account, and no signal needed once it's installed. The only thing that ever goes over the network is an optional backup, encrypted end to end, to the project's own backup server.
 
 ## Put it on your iPhone
 
