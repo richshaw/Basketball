@@ -17,10 +17,12 @@ import {
   type CloudBackupErrorKind,
   type CloudResult,
 } from '@/data/backup/cloudBackup';
+import { normalizeBackupCode } from '@/data/backup/code';
 import { useGames } from '@/data/hooks';
 import { paths } from '@/routes';
 import { ActionRow } from './ActionRow';
 import { cloudBackupSummary, codeFromTyped, formatBackupTime } from './cloudBackupText';
+import { RestoreCodeNote } from './RestoreCodeNote';
 import { RestoreSheet, type RestoreRequest } from './RestoreSheet';
 import { useBackupCode } from './useBackupCode';
 import styles from './CloudRestoreScreen.module.css';
@@ -43,6 +45,8 @@ const BACKUP_PROBLEMS: ReadonlySet<CloudBackupErrorKind> = new Set([
 interface Found {
   code: string;
   backup: CloudBackup;
+  /** This phone's own code, when restoring switches it to `code` (see RestoreCodeNote). */
+  switchingFrom?: string;
   /**
    * The server's newest version as this screen saw it: `backup`'s own, or the first of
    * the older backups' list. Turning backup on with it needs no request (see
@@ -52,6 +56,15 @@ interface Found {
 }
 
 const NOW_BACKS_UP = 'This phone now backs up with this code.';
+
+/** Whether two typed or stored codes are the same code (however they're written). */
+function sameCode(a: string, b: string): boolean {
+  try {
+    return normalizeBackupCode(a) === normalizeBackupCode(b);
+  } catch {
+    return false;
+  }
+}
 /** Long enough to read the engine's reason. */
 const MESSAGE_TOAST_MS = 6000;
 
@@ -113,6 +126,8 @@ export function CloudRestoreScreen() {
   };
 
   const preview = (next: Found) => {
+    // Checked as the sheet opens, so what it says stays put while it slides away.
+    if (phoneCode && !sameCode(next.code, phoneCode)) next.switchingFrom = phoneCode;
     setFound(next);
     setRequest({
       kind: 'preview',
@@ -125,7 +140,7 @@ export function CloudRestoreScreen() {
 
   const find = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (finding || games === undefined) return;
+    if (finding || games === undefined || phoneCode === undefined) return;
     const code = codeFromTyped(value);
     const current = ++attempt.current;
     setFinding(true);
@@ -249,7 +264,12 @@ export function CloudRestoreScreen() {
                   enterKeyHint="go"
                   className={styles.codeField}
                 />
-                <Button type="submit" size="lg" block disabled={finding || games === undefined}>
+                <Button
+                  type="submit"
+                  size="lg"
+                  block
+                  disabled={finding || games === undefined || phoneCode === undefined}
+                >
                   {finding ? 'Finding backup…' : 'Find backup'}
                 </Button>
               </form>
@@ -311,7 +331,14 @@ export function CloudRestoreScreen() {
         onClose={() => setSheetOpen(false)}
         afterRestore={turnOnBackup}
         onRestored={() => void restored()}
-      />
+        replaceNote={
+          found?.switchingFrom
+            ? 'This phone will also switch to the backup code you entered.'
+            : undefined
+        }
+      >
+        <RestoreCodeNote switchingFrom={found?.switchingFrom} />
+      </RestoreSheet>
     </main>
   );
 }

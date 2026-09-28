@@ -5,6 +5,7 @@ import { resetDatabase } from '@/test/db';
 import { createBackupApi } from '@/data/backup/api';
 import {
   backUpNow,
+  disableCloudBackup,
   enableCloudBackupWithCode,
   fetchCloudBackup,
   getBackupCode,
@@ -14,10 +15,12 @@ import { BackupCodeError, generateBackupCode, parseBackupCode } from '@/data/bac
 import { errorMessage } from '@/data/backup/errors';
 import { deriveBackupKeys } from '@/data/backup/keys';
 import type { DemoOptions } from '@/data/demo';
+import type { ExportFile } from '@/data/transfer';
 import { createGame, deleteGame, getPlayer, listGames } from '@/data/repo';
 import { paths } from '@/routes';
-import { REAL_LIVE_GAME_ID, realGameId, TEST_API_URL } from '@/test/backupHarness';
+import { buildRealData, REAL_LIVE_GAME_ID, realGameId, TEST_API_URL } from '@/test/backupHarness';
 import {
+  backUpFromAnotherPhone,
   seedOwnGames,
   settledStatus,
   setUpFakeCloudBackup,
@@ -92,6 +95,21 @@ function codeProblem(code: string): string {
 function withTypo(code: string): string {
   const last = code.at(-1) === '0' ? '1' : '0';
   return `${code.slice(0, -1)}${last}`;
+}
+
+/** The same season under other ids: a partner's games, not this phone's. */
+function partnersData(): ExportFile {
+  const data = buildRealData();
+  const rename = (id: string) => `partner-${id}`;
+  return {
+    ...data,
+    games: data.games.map((game) => ({ ...game, id: rename(game.id) })),
+    events: data.events.map((event) => ({
+      ...event,
+      id: rename(event.id),
+      gameId: rename(event.gameId),
+    })),
+  };
 }
 
 afterEach(() => {
@@ -235,7 +253,90 @@ describe('Restore from a backup code', () => {
     });
     expect(view.field).toHaveAccessibleDescription("This phone's backup code is filled in.");
     await view.user.click(screen.getByRole('button', { name: 'Find backup' }));
-    expect(await screen.findByRole('dialog', { name: 'Restore this backup?' })).toBeVisible();
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    // Its own code: no switching, and no warning.
+    expect(sheet).toHaveTextContent('After restoring, this phone backs up with this code.');
+    expect(sheet).not.toHaveTextContent('This phone will switch backup codes');
+  });
+
+  it('says before restoring that this phone will back up with the code', async () => {
+    const { code } = await backUpThenNewPhone();
+    const view = await renderRestore();
+
+    await find(view, code);
+
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).toHaveTextContent('After restoring, this phone backs up with this code.');
+    expect(sheet).not.toHaveTextContent('This phone will switch backup codes');
+  });
+
+  it('warns before switching this phone to another code, with its own code to save', async () => {
+    // This phone backed up its own ten games under `own`, then backup was turned off.
+    await seedOwnGames();
+    const own = await turnOnCloudBackup();
+    await disableCloudBackup();
+    // A partner's backup, under another code, with games of their own.
+    const partner = generateBackupCode();
+    await backUpFromAnotherPhone(cloud.server, partner, partnersData());
+    const view = await renderRestore();
+    await waitFor(() => {
+      expect(view.field).toHaveValue(own);
+    });
+
+    await find(view, partner);
+
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).toHaveTextContent(
+      'This phone will switch backup codes' +
+        'After restoring, it backs up with the code you entered and forgets its current one, the only way to restore its own online backup. Save the current code first if you might need that backup:' +
+        own,
+    );
+    // Her own code, ready to save first.
+    await view.user.click(within(sheet).getByRole('button', { name: 'Copy' }));
+    expect(await navigator.clipboard.readText()).toBe(own);
+
+    await view.user.click(
+      within(sheet).getByRole('button', { name: /Replace everything on this phone/ }),
+    );
+    const question = screen.getByRole('alertdialog', { name: 'Replace everything on this phone?' });
+    expect(question).toHaveAccessibleDescription(
+      /This phone will also switch to the backup code you entered\.$/,
+    );
+    await view.user.click(within(question).getByRole('button', { name: 'Replace everything' }));
+
+    await expectToast('Restored 10 games. This phone now backs up with this code.');
+    await expectGames(view);
+    expect(await getBackupCode()).toBe(partner);
+    expect((await listGames()).every((game) => game.id.startsWith('partner-'))).toBe(true);
+    // Its own backup is still there, for the code she saved.
+    const kept = await fetchCloudBackup(own);
+    expect(kept.ok && kept.value.games).toBe(10);
+  });
+
+  it('says so before an Add that finds nothing new switches codes too', async () => {
+    await seedOwnGames();
+    const own = await turnOnCloudBackup();
+    await disableCloudBackup();
+    // The partner's backup holds the same games (restored from this phone's file, say).
+    const partner = generateBackupCode();
+    await backUpFromAnotherPhone(cloud.server, partner, buildRealData());
+    const view = await renderRestore();
+    await waitFor(() => {
+      expect(view.field).toHaveValue(own);
+    });
+
+    await find(view, partner);
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).toHaveTextContent('This phone will switch backup codes');
+    await view.user.click(
+      within(sheet).getByRole('button', { name: /Add to what's on this phone/ }),
+    );
+
+    const result = within(sheet).getByRole('status', { name: 'Restore result' });
+    await waitFor(() => {
+      expect(result).toHaveTextContent(/This phone now backs up with this code\.$/);
+    });
+    expect(await getBackupCode()).toBe(partner);
   });
 
   it('takes a code pasted with the label a shared one has', async () => {

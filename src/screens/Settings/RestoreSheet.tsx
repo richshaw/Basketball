@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/Button/Button';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
@@ -38,6 +38,10 @@ export interface RestoreSheetProps {
    * the parent closed the sheet herself while it was restoring.
    */
   onRestored?: () => void;
+  /** Said above the choices, before anything is restored (e.g. which backup code is used). */
+  children?: ReactNode;
+  /** Added to the "Replace everything" question (e.g. that the phone switches codes). */
+  replaceNote?: string;
 }
 
 const RESTORE_FAILED = "Couldn't restore the backup. Nothing on this phone was changed.";
@@ -86,6 +90,8 @@ export function RestoreSheet({
   onClose,
   afterRestore,
   onRestored,
+  children,
+  replaceNote,
 }: RestoreSheetProps) {
   const confirm = useConfirm();
   const toast = useToast();
@@ -141,7 +147,9 @@ export function RestoreSheet({
     if (mode === 'replace') {
       const confirmed = await confirm({
         title: 'Replace everything on this phone?',
-        message: replaceWarning(phoneGameCount, backup),
+        message: replaceNote
+          ? `${replaceWarning(phoneGameCount, backup)} ${replaceNote}`
+          : replaceWarning(phoneGameCount, backup),
         confirmLabel: 'Replace everything',
         destructive: true,
       });
@@ -204,6 +212,7 @@ export function RestoreSheet({
         ) : null
       }
     >
+      {children ? <div className={styles.before}>{children}</div> : null}
       {phoneIsEmpty ? (
         <p className={styles.note}>
           There are no games on this phone yet, so nothing will be lost.

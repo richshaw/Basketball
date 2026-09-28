@@ -5,40 +5,6 @@
   padding-top: var(--space-1);
 }
 
-/* Large and monospaced, so each character is easy to tell apart and copy by hand. */
-.code {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-4);
-  border-radius: var(--radius-lg);
-  background-color: var(--color-surface);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  font-variant-numeric: tabular-nums slashed-zero;
-  letter-spacing: 0.04em;
-  line-height: var(--line-height-tight);
-  text-align: center;
-}
-
-/* A group of four never breaks; a line too wide for a narrow screen wraps between groups. */
-.group {
-  white-space: nowrap;
-}
-
-.actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-}
-
-.icon {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-}
-
 .warning {
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-normal);

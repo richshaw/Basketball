@@ -4,6 +4,11 @@
   line-height: var(--line-height-normal);
 }
 
+/* What the sheet says before the choices (see `children`). */
+.before {
+  margin-bottom: var(--space-4);
+}
+
 .part {
   display: inline-block;
   max-width: 100%;
