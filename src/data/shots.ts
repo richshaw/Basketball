@@ -86,3 +86,21 @@ export function countShots(shots: readonly Shot[]): MadeAttempted {
   for (const shot of shots) if (shot.made) made += 1;
   return { made, attempted: shots.length };
 }
+
+/**
+ * What a report's "Shot chart" section shows for its shots (one game's, or the games on
+ * the Stats tab), given the Shot chart setting (whether the live game screen asks where
+ * each shot was taken):
+ *
+ * - 'map': a shot map and shooting by zone, once any shot has a spot.
+ * - 'noSpots': a note that no spots were recorded, while the setting asks for them.
+ * - null: no section at all. There are no 2PT/3PT attempts, or none has a spot and the
+ *   setting is off: a family that doesn't record spots wants no empty courts.
+ */
+export function shotChartSection(
+  shots: readonly Shot[],
+  askForSpots: boolean,
+): 'map' | 'noSpots' | null {
+  if (shots.some(hasLocation)) return 'map';
+  return shots.length > 0 && askForSpots ? 'noSpots' : null;
+}

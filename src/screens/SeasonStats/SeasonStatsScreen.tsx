@@ -1,12 +1,15 @@
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { Button } from '@/components/Button/Button';
 import { ButtonLink } from '@/components/Button/ButtonLink';
+import { ShotMap } from '@/components/Court/ShotMap';
+import { ShotZoneSummary } from '@/components/Court/ShotZoneSummary';
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { StatTile, StatTileGrid } from '@/components/StatTile/StatTile';
 import { useToast } from '@/components/Toast/toastContext';
-import { useAllEvents, useGames, useLiveGame, usePlayer } from '@/data/hooks';
+import { useAllEvents, useGames, useLiveGame, usePlayer, useSettings } from '@/data/hooks';
+import { shotChartSection, shotsFromEvents } from '@/data/shots';
 import { statLinesForGames, summarizeGames, type GamesSummary } from '@/data/stats';
 import type { Game, Player } from '@/data/types';
 import { formatAvg, formatMadeAttempted, formatPct, formatPlayerName } from '@/lib/format';
@@ -30,8 +33,16 @@ import { TotalsTable } from './TotalsTable';
 import { TrendChart } from './TrendChart';
 import styles from './SeasonStatsScreen.module.css';
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  const headingId = useId();
+interface SectionProps {
+  title: string;
+  /** The heading's id, e.g. for something in the section to be named by it. */
+  headingId?: string;
+  children: ReactNode;
+}
+
+function Section({ title, headingId: givenHeadingId, children }: SectionProps) {
+  const generatedHeadingId = useId();
+  const headingId = givenHeadingId ?? generatedHeadingId;
   return (
     <section className={styles.section} aria-labelledby={headingId}>
       <h2 id={headingId} className={styles.sectionTitle}>
@@ -154,8 +165,10 @@ export function SeasonStatsScreen() {
   const player = usePlayer();
   // The game "Back to the game" opens: the same one the Games screen offers to resume.
   const liveGame = useLiveGame();
+  const settings = useSettings();
   const toast = useToast();
   const [remembered, setRemembered] = useState(readRememberedSeason);
+  const shotChartHeadingId = useId();
 
   // Season labels, most recent first (what useSeasons() reads, without a second query).
   const seasons = useMemo(() => games && seasonLabels(games), [games]);
@@ -180,6 +193,12 @@ export function SeasonStatsScreen() {
   );
   // Games from more than one year (e.g. all seasons): every date shows its year.
   const withYear = useMemo(() => spansYears(entries?.map((entry) => entry.game) ?? []), [entries]);
+  // Every 2PT/3PT attempt in the games shown, for the shot chart.
+  const shots = useMemo(() => {
+    if (!entries || !events) return undefined;
+    const shown = new Set(entries.map((entry) => entry.game.id));
+    return shotsFromEvents(events.filter((event) => shown.has(event.gameId)));
+  }, [entries, events]);
 
   const chooseSeason = (next: SeasonKey) => {
     setRemembered(next);
@@ -191,10 +210,12 @@ export function SeasonStatsScreen() {
     seasons &&
     player !== undefined &&
     liveGame !== undefined &&
+    settings &&
     key &&
     entries &&
     summary &&
-    oldestFirst;
+    oldestFirst &&
+    shots;
   const season = key ? seasonOf(key) : null;
   // What the numbers cover: the season, or every game ("All seasons" once there are some).
   const scopeLabel = season ?? (seasons?.length ? 'All seasons' : ALL_GAMES_LABEL);
@@ -219,6 +240,7 @@ export function SeasonStatsScreen() {
       seasons.length > 0
         ? `${scopeLabel} · ${formatGameCount(summary.gamesPlayed)}`
         : formatGameCount(summary.gamesPlayed);
+    const shotChart = shotChartSection(shots, settings.shotChart);
 
     content =
       finalGames?.length === 0 ? (
@@ -272,13 +294,23 @@ export function SeasonStatsScreen() {
                 <GameLog entries={entries} withYear={withYear} />
               </Section>
 
-              {/* Placeholder: a later PR puts the season ShotMap here. */}
-              <Section title="Shot chart">
-                <div className={styles.placeholder}>
-                  <p className={styles.placeholderTitle}>Season shot chart</p>
-                  <p>Coming soon: every shot this season, mapped on the court.</p>
-                </div>
-              </Section>
+              {shotChart ? (
+                <Section title="Shot chart" headingId={shotChartHeadingId}>
+                  {shotChart === 'map' ? (
+                    <>
+                      {/* Named by the section's heading and the caption, as on the game report. */}
+                      <ShotMap
+                        shots={shots}
+                        aria-labelledby={shotChartHeadingId}
+                        caption={<span className={styles.shotMapCaption}>{caption}</span>}
+                      />
+                      <ShotZoneSummary shots={shots} />
+                    </>
+                  ) : (
+                    <p className={styles.footnote}>No shot spots were recorded for these games.</p>
+                  )}
+                </Section>
+              ) : null}
             </>
           )}
         </>

@@ -26,6 +26,15 @@ async function openEditSheet(page: Page) {
   await expect(page.getByRole('dialog', { name: 'Edit game' })).toBeVisible();
 }
 
+/** Scrolls the heading of the report section `name` to just under the sticky screen header. */
+async function scrollToSection(page: Page, name: string) {
+  await page.getByRole('heading', { level: 2, name }).evaluate((heading) => {
+    const headerHeight = document.querySelector('header')?.offsetHeight ?? 0;
+    const top = heading.getBoundingClientRect().top + window.scrollY - headerHeight - 16;
+    window.scrollTo(0, top);
+  });
+}
+
 const screens: Screen[] = [
   { name: 'game-report-win', gameId: demoGameId(10), title: 'vs Eastlake' },
   { name: 'game-report-loss', gameId: demoGameId(9), title: '@ Riverside' },
@@ -40,13 +49,16 @@ const screens: Screen[] = [
       const firstQuarter = page.getByRole('button', { name: /^1st quarter, / });
       await firstQuarter.tap();
       await expect(firstQuarter).toHaveAttribute('aria-expanded', 'true');
-      // Scroll the section's heading to just under the sticky screen header.
-      await page.getByRole('heading', { level: 2, name: 'Play-by-play' }).evaluate((heading) => {
-        const headerHeight = document.querySelector('header')?.offsetHeight ?? 0;
-        const top = heading.getBoundingClientRect().top + window.scrollY - headerHeight - 16;
-        window.scrollTo(0, top);
-      });
+      await scrollToSection(page, 'Play-by-play');
     },
+  },
+  {
+    // The shot chart at full size: the court, its legend and the zone tiles.
+    name: 'game-report-shot-chart',
+    gameId: demoGameId(10),
+    title: 'vs Eastlake',
+    viewportOnly: true,
+    interact: (page) => scrollToSection(page, 'Shot chart'),
   },
   {
     name: 'game-report-edit',

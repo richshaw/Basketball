@@ -11,12 +11,21 @@ export interface ReportSectionProps {
    * one makes the heading focusable from script (not with Tab).
    */
   headingRef?: Ref<HTMLHeadingElement>;
+  /** The heading's id, e.g. for something in the section to be named by it. */
+  headingId?: string;
   children: ReactNode;
 }
 
 /** One titled part of the game report (a named region with an h2). */
-export function ReportSection({ title, note, headingRef, children }: ReportSectionProps) {
-  const headingId = useId();
+export function ReportSection({
+  title,
+  note,
+  headingRef,
+  headingId: givenHeadingId,
+  children,
+}: ReportSectionProps) {
+  const generatedHeadingId = useId();
+  const headingId = givenHeadingId ?? generatedHeadingId;
   return (
     <section aria-labelledby={headingId} className={styles.section}>
       <div className={styles.heading}>

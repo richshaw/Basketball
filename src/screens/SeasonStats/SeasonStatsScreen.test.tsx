@@ -1,7 +1,15 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildDemoData, demoGameId, type DemoOptions } from '@/data/demo';
-import { createGame, endGame, getAllEvents, listGames, recordStat } from '@/data/repo';
+import { buildDemoData, DEMO_LIVE_GAME_ID, demoGameId, type DemoOptions } from '@/data/demo';
+import {
+  createGame,
+  endGame,
+  getAllEvents,
+  listGames,
+  recordStat,
+  updateSettings,
+} from '@/data/repo';
+import { countShots, hasLocation, shotsFromEvents } from '@/data/shots';
 import {
   HIGH_STATS,
   statLinesForGames,
@@ -10,11 +18,12 @@ import {
   type HighStat,
 } from '@/data/stats';
 import { importAll, type ExportFile } from '@/data/transfer';
-import type { Game, StatType } from '@/data/types';
+import type { CourtPoint, Game, StatEvent, StatType } from '@/data/types';
 import { formatAvg, formatGameDate, formatMadeAttempted, formatPct } from '@/lib/format';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
 import { gameTitle } from '@/lib/gameTitle';
+import { formatGameCount } from './gameLabels';
 import { clearSessionValues } from './seasonFilter';
 import { buildSeasonRecap } from './seasonRecap';
 
@@ -34,19 +43,41 @@ function expectedSummary(games: readonly Game[], events: ExportFile['events'], s
   return summarizeGames(statLinesForGames(finals, events));
 }
 
+/** A stat to record: its type, or a shot's type and where it was taken. */
+type Stat = StatType | [StatType, CourtPoint];
+
 /** Adds a finished game: its stats, then the final score. */
 async function addFinalGame(
   input: { opponent: string; date: string; season?: string },
-  stats: StatType[],
+  stats: Stat[],
   [teamScore, opponentScore]: [number, number],
 ): Promise<Game> {
   const game = await createGame({ ...input, periodFormat: 'quarters' });
-  for (const type of stats) await recordStat(game.id, type);
+  for (const stat of stats) {
+    const [type, location] = Array.isArray(stat) ? stat : [stat];
+    await recordStat(game.id, type, location);
+  }
   return endGame(game.id, { teamScore, opponentScore });
 }
 
 /** Waits for the stats to load. (By text: polling role queries over the whole page is slow.) */
 const waitForStats = () => screen.findByText('Averages', { selector: 'h2' });
+
+/** The shot chart's legend for these stats: makes and misses of the shots with a spot. */
+function expectedLegend(events: readonly StatEvent[]): string {
+  const { made, attempted } = countShots(shotsFromEvents(events).filter(hasLocation));
+  return `Made ${made} · Missed ${attempted - made}`;
+}
+
+/** The legend of the shot map of `games` games in `scope`, e.g. ('Fall 2026', 10). */
+function shotMapLegend(scope: string, games: number) {
+  const chart = screen.getByRole('region', { name: 'Shot chart' });
+  // Named by the section's heading, then its caption: "Shot chart Fall 2026 · 10 games".
+  const map = within(chart).getByRole('figure', {
+    name: `Shot chart ${scope} · ${formatGameCount(games)}`,
+  });
+  return within(map).getByText('Made').closest('p');
+}
 
 /** The number on the average tile with this full label, e.g. 'Points per game'. */
 function tileValue(fullLabel: string, grid = screen.getByLabelText('Averages per game')) {
@@ -112,7 +143,8 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       expect(expected.gamesPlayed).toBe(10);
       expectAverages(expected);
       expect(screen.getByText('Ava')).toBeInTheDocument();
-      expect(screen.getByText('Fall 2026 · 10 games')).toBeInTheDocument();
+      // The summary's line (the shot chart's caption repeats it).
+      expect(screen.getByText('Fall 2026 · 10 games', { selector: 'p' })).toBeInTheDocument();
       expect(screen.getByText('Record')).toBeInTheDocument();
       expect(screen.getByText('7–3')).toBeInTheDocument();
 
@@ -198,7 +230,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
 
       await user.click(within(seasons).getByRole('radio', { name: 'All' }));
       await waitFor(() => expectAverages(expectedSummary(allGames, allEvents)));
-      expect(screen.getByText('All seasons · 12 games')).toBeInTheDocument();
+      expect(screen.getByText('All seasons · 12 games', { selector: 'p' })).toBeInTheDocument();
       expect(screen.getByText('8–4')).toBeInTheDocument();
       expect(screen.getByRole('list', { name: 'Career highs' })).toBeInTheDocument();
       expect(totalsCell('Season')).toBe('All seasons');
@@ -294,7 +326,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       expect(screen.getByText('rebounds per game')).toBeInTheDocument();
       expect(rebounds).toHaveAccessibleDescription(
         new RegExp(
-          `^Rebounds in 10 games, .*Average ${formatAvg(expected.averages.reb)} a game\\.`,
+          `^Rebounds in 10\u00a0games, .*Average ${formatAvg(expected.averages.reb)} a game\\.`,
         ),
       );
 
@@ -459,11 +491,36 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       expect(await within(toasts).findByText('Copied')).toBeInTheDocument();
     });
 
-    it('marks where the season shot chart will go', async () => {
-      renderRoute(paths.stats);
+    it('maps the shots of the games shown, and follows the season picked', async () => {
+      // A summer game: a layup in and a corner three out, plus a two with no spot.
+      await addFinalGame(
+        { opponent: 'Harbor', date: '2026-06-10', season: 'Summer 2026' },
+        [['fg2_made', { x: 0, y: 2 }], ['fg3_miss', { x: -22, y: -1 }], 'fg2_miss', 'ft_made'],
+        [40, 32],
+      );
+      const { user } = renderRoute(paths.stats);
       await waitForStats();
-      expect(screen.getByRole('heading', { level: 2, name: 'Shot chart' })).toBeInTheDocument();
-      expect(screen.getByText('Season shot chart')).toBeInTheDocument();
+
+      expect(shotMapLegend('Fall 2026', 10)).toHaveTextContent(expectedLegend(demo.events));
+
+      await user.click(screen.getByRole('radio', { name: 'Summer 2026' }));
+      await waitFor(() =>
+        expect(shotMapLegend('Summer 2026', 1)).toHaveTextContent('Made 1 · Missed 1'),
+      );
+      expect(screen.getByText('2 of 3 shots have a location')).toBeInTheDocument();
+      // Paint, mid-range and 3PT: the summer game's shots alone.
+      expect(
+        within(screen.getByLabelText('Shooting by zone'))
+          .getAllByText(/ made$/)
+          .map((detail) => detail.textContent),
+      ).toEqual(['1 of 1 made', '0 of 0 made', '0 of 1 made']);
+
+      await user.click(screen.getByRole('radio', { name: 'All' }));
+      const allEvents = await getAllEvents();
+      await waitFor(() =>
+        expect(shotMapLegend('All seasons', 11)).toHaveTextContent(expectedLegend(allEvents)),
+      );
+      expect(expectedLegend(allEvents)).not.toBe(expectedLegend(demo.events));
     });
   });
 
@@ -483,8 +540,12 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       expect(withLive.totals.pts).toBeGreaterThan(finalOnly.totals.pts);
 
       expectAverages(finalOnly);
-      expect(screen.getByText('Fall 2026 · 10 games')).toBeInTheDocument();
+      expect(screen.getByText('Fall 2026 · 10 games', { selector: 'p' })).toBeInTheDocument();
       expect(totalsCell('PTS')).toBe(String(finalOnly.totals.pts));
+      // Nor are its shots on the shot chart.
+      const finalEvents = demo.events.filter((event) => event.gameId !== DEMO_LIVE_GAME_ID);
+      expect(expectedLegend(demo.events)).not.toBe(expectedLegend(finalEvents));
+      expect(shotMapLegend('Fall 2026', 10)).toHaveTextContent(expectedLegend(finalEvents));
       expect(
         within(screen.getByRole('table', { name: 'Game log' })).getAllByRole('row'),
       ).toHaveLength(
@@ -579,6 +640,25 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       expect(totalsCell('PTS')).toBe('2');
     });
 
+    it('says when no shot spots were recorded, or leaves the shot chart out with them off', async () => {
+      await addFinalGame(
+        { opponent: 'Harbor', date: '2026-06-10' },
+        ['fg2_made', 'fg3_miss'],
+        [30, 20],
+      );
+      renderRoute(paths.stats);
+      await waitForStats();
+
+      const chart = screen.getByRole('region', { name: 'Shot chart' });
+      expect(chart).toHaveTextContent('No shot spots were recorded for these games.');
+      expect(within(chart).queryByRole('figure')).not.toBeInTheDocument();
+
+      // Turned off in Settings: no empty shot chart at all.
+      await updateSettings({ shotChart: false });
+      await waitFor(() => expect(screen.queryByText(/No shot spots/)).not.toBeInTheDocument());
+      expect(screen.queryByRole('heading', { name: 'Shot chart' })).not.toBeInTheDocument();
+    });
+
     it('shows all games, with no season picker, when no game has a season', async () => {
       await addFinalGame({ opponent: 'Harbor', date: '2026-06-10' }, ['fg3_made'], [30, 20]);
       renderRoute(paths.stats);
@@ -648,7 +728,7 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
         'Sat, Sep 12, 2026, vs Lincoln: 3 points',
       ]);
       expect(chart).toHaveAccessibleDescription(
-        'Points in 2 games, Sep 13, 2025 – Sep 12, 2026. Average 2.5 a game. ' +
+        'Points in 2\u00a0games, Sep 13, 2025 – Sep 12, 2026. Average 2.5 a game. ' +
           'High 3 vs Lincoln on Sat, Sep 12, 2026. Low 2 vs Lincoln on Sat, Sep 13, 2025.',
       );
       expect(screen.getByText('2 games · Sep 13, 2025 – Sep 12, 2026')).toBeInTheDocument();
