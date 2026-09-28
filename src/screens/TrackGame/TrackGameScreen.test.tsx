@@ -109,7 +109,7 @@ describe('TrackGameScreen', () => {
       'Charge Taken',
       'Undo last stat',
     ]);
-    // ...and at most two short words on each button.
+    // ...and at most two short words on each button, which still read as that name.
     expect(buttons.map((button) => button.textContent)).toEqual([
       '2PT Made',
       '2PT Miss',
@@ -122,7 +122,7 @@ describe('TrackGameScreen', () => {
       'Assist',
       'Steal',
       'Block',
-      'Turn over',
+      'Turn-over',
       'Foul',
       'Deflect',
       'Charge Taken',

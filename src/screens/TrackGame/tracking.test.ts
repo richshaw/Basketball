@@ -10,6 +10,8 @@ import {
   statKind,
   statLabel,
   widestWordEm,
+  widestWordOnCanvas,
+  type TextMeasurer,
 } from './tracking';
 
 describe('countByType', () => {
@@ -111,5 +113,53 @@ describe('widestWordEm', () => {
     expect(widestWordEm('Charge Taken', measure)).toBe(3);
     expect(widestWordEm('Deflection', measure)).toBe(5);
     expect(widestWordEm('  ', measure)).toBe(0);
+  });
+});
+
+describe('widestWordOnCanvas', () => {
+  /**
+   * A canvas context that, like a browser's, gives the font back serialized, and
+   * ignores a font it can't parse (keeping the one it had). Each letter is 12px wide.
+   */
+  function canvas(parses: (font: string) => string | null): TextMeasurer {
+    let font = '10px sans-serif';
+    return {
+      get font() {
+        return font;
+      },
+      set font(value: string) {
+        font = parses(value) ?? font;
+      },
+      measureText: (text: string) => ({ width: text.length * 12 }),
+    };
+  }
+
+  it('measures in the label font, in em', () => {
+    const context = canvas((font) => font.replace('normal ', ''));
+    const font = 'normal 700 24px -apple-system, "SF Pro Text", system-ui, sans-serif';
+    expect(widestWordOnCanvas(context, font, 24, ['Turn-', 'over', 'Charge'])).toBe(3);
+    expect(context.font).toBe('700 24px -apple-system, "SF Pro Text", system-ui, sans-serif');
+    expect(
+      widestWordOnCanvas(
+        canvas((value) => value),
+        'bold 21.5px/1.2 serif',
+        21.5,
+        ['ab'],
+      ),
+    ).toBe(24 / 21.5);
+    expect(
+      widestWordOnCanvas(
+        canvas((value) => value),
+        'bold 24px serif',
+        24,
+        [],
+      ),
+    ).toBeUndefined();
+  });
+
+  it("gives up if the canvas didn't take the font, rather than measure in its own", () => {
+    const context = canvas(() => null);
+    expect(widestWordOnCanvas(context, '700 24px ???', 24, ['Charge'])).toBeUndefined();
+    expect(context.font).toBe('10px sans-serif');
   });
 });

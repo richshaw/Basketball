@@ -85,6 +85,42 @@ export function widestWordEm(label: string, measureEm: (word: string) => number)
   return widest;
 }
 
+/** What measuring text needs from a canvas 2D context. */
+export interface TextMeasurer {
+  font: string;
+  measureText(text: string): { width: number };
+}
+
+/** The px size in a CSS font shorthand as a canvas gives it back, e.g. 24 in '700 24px serif'. */
+function fontSizePx(font: string): number | undefined {
+  const match = /(?:^|\s)(\d*\.?\d+)px(?:[\s/]|$)/.exec(font);
+  return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * The widest of `words` in em, measured on a canvas in `font` (a CSS font of `size`
+ * px). Undefined if the canvas didn't take that font: it ignores one it can't parse
+ * and keeps its own, and measuring in that would give the wrong widths.
+ */
+export function widestWordOnCanvas(
+  context: TextMeasurer,
+  font: string,
+  size: number,
+  words: readonly string[],
+): number | undefined {
+  context.font = font;
+  const taken = fontSizePx(context.font);
+  if (taken === undefined || Math.abs(taken - size) > 0.01) return undefined;
+  let widest = 0;
+  for (const word of words) {
+    widest = Math.max(
+      widest,
+      widestWordEm(word, (each) => context.measureText(each).width / size),
+    );
+  }
+  return widest > 0 ? widest : undefined;
+}
+
 /**
  * Taps on one control closer together than this are a double tap: only the first
  * counts. Also how long a button that just changed ignores taps.

@@ -2,7 +2,7 @@ import { Fragment, memo, useId, useLayoutEffect, useRef, type RefObject } from '
 import { STAT_DEFS } from '@/data/stats';
 import type { StatType } from '@/data/types';
 import { cx } from '@/lib/cx';
-import { widestWordEm, type StatCounts } from './tracking';
+import { widestWordOnCanvas, type StatCounts } from './tracking';
 import styles from './StatGrid.module.css';
 
 /** The buttons, row by row, as the parent sees them: shots, then rebounds, then the rest. */
@@ -15,11 +15,13 @@ const GRID_STATS = [
 
 /**
  * Shorter words on the grid only (the log and reports keep the full names), so every
- * label is at most two short words and they all fit at the same large size.
+ * label is at most two short words and they all fit at the same large size. They
+ * still read as the button's name, for Voice Control and WCAG's "label in name":
+ * "Deflect" starts "Deflection", and "Turnover" is only split, with a hyphen.
  */
-const GRID_WORDS: Partial<Record<StatType, string>> = {
-  tov: 'Turn over',
-  deflection: 'Deflect',
+const GRID_WORDS: Partial<Record<StatType, readonly string[]>> = {
+  tov: ['Turn-', 'over'],
+  deflection: ['Deflect'],
 };
 
 /**
@@ -27,14 +29,14 @@ const GRID_WORDS: Partial<Record<StatType, string>> = {
  * fit its button on one line. Measures every word once, with a canvas, in the label
  * font at the size labels render at when they fit (the xl token), and gives the
  * widest one to the CSS as `--label-em`, which caps the size so it fits the width.
- * Without a canvas, the CSS falls back to a size that fits any label.
+ * Without a canvas (or if it won't take the label font), the CSS falls back to a
+ * size that fits any label.
  */
 function useFitLabels(gridRef: RefObject<HTMLElement | null>) {
   useLayoutEffect(() => {
     const grid = gridRef.current;
-    const labels = grid?.querySelectorAll<HTMLElement>('[data-fit-label]');
-    const first = labels?.[0];
-    if (!grid || !labels || !first) return;
+    const label = grid?.querySelector<HTMLElement>('[data-fit-label]');
+    if (!grid || !label) return;
     const context = document.createElement('canvas').getContext('2d');
     if (!context) return;
 
@@ -45,14 +47,14 @@ function useFitLabels(gridRef: RefObject<HTMLElement | null>) {
     probe.remove();
     if (!(size > 0)) return;
 
-    const { fontStyle, fontWeight, fontFamily } = getComputedStyle(first);
-    context.font = `${fontStyle} ${fontWeight} ${size}px ${fontFamily}`;
-    const measureEm = (word: string) => context.measureText(word).width / size;
-    let widest = 0;
-    for (const label of labels) {
-      widest = Math.max(widest, widestWordEm(label.textContent ?? '', measureEm));
-    }
-    if (widest > 0) grid.style.setProperty('--label-em', widest.toFixed(3));
+    const { fontStyle, fontWeight, fontFamily } = getComputedStyle(label);
+    const words = Array.from(
+      grid.querySelectorAll('[data-fit-word]'),
+      (word) => word.textContent ?? '',
+    );
+    const font = `${fontStyle} ${fontWeight} ${size}px ${fontFamily}`;
+    const widest = widestWordOnCanvas(context, font, size, words);
+    if (widest !== undefined) grid.style.setProperty('--label-em', widest.toFixed(3));
   }, [gridRef]);
 }
 
@@ -73,12 +75,18 @@ function flash(button: HTMLElement) {
   );
 }
 
-/** Each word on its own line, the same on every screen size ("2PT" over "Made"). */
-function Words({ text }: { text: string }) {
-  return text.split(' ').map((word, index) => (
-    <Fragment key={word}>
-      {index > 0 ? ' ' : null}
-      <span className={styles.word}>{word}</span>
+/**
+ * Each word on its own line, the same on every screen size ("2PT" over "Made"). A
+ * word ending in a hyphen ("Turn-") runs into the next with no space between, so the
+ * label's text is still the one word.
+ */
+function Words({ words }: { words: readonly string[] }) {
+  return words.map((word, index) => (
+    <Fragment key={index}>
+      {index > 0 && !words[index - 1]?.endsWith('-') ? ' ' : null}
+      <span className={styles.word} data-fit-word="">
+        {word}
+      </span>
     </Fragment>
   ));
 }
@@ -112,7 +120,7 @@ const StatButton = memo(function StatButton({ type, count, onRecord }: StatButto
       }}
     >
       <span className={styles.label} data-fit-label="">
-        <Words text={GRID_WORDS[type] ?? label} />
+        <Words words={GRID_WORDS[type] ?? label.split(' ')} />
       </span>
       {count > 0 ? (
         <>
@@ -136,7 +144,7 @@ const UndoButton = memo(function UndoButton({ onUndo }: { onUndo: () => boolean 
       }}
     >
       <span className={styles.label} data-fit-label="">
-        Undo
+        <Words words={['Undo']} />
       </span>
     </button>
   );
