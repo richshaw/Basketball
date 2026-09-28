@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, emulateIPhoneSafeArea, expectRoute } from './support/app';
-import { demoGameId, seedDemoData } from './support/data';
+import { DEMO_LIVE_GAME_ID, demoGameId, seedDemoData } from './support/data';
 
 interface Screen {
   /** File name stem: saved as `<name>-light.png` and `<name>-dark.png`. */
@@ -38,7 +38,12 @@ const screens: Screen[] = [
     interact: (page) =>
       expect(page.getByRole('heading', { level: 2, name: 'Play-by-play' })).toBeVisible(),
   },
-  { name: 'track-game', path: paths.trackGame('demo') },
+  {
+    name: 'track-game',
+    path: paths.trackGame(DEMO_LIVE_GAME_ID),
+    setup: (page) => seedDemoData(page, { liveGame: true }),
+    interact: (page) => expect(page.getByRole('group', { name: 'Record a stat' })).toBeVisible(),
+  },
   // The shared component gallery, and its overlays one at a time.
   { name: 'dev-ui', path: paths.devUi },
   {

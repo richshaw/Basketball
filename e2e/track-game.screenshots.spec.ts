@@ -1,11 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, expectRoute, IPHONE_SAFE_BOTTOM, IPHONE_VIEWPORT } from './support/app';
-import { DEMO_LIVE_GAME_ID, demoGameId, seedDemoData } from './support/data';
+import { demoGameId, seedDemoData } from './support/data';
+import { failNextSaves, lastAction, notSaved, startGame, stats } from './support/tracking';
 
 // Screenshots of the live game screen in its main states, at the typical iPhone size
-// and the smallest and largest ones. Run with `npm run screenshots` (SCREENSHOT_DIR
-// picks the folder).
+// and the smallest and largest ones (as installed apps: the status bar is above the
+// page). Run with `npm run screenshots` (SCREENSHOT_DIR picks the folder).
 
 interface Device {
   width: number;
@@ -15,8 +16,8 @@ interface Device {
 }
 
 const IPHONE: Device = { ...IPHONE_VIEWPORT, safeBottom: IPHONE_SAFE_BOTTOM };
-const IPHONE_SE: Device = { width: 375, height: 667, safeBottom: 0 };
-const IPHONE_PRO_MAX: Device = { width: 430, height: 932, safeBottom: IPHONE_SAFE_BOTTOM };
+const IPHONE_SE: Device = { width: 375, height: 667 - 20, safeBottom: 0 };
+const IPHONE_PRO_MAX: Device = { width: 430, height: 932 - 59, safeBottom: IPHONE_SAFE_BOTTOM };
 
 /** Stands for a tap on "Next" (period) in GAME_TAPS. */
 const NEXT_PERIOD = 'Next period';
@@ -62,9 +63,6 @@ async function emulateDevice(page: Page, device: Device) {
   });
 }
 
-const lastAction = (page: Page) => page.getByRole('status', { name: 'Last action' });
-const stats = (page: Page) => page.getByRole('list', { name: 'Game stats' });
-
 async function openTracking(page: Page, gameId: string) {
   await page.goto('about:blank');
   await page.goto(appUrl(paths.trackGame(gameId)));
@@ -72,39 +70,41 @@ async function openTracking(page: Page, gameId: string) {
   await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
 }
 
-/** The demo live game with all of its stats undone, back in Q1: a game just started. */
+/** A game just started from the New game form. */
 async function freshGame(page: Page) {
-  await page.goto('./');
-  await seedDemoData(page, { liveGame: true });
-  await openTracking(page, DEMO_LIVE_GAME_ID);
-  // Undo far more times than the demo game has stats; each tap removes the latest one.
-  await page
-    .getByRole('button', { name: 'Undo last stat' })
-    .evaluate((undo: HTMLElement) => Array.from({ length: 80 }, () => undo.click()));
-  await expect(lastAction(page)).toHaveText('Nothing to undo');
-  await expect(stats(page).getByText('Points: 0')).toBeAttached();
-  await page.getByRole('button', { name: /^Period / }).tap();
-  await page.getByRole('dialog', { name: 'Period' }).getByRole('button', { name: 'Q1' }).tap();
-  await expect(page.getByRole('button', { name: 'Period Q1' })).toBeVisible();
-  // Reopen, so the screen looks exactly as it does for a brand-new game.
-  await openTracking(page, DEMO_LIVE_GAME_ID);
+  await startGame(page);
   await expect(lastAction(page)).toHaveText('Tap a button to record a stat');
 }
 
 async function midGame(page: Page) {
-  await freshGame(page);
+  await startGame(page);
   for (const tap of GAME_TAPS) {
     if (tap === NEXT_PERIOD) {
+      // Clear of the double-tap guard on Next.
+      await page.waitForTimeout(450);
       await page.getByRole('button', { name: 'Next period' }).tap();
     } else {
       await page
         .getByRole('group', { name: 'Record a stat' })
-        .getByRole('button', { name: tap })
+        .getByRole('button', { name: tap, exact: true })
         .tap();
     }
   }
   await expect(stats(page).getByText('Points: 14')).toBeAttached();
   await expect(lastAction(page)).toContainText('Foul · Q3');
+}
+
+/** A finished game being corrected: one more foul puts her in foul trouble (4). */
+async function finishedGame(page: Page) {
+  await page.goto('./');
+  await seedDemoData(page);
+  await openTracking(page, demoGameId(10));
+  await expect(page.getByText('Editing a finished game')).toBeVisible();
+  await page
+    .getByRole('group', { name: 'Record a stat' })
+    .getByRole('button', { name: 'Foul' })
+    .tap();
+  await expect(stats(page).getByText('Fouls: 4 (foul trouble)')).toBeAttached();
 }
 
 interface Shot {
@@ -118,6 +118,23 @@ const shots: Shot[] = [
   { name: 'mid-game', device: IPHONE, capture: midGame },
   { name: 'mid-game-se', device: IPHONE_SE, capture: midGame },
   { name: 'mid-game-pro-max', device: IPHONE_PRO_MAX, capture: midGame },
+  {
+    name: 'not-saved',
+    device: IPHONE,
+    capture: async (page) => {
+      await midGame(page);
+      // The database keeps failing: two taps wait on screen to be saved.
+      await failNextSaves(page, 1000);
+      for (const name of ['Steal', 'Assist']) {
+        await page
+          .getByRole('group', { name: 'Record a stat' })
+          .getByRole('button', { name })
+          .tap();
+      }
+      await expect(notSaved(page)).toContainText('2 stats not saved');
+      await expect(notSaved(page)).toContainText('Tap Retry');
+    },
+  },
   {
     name: 'log',
     device: IPHONE,
@@ -140,22 +157,8 @@ const shots: Shot[] = [
       await sheet.getByRole('heading', { name: 'Final score' }).focus();
     },
   },
-  {
-    name: 'finished',
-    device: IPHONE,
-    capture: async (page) => {
-      await page.goto('./');
-      await seedDemoData(page);
-      await openTracking(page, demoGameId(10));
-      await expect(page.getByText('Editing a finished game')).toBeVisible();
-      // A correction: one more foul puts her in foul trouble (4).
-      await page
-        .getByRole('group', { name: 'Record a stat' })
-        .getByRole('button', { name: 'Foul' })
-        .tap();
-      await expect(stats(page).getByText('Fouls: 4 (foul trouble)')).toBeAttached();
-    },
-  },
+  { name: 'finished', device: IPHONE, capture: finishedGame },
+  { name: 'finished-se', device: IPHONE_SE, capture: finishedGame },
 ];
 
 const outputDir = process.env.SCREENSHOT_DIR || 'screenshots';

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { screenHeading } from './support/app';
+import { DEMO_LIVE_GAME_ID, seedDemoData } from './support/data';
 import { startVersionedServer, type VersionedServer } from './support/versionedServer';
 
 let server: VersionedServer;
@@ -57,10 +58,13 @@ for (const visit of ['first visit', 'return visit'] as const) {
 test('updating never reloads a live game open in another window', async ({ context, page }) => {
   await page.goto(server.url);
   await waitForServiceWorkerControl(page);
+  await seedDemoData(page, { liveGame: true });
 
   const game = await context.newPage();
-  await game.goto(`${server.url}#${paths.trackGame('live')}`);
-  await expect(screenHeading(game, 'Live game')).toBeVisible();
+  await game.goto(`${server.url}#${paths.trackGame(DEMO_LIVE_GAME_ID)}`);
+  // The real live game screen, with the demo game (Q3) loaded.
+  await expect(screenHeading(game, 'vs Westfield')).toBeVisible();
+  await expect(game.getByRole('button', { name: 'Period Q3' })).toBeVisible();
   // Lost if the window reloads.
   await game.evaluate(() => {
     document.documentElement.dataset.sameDocument = 'yes';
@@ -71,11 +75,18 @@ test('updating never reloads a live game open in another window', async ({ conte
   await updateBanner(page).getByRole('button', { name: 'Update' }).tap();
   await expect(runningBuild(page)).toHaveAttribute('content', 'b', { timeout: 15_000 });
 
-  // The live game kept going: same document, old version, no prompt.
+  // The live game kept going: same document, old version, no prompt, and it still
+  // records stats.
   await expect(game.locator('html')).toHaveAttribute('data-same-document', 'yes');
   await expect(runningBuild(game)).toHaveAttribute('content', 'a');
-  await expect(screenHeading(game, 'Live game')).toBeVisible();
+  await expect(screenHeading(game, 'vs Westfield')).toBeVisible();
   await expect(updateBanner(game)).toHaveCount(0);
+  await game
+    .getByRole('group', { name: 'Record a stat' })
+    .getByRole('button', { name: 'Steal' })
+    .tap();
+  await expect(game.getByRole('status', { name: 'Last action' })).toContainText('Steal · Q3');
+  await expect(game.locator('html')).toHaveAttribute('data-same-document', 'yes');
 
   // After the game, the tab screens offer the update, which is now just a reload.
   await game.getByRole('link', { name: 'Games', exact: true }).tap();
