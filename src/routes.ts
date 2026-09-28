@@ -5,7 +5,8 @@
  * appear after the `#` in the address bar, e.g. `.../Basketball/#/games/42/track`.
  */
 
-export type GameId = string | number;
+/** Games are keyed by string ids (crypto.randomUUID in the data layer). */
+export type GameId = string;
 
 /** Route patterns for the router table (src/router.tsx). */
 export const routePatterns = {
@@ -19,7 +20,7 @@ export const routePatterns = {
   devUi: '/dev/ui',
 } as const;
 
-const gamePath = (gameId: GameId) => `/games/${encodeURIComponent(String(gameId))}`;
+const gamePath = (gameId: GameId) => `/games/${encodeURIComponent(gameId)}`;
 
 /** Concrete URLs to link or navigate to. */
 export const paths = {

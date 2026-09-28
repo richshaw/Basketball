@@ -19,9 +19,15 @@ export const appRoutes: RouteObject[] = [
         // Tab screens: tab bar + update banner.
         Component: AppShell,
         children: [
-          { path: routePatterns.home, Component: HomeScreen },
-          { path: routePatterns.stats, Component: SeasonStatsScreen },
-          { path: routePatterns.settings, Component: SettingsScreen },
+          {
+            // A crashed tab screen shows the error inside the shell: the tab bar keeps working.
+            ErrorBoundary: ErrorScreen,
+            children: [
+              { path: routePatterns.home, Component: HomeScreen },
+              { path: routePatterns.stats, Component: SeasonStatsScreen },
+              { path: routePatterns.settings, Component: SettingsScreen },
+            ],
+          },
         ],
       },
       // Full-screen routes: no tab bar, no update banner.

@@ -14,8 +14,8 @@ export interface ScreenHeaderProps {
 }
 
 /**
- * Sticky screen header with an iOS-style large title. It pads itself below the
- * status bar (safe-area inset), so screens must not add their own top padding.
+ * Sticky screen header with an iOS-style large title. It pads the top safe-area
+ * inset itself (0 under the app's black status bar), so screens don't have to.
  */
 export function ScreenHeader({ title, backTo, backLabel = 'Back', action }: ScreenHeaderProps) {
   const actionSlot = action ? <div className={styles.action}>{action}</div> : null;

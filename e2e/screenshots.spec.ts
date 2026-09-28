@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
-import { appUrl, emulateIPhoneSafeArea } from './support/app';
+import { appUrl, emulateIPhoneSafeArea, expectRoute } from './support/app';
 
 interface Screen {
   /** File name stem: saved as `<name>-light.png` and `<name>-dark.png`. */
@@ -73,8 +73,12 @@ for (const colorScheme of ['light', 'dark'] as const) {
         await emulateIPhoneSafeArea(page);
         await page.goto('./');
         await screen.setup?.(page);
+        // Open the screen in a fresh document: after a same-page hash change, the previous
+        // screen's heading could still be on show and get captured instead.
+        await page.goto('about:blank');
         await page.goto(appUrl(screen.path));
-        await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+        await expectRoute(page, screen.path);
+        await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
         await page.evaluate(() => document.fonts.ready);
         await screen.interact?.(page);
 

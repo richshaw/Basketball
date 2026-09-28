@@ -1,0 +1,8 @@
+.body {
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin-inline: auto;
+  padding: var(--space-4);
+  /* AppShell sets --screen-body-inset-bottom to 0: its tab bar clears the home indicator. */
+  padding-bottom: calc(var(--space-4) + var(--screen-body-inset-bottom, var(--safe-bottom)));
+}

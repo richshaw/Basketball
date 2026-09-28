@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { paths } from '@/routes';
 import { renderWithRouter } from '@/test/render';
 import { Button } from './Button';
 import { ButtonLink } from './ButtonLink';
@@ -65,12 +66,12 @@ describe('Button', () => {
 describe('ButtonLink', () => {
   it('renders a router link styled like a button', () => {
     renderWithRouter(
-      <ButtonLink to="/stats" variant="secondary" size="lg">
+      <ButtonLink to={paths.stats} variant="secondary" size="lg">
         See stats
       </ButtonLink>,
     );
     const link = screen.getByRole('link', { name: 'See stats' });
-    expect(link).toHaveAttribute('href', '/stats');
+    expect(link).toHaveAttribute('href', paths.stats);
     expect(link).toHaveClass('button', 'secondary', 'lg');
   });
 });

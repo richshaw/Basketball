@@ -20,6 +20,7 @@
   --font-size-xl: 1.5rem; /* 24px */
   --font-size-2xl: 1.75rem; /* 28px */
   --font-size-3xl: 2.125rem; /* 34px: large screen titles */
+  --font-size-4xl: 2.5rem; /* 40px: emoji illustrations */
   --font-size-display: 3rem; /* 48px: scores and big numbers on the game screen */
   --font-weight-regular: 400;
   --font-weight-medium: 500;
@@ -50,11 +51,13 @@
   /* Sizing */
   --tap-target: 44px; /* minimum size of anything tappable */
   --tap-target-lg: 56px;
+  --icon-size-nav: 26px; /* tab bar and back-button icons */
+  --illustration-size: 80px; /* the round icon of an empty state */
   --header-bar-height: 44px;
   --tab-bar-height: 50px;
   --content-max-width: 640px;
 
-  /* Safe areas: the status bar is translucent, so content draws underneath it. */
+  /* Safe areas: the home indicator (bottom) and, in landscape, the sensor housing (sides). */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);

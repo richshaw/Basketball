@@ -19,12 +19,14 @@ export async function expectRoute(page: Page, path: string) {
 }
 
 /**
- * Emulates an iPhone with a Dynamic Island (e.g. iPhone 15): content drawn under the
- * status bar and home indicator must be padded by the safe-area insets.
+ * Emulates the home-screen app on a 6.1" iPhone: the black status bar (47pt) sits above
+ * the page, so the viewport is 390x797 with no top inset, and the home indicator
+ * overlaps the bottom of the page (34pt inset).
  */
 export async function emulateIPhoneSafeArea(page: Page) {
+  await page.setViewportSize({ width: 390, height: 844 - 47 });
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setSafeAreaInsetsOverride', {
-    insets: { top: 59, bottom: 34, left: 0, right: 0 },
+    insets: { top: 0, bottom: 34, left: 0, right: 0 },
   });
 }

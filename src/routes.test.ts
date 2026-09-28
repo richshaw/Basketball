@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { paths, routePatterns } from './routes';
 
 describe('paths', () => {
-  it('builds game URLs from string or numeric ids', () => {
-    expect(paths.gameReport(42)).toBe('/games/42');
+  it('builds game URLs', () => {
+    expect(paths.gameReport('42')).toBe('/games/42');
     expect(paths.trackGame('abc')).toBe('/games/abc/track');
   });
 
@@ -14,7 +14,7 @@ describe('paths', () => {
 
   it('produces URLs that match the router patterns', () => {
     expect(matchPath(routePatterns.gameReport, paths.gameReport('g-1'))?.params.gameId).toBe('g-1');
-    expect(matchPath(routePatterns.trackGame, paths.trackGame(7))?.params.gameId).toBe('7');
+    expect(matchPath(routePatterns.trackGame, paths.trackGame('7'))?.params.gameId).toBe('7');
     expect(matchPath(routePatterns.newGame, paths.newGame)).not.toBeNull();
     expect(matchPath(routePatterns.devUi, paths.devUi)).not.toBeNull();
   });

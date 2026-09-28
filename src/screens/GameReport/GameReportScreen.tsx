@@ -1,9 +1,9 @@
 import { useParams } from 'react-router';
 import { ButtonLink } from '@/components/Button/ButtonLink';
 import { EmptyState } from '@/components/EmptyState/EmptyState';
+import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { paths } from '@/routes';
-import styles from './GameReportScreen.module.css';
 
 /** Placeholder: the per-game box score arrives in a later PR. */
 export function GameReportScreen() {
@@ -12,7 +12,7 @@ export function GameReportScreen() {
   return (
     <main>
       <ScreenHeader title="Game report" backTo={paths.home} backLabel="Games" />
-      <div className={styles.body}>
+      <ScreenBody>
         <EmptyState
           icon="📋"
           title="The box score is coming"
@@ -23,7 +23,7 @@ export function GameReportScreen() {
             </ButtonLink>
           }
         />
-      </div>
+      </ScreenBody>
     </main>
   );
 }
