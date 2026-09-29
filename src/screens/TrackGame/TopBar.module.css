@@ -136,8 +136,8 @@
 }
 
 /*
- * Phones: the title gets the room for an ordinary opponent's name (about 14 characters
- * on an iPhone SE, 18 at 390 points). The back link is its chevron alone (still named
+ * Phones: the title gets the room for an ordinary opponent's name (16 characters on an
+ * iPhone SE, 18 at 390 points). The back link is its chevron alone (still named
  * "Games"), with its tap target reaching into the screen's edge padding rather than
  * into the title; the title is a size smaller, and the period pills a little tighter
  * (every tap target stays 44 points or more).
