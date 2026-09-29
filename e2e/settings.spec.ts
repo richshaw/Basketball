@@ -57,6 +57,32 @@ test('saves a backup file that restores every game', async ({ page }) => {
   expect({ ...after, exportedAt: '' }).toEqual({ ...before, exportedAt: '' });
 });
 
+test("the toast after saving a backup file never covers the erase dialog's buttons", async ({
+  page,
+}) => {
+  await page.goto('./');
+  await seedDemoData(page);
+  await openSettings(page);
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('button', { name: /Save a backup file/ }).tap();
+  await downloading;
+  await expect(notifications(page)).toContainText('Backup file downloaded');
+
+  await page.getByRole('button', { name: 'Erase all data' }).tap();
+  const dialog = page.getByRole('alertdialog', { name: 'Erase all data?' });
+  await expect(dialog).toBeVisible();
+  await expect(notifications(page)).toBeEmpty();
+  for (const name of ['Erase all data', 'Cancel']) {
+    const box = await dialog.getByRole('button', { name }).boundingBox();
+    const hit = await page.evaluate(
+      ({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.textContent,
+      { x: (box?.x ?? 0) + (box?.width ?? 0) / 2, y: (box?.y ?? 0) + (box?.height ?? 0) / 2 },
+    );
+    expect(hit).toBe(name);
+  }
+  await dialog.getByRole('button', { name: 'Cancel' }).tap();
+});
+
 test('restores games from a backup file', async ({ page }) => {
   await page.goto('./');
   await clearAllData(page);

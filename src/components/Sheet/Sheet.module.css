@@ -116,10 +116,12 @@
   stroke-width: 2.75;
 }
 
-/* Toasts shown over this sheet hang from here, just under the header (Toast.module.css). */
+/*
+ * Toasts shown while this sheet is on top take their room here, under the header
+ * (Toast.module.css): the body gives way, so nothing of the sheet is covered.
+ */
 .toastOutlet {
-  position: relative;
-  z-index: 1;
+  flex-shrink: 0;
 }
 
 .body {
