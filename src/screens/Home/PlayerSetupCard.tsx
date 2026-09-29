@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import { Button } from '@/components/Button/Button';
 import { TextField } from '@/components/TextField/TextField';
 import { useToast } from '@/components/Toast/toastContext';
+import { isCloudBackupAvailable } from '@/data/backup/cloudBackup';
 import { savePlayer, type PlayerInput } from '@/data/repo';
 import { TEXT_LIMITS, type Player } from '@/data/types';
 import { paths } from '@/routes';
@@ -121,12 +122,22 @@ export function PlayerSetupCard({ player, saveVariant = 'primary' }: PlayerSetup
         </Button>
       </form>
 
-      <p className={styles.restore}>
-        Restoring from a backup?{' '}
-        <Link to={paths.settings} className={styles.restoreLink}>
-          Go to Settings
-        </Link>
-      </p>
+      {/* With cloud backup, its code is the way back on a new phone (backup files are there too). */}
+      {isCloudBackupAvailable() ? (
+        <p className={styles.restore}>
+          Setting up a new phone?{' '}
+          <Link to={paths.restoreBackup('games')} className={styles.restoreLink}>
+            Restore from a backup
+          </Link>
+        </p>
+      ) : (
+        <p className={styles.restore}>
+          Restoring from a backup?{' '}
+          <Link to={paths.settings} className={styles.restoreLink}>
+            Go to Settings
+          </Link>
+        </p>
+      )}
     </section>
   );
 }

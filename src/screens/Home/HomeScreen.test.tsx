@@ -110,11 +110,33 @@ describe('HomeScreen', () => {
       expect(await getPlayer()).toBeUndefined();
     });
 
-    it('points to Settings for restoring a backup', async () => {
+    it('points to Settings for restoring a backup file (in a build without cloud backup)', async () => {
       const { user, router } = renderRoute(paths.home);
       const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
       await user.click(within(card).getByRole('link', { name: 'Go to Settings' }));
       expect(router.state.location.pathname).toBe(paths.settings);
+    });
+
+    it('offers a new phone the restore from a backup code, and back', async () => {
+      vi.stubEnv('VITE_BACKUP_API_URL', 'https://backup.hoop-stats.test');
+      try {
+        const { user, router } = renderRoute(paths.home);
+        const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
+        expect(card).toHaveTextContent('Setting up a new phone? Restore from a backup');
+
+        await user.click(within(card).getByRole('link', { name: 'Restore from a backup' }));
+        expect(router.state.location.pathname).toBe(paths.restoreBackup());
+        expect(router.state.location.search).toBe('?from=games');
+        expect(
+          await screen.findByRole('heading', { level: 1, name: 'Restore from backup' }),
+        ).toBeVisible();
+        expect(screen.getByLabelText('Backup code')).toBeVisible();
+
+        await user.click(screen.getByRole('link', { name: 'Games' }));
+        expect(router.state.location.pathname).toBe(paths.home);
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
 
     it('can start a game before the player is named', async () => {

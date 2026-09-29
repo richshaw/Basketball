@@ -16,6 +16,14 @@ describe('paths', () => {
     expect(matchPath(routePatterns.gameReport, paths.gameReport('g-1'))?.params.gameId).toBe('g-1');
     expect(matchPath(routePatterns.trackGame, paths.trackGame('7'))?.params.gameId).toBe('7');
     expect(matchPath(routePatterns.newGame, paths.newGame)).not.toBeNull();
+    expect(matchPath(routePatterns.restoreBackup, paths.restoreBackup())).not.toBeNull();
     expect(matchPath(routePatterns.devUi, paths.devUi)).not.toBeNull();
+  });
+
+  it('says where the restore screen was opened from, and which Settings section to show', () => {
+    expect(paths.restoreBackup()).toBe('/restore');
+    expect(paths.restoreBackup('settings')).toBe('/restore');
+    expect(paths.restoreBackup('games')).toBe('/restore?from=games');
+    expect(paths.settingsSection('cloud-backup')).toBe('/settings?section=cloud-backup');
   });
 });

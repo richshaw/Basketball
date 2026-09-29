@@ -191,4 +191,19 @@ describe('backup status', () => {
       status({ paused: 'other-device', otherDevice: { version: 'v9', createdAt: 55 } }),
     ).toMatchObject({ state: 'paused-other-device', otherDevice: { backedUpAt: 55 } });
   });
+
+  it('keeps showing a pause while an attempt that checks it again runs', () => {
+    const uploading = { uploading: true, online: true };
+    const forced = { uploading: true, forced: true, online: true };
+    const shrink = { paused: 'shrink', shrink: { backedUpGames: 10, missingGames: 10 } } as const;
+    const otherDevice = { paused: 'other-device', otherDevice: { version: 'v9' } } as const;
+    // An automatic attempt (or a plain "Back up now") is held again: no blink.
+    expect(status(shrink, uploading, 11).state).toBe('paused-shrink');
+    expect(status(otherDevice, uploading, 11).state).toBe('paused-other-device');
+    // "Back up anyway" really backs up.
+    expect(status(shrink, forced, 11).state).toBe('backing-up');
+    expect(status(otherDevice, forced, 11).state).toBe('backing-up');
+    // A stop is retried for real by "Back up now".
+    expect(status({ paused: 'cloud-deleted' }, uploading).state).toBe('backing-up');
+  });
 });

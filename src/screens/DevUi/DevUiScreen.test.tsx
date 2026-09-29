@@ -29,6 +29,7 @@ describe('DevUiScreen', () => {
       'Sheet and ConfirmDialog',
       'Toast and shareText',
       'InstallBanner and InstallSheet',
+      'BackupBanner',
       'Button',
       'Court',
     ]) {

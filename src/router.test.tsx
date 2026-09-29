@@ -25,6 +25,7 @@ const fullScreens: FullScreen[] = [
     title: 'vs Westfield',
     seed: () => seedDemoData({ liveGame: true }),
   },
+  { path: paths.restoreBackup(), title: 'Restore from backup' },
   { path: paths.devUi, title: 'UI kit' },
 ];
 

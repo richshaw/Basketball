@@ -1,0 +1,11 @@
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-1);
+}
+
+.warning {
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-normal);
+}

@@ -57,6 +57,14 @@ export function enableCloudBackup(): Promise<string> {
 export interface EnableWithCodeOptions {
   /** `fetchCloudBackup(code)`'s result, so it isn't downloaded again. */
   backup?: CloudBackup;
+  /**
+   * With `backup`: the server's newest version as the caller last saw it (the version
+   * `fetchCloudBackup` returned, or the first from `listCloudVersions`). The phone
+   * carries on from it without asking the server, so this needs no signal. A version
+   * uploaded since then is taken for another phone's, which pauses rather than
+   * replacing it.
+   */
+  newestVersion?: string;
 }
 
 /**
@@ -64,7 +72,8 @@ export interface EnableWithCodeOptions {
  * (importAll), and starts an upload. The code must have a backup on the server: the
  * restored backup's games become the shrink guard's baseline, so a phone without them
  * can't replace it by accident, and the phone carries on from the server's newest
- * version (so restoring an earlier one isn't taken for another phone's upload).
+ * version (so restoring an earlier one isn't taken for another phone's upload): the
+ * `newestVersion` passed in, else it asks the server (up to its timeout, on bad signal).
  * Replaces any other code this phone had (on or kept while off); if it's on with this
  * code already (restoring the other phone's backup to settle a 'paused-other-device',
  * say), it carries on from the restored backup with nothing paused.
