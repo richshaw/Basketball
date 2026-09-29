@@ -220,3 +220,12 @@ export function useSteadyGame(id: string | undefined): SteadyRead<Game | null> {
 export function useSteadyGameEvents(id: string | undefined): SteadyRead<StatEvent[]> {
   return useSteadyLiveQuery(id, eventsOf);
 }
+
+function settingsOrDefaults(): Promise<Settings> {
+  return getSettings();
+}
+
+/** useSettings that survives a failed read (see SteadyRead), for the live game screen. */
+export function useSteadySettings(): SteadyRead<Settings> {
+  return useSteadyLiveQuery('settings', settingsOrDefaults);
+}

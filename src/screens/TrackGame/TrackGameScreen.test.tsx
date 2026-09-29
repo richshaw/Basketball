@@ -1255,6 +1255,22 @@ describe('TrackGameScreen', () => {
       ).toBeInTheDocument();
     });
 
+    it("stays up if the Shot chart setting can't be read again", async () => {
+      const game = await newGame();
+      await renderTracking(game);
+      expect(screen.getByRole('img', { name: /^Shot spot/ })).toBeInTheDocument();
+      // A settings change makes the screen read them again, and that read fails.
+      const reads = vi.spyOn(repo, 'getSettings').mockRejectedValue(lost());
+      await act(() => updateSettings({ shotChart: false }));
+      await waitFor(() => expect(reads).toHaveBeenCalled());
+      await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull();
+      // The court stays as the screen opened: it never comes or goes mid-game.
+      expect(screen.getByRole('img', { name: /^Shot spot/ })).toBeInTheDocument();
+      fireEvent.click(statButton('Assist'));
+      await expectStrip('Assists: 1');
+    });
+
     it('reads again if the first read never answers (Dexie drops an aborted one without a word)', async () => {
       const game = await newGame();
       const reads = vi

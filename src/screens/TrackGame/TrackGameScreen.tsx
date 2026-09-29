@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useToast } from '@/components/Toast/toastContext';
-import { useSettings, useSteadyGame, useSteadyGameEvents } from '@/data/hooks';
+import { useSteadyGame, useSteadyGameEvents, useSteadySettings } from '@/data/hooks';
 import { isReloadSafe } from '@/data/pendingStats';
 import { endGame, type FinalScore } from '@/data/repo';
 import { shotsFromEvents } from '@/data/shots';
@@ -461,14 +461,17 @@ export function TrackGameScreen() {
   const { gameId } = useParams();
   const game = useSteadyGame(gameId);
   const events = useSteadyGameEvents(gameId);
-  const settings = useSettings();
+  // (The Shot chart setting: read as steadily, so a failed read can't take the screen
+  // down either.)
+  const settings = useSteadySettings();
 
   if (game.value === null) return <GameNotFound />;
-  if (game.value === undefined || events.value === undefined || settings === undefined) {
+  if (game.value === undefined || events.value === undefined || settings.value === undefined) {
     // Nothing on screen to keep yet: a first read that failed gets the route's error
     // screen (with Reload), like any other screen.
     if (game.failed) throw game.error;
     if (events.failed) throw events.error;
+    if (settings.failed) throw settings.error;
     // Still loading (IndexedDB answers within a frame or two): show nothing rather
     // than a placeholder layout that would jump (the shot chart's court included).
     return null;
@@ -479,7 +482,7 @@ export function TrackGameScreen() {
       game={game.value}
       events={events.value}
       readFailed={game.failed || events.failed}
-      shotChart={settings.shotChart}
+      shotChart={settings.value.shotChart}
     />
   );
 }
