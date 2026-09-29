@@ -118,13 +118,17 @@ describe('formatClockTime', () => {
     expect(formatClockTime(new Date(2026, 8, 27, 23, 59).getTime())).toBe('11:59');
   });
 
-  it('can add the seconds', () => {
+  it('can add the seconds (the live game log)', () => {
     const time = new Date(2026, 8, 27, 18, 5, 9).getTime();
     expect(formatClockTime(time, { seconds: true })).toBe('6:05:09');
     expect(formatClockTime(time, { seconds: false })).toBe('6:05');
-    expect(formatClockTime(new Date(2026, 8, 27, 0, 0, 0).getTime(), { seconds: true })).toBe(
-      '12:00:00',
-    );
+    const withSeconds = (...hms: [number, number, number]) =>
+      formatClockTime(new Date(2026, 8, 27, ...hms).getTime(), { seconds: true });
+    expect(withSeconds(0, 0, 0)).toBe('12:00:00');
+    expect(withSeconds(19, 4, 5)).toBe('7:04:05');
+    expect(withSeconds(0, 30, 0)).toBe('12:30:00');
+    expect(withSeconds(12, 0, 59)).toBe('12:00:59');
+    expect(withSeconds(9, 59, 9)).toBe('9:59:09');
   });
 });
 

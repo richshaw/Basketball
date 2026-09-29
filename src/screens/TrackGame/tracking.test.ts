@@ -3,7 +3,6 @@ import type { StatType } from '@/data/types';
 import {
   countByType,
   createTapGuard,
-  formatClockTime,
   foulStatus,
   notSavedMessage,
   notSavedTitle,
@@ -134,15 +133,6 @@ describe('createTapGuard', () => {
       false,
       true,
     ]);
-  });
-});
-
-describe('formatClockTime', () => {
-  it('shows local 12-hour time with seconds and no AM/PM', () => {
-    expect(formatClockTime(new Date(2026, 8, 27, 19, 4, 5).getTime())).toBe('7:04:05');
-    expect(formatClockTime(new Date(2026, 8, 27, 0, 30, 0).getTime())).toBe('12:30:00');
-    expect(formatClockTime(new Date(2026, 8, 27, 12, 0, 59).getTime())).toBe('12:00:59');
-    expect(formatClockTime(new Date(2026, 8, 27, 9, 59, 9).getTime())).toBe('9:59:09');
   });
 });
 

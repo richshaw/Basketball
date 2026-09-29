@@ -11,7 +11,6 @@ import {
   type StatType,
 } from '@/data/types';
 import { isThreePoint } from '@/lib/court';
-import { pad2 } from '@/lib/format';
 
 export type StatCounts = Record<StatType, number>;
 
@@ -99,13 +98,6 @@ export function notSavedTitle(count: number): string {
 /** E.g. "1 stat isn't saved yet. It's kept on this phone and will be saved automatically." */
 export function notSavedMessage(count: number, kept: boolean): string {
   return `${notSavedTitle(count)}. ${unsavedNote(count, kept)}`;
-}
-
-/** Local clock time of a timestamp as 'h:mm:ss' (12-hour, no AM/PM), e.g. '7:42:05'. */
-export function formatClockTime(timestamp: number): string {
-  const time = new Date(timestamp);
-  const hours = time.getHours() % 12 || 12;
-  return `${hours}:${pad2(time.getMinutes())}:${pad2(time.getSeconds())}`;
 }
 
 /** Overtimes the period picker always offers after regulation. */

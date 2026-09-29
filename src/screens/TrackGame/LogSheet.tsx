@@ -7,7 +7,8 @@ import { Sheet } from '@/components/Sheet/Sheet';
 import { periodLabel } from '@/data/stats';
 import type { PeriodFormat, StatEvent } from '@/data/types';
 import { cx } from '@/lib/cx';
-import { formatClockTime, statKind, statLabel } from './tracking';
+import { formatClockTime } from '@/lib/format';
+import { statKind, statLabel } from './tracking';
 import styles from './LogSheet.module.css';
 
 export interface LogSheetProps {
@@ -52,7 +53,7 @@ function LogList({
           value={
             <span className={styles.meta}>
               <Badge className={styles.period}>{periodLabel(event.period, periodFormat)}</Badge>
-              <span>{formatClockTime(event.createdAt)}</span>
+              <span>{formatClockTime(event.createdAt, { seconds: true })}</span>
             </span>
           }
           onClick={() => onSelect(event)}

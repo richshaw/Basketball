@@ -19,6 +19,7 @@ import {
   type StatType,
 } from '@/data/types';
 import { cx } from '@/lib/cx';
+import { formatClockTime } from '@/lib/format';
 import { gameTitle } from '@/lib/gameTitle';
 import { paths } from '@/routes';
 import { EndGameSheet } from './EndGameSheet';
@@ -37,7 +38,6 @@ import {
   createTapGuard,
   FOUL_TROUBLE_AT,
   FOULED_OUT_AT,
-  formatClockTime,
   spotNote,
   statKind,
   statLabel,
@@ -250,7 +250,7 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
       const what = `${statLabel(event.type)} (${periodLabel(event.period, periodFormat)})`;
       const confirmed = await confirm({
         title: `Delete ${what}?`,
-        message: `Recorded at ${formatClockTime(event.createdAt)}.`,
+        message: `Recorded at ${formatClockTime(event.createdAt, { seconds: true })}.`,
         confirmLabel: 'Delete',
         destructive: true,
       });
