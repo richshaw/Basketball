@@ -28,11 +28,16 @@
  *   too until it's gone, and forgotten if it stays. A saved stat's removal is waited for
  *   no longer than REMOVE_WAIT_MS: one that doesn't answer stays kept, and still happens.
  *   A new session starts with its game's kept removals, not counting their stats.
- * - The period moves on screen at once and is then saved; it stays on screen until
- *   the move is saved, however long that takes, or fails (the saved period comes back
- *   once no other move is on its way). A move holds Reload back for MOVE_WAIT_MS at
- *   most: it isn't journaled, so a reload shows the saved period (the taps keep the
- *   period they were tapped in).
+ * - The period moves on screen at once and is then saved. The move is kept in the
+ *   pending-periods journal (src/data/pendingPeriods.ts) before its write starts, in
+ *   place of any kept before it (here, in another tab, or by an earlier page), so the
+ *   period on screen is the game's kept move until it's saved, however long that takes:
+ *   a reload, or a new session, resumes it. One whose write fails stays kept and on
+ *   screen, and is tried again like a tap (the app-wide retry's tries included). A
+ *   move's write runs only while it's still the kept one, so it never overrides a move
+ *   made since. Only a move the journal couldn't keep (localStorage full) goes as
+ *   before: the saved period comes back if it fails, and it holds Reload back for
+ *   MOVE_WAIT_MS at most.
  * - A 2PT/3PT tap can get its spot from a tap on the court (markSpot) for
  *   SPOT_WINDOW_MS, until the next stat, Undo or period change. The spot goes where
  *   the tap is: into its pending-stats entry while it isn't saved (its save takes the
@@ -42,6 +47,14 @@
  *   up on the stat once; it goes when the stat is undone, and comes back if the stat
  *   couldn't be removed after all.
  */
+import {
+  forgetPendingPeriod,
+  getPendingPeriod,
+  isPendingPeriod,
+  keepPendingPeriod,
+  newPendingPeriod,
+  type PendingPeriod,
+} from '@/data/pendingPeriods';
 import { savePendingStat } from '@/data/pendingSaves';
 import {
   addPendingRemoval,
@@ -60,10 +73,15 @@ import {
   type PendingStat,
   type UnsavedTapHolder,
 } from '@/data/pendingStats';
-import { deleteStat, setCurrentPeriod, setStatLocation } from '@/data/repo';
+import {
+  deleteStat,
+  setCurrentPeriod,
+  setStatLocation,
+  type SetCurrentPeriodOptions,
+} from '@/data/repo';
 import { sameSpot } from '@/data/shots';
 import { isFieldGoalType } from '@/data/stats';
-import type { CourtPoint, StatEvent, StatType } from '@/data/types';
+import type { CourtPoint, Game, StatEvent, StatType } from '@/data/types';
 import { compareIds } from '@/lib/id';
 import { waitAtMost } from '@/lib/wait';
 
@@ -74,9 +92,10 @@ export const AUTO_RETRY_MS = 1000;
 export const SAVE_ALL_WAIT_MS = 3000;
 
 /**
- * How long a period move on its way holds Reload back (a reload would show the saved
- * period): a write that may never answer must not take Reload away for good. The move
- * stays on screen, answered or not, until it's saved or fails.
+ * How long a period move the journal couldn't keep (localStorage full) holds Reload back
+ * while it's on its way (a reload would show the saved period): a write that may never
+ * answer must not take Reload away for good. A kept move never holds it: a reload
+ * resumes it.
  */
 export const MOVE_WAIT_MS = 5000;
 
@@ -98,7 +117,15 @@ export interface SessionDeps {
    */
   recordStat(stat: PendingStat): Promise<StatEvent>;
   deleteStat(eventId: string): Promise<StatEvent | undefined>;
-  setCurrentPeriod(gameId: string, period: number): Promise<unknown>;
+  /**
+   * Moves the game to another period, unless `onlyIf` (checked as the write runs) says
+   * no; resolves to the game as saved. Like the repository's setCurrentPeriod.
+   */
+  setCurrentPeriod(
+    gameId: string,
+    period: number,
+    options?: SetCurrentPeriodOptions,
+  ): Promise<Pick<Game, 'currentPeriod'>>;
   /**
    * Puts a spot on a saved stat; resolves to undefined if the stat is gone. The
    * repository's setStatLocation if left out.
@@ -110,7 +137,7 @@ export interface SessionDeps {
 const repoDeps: Required<SessionDeps> = {
   recordStat: (stat) => savePendingStat(stat),
   deleteStat: (eventId) => deleteStat(eventId),
-  setCurrentPeriod: (gameId, period) => setCurrentPeriod(gameId, period),
+  setCurrentPeriod: (gameId, period, options) => setCurrentPeriod(gameId, period, options),
   setStatLocation: (eventId, location) => setStatLocation(eventId, location),
 };
 
@@ -356,12 +383,23 @@ export class TrackingSession implements UnsavedTapHolder {
   /** The latest tap time given out or seen, so the next tap sorts after it. */
   private lastAt: number | undefined;
   private readonly listeners = new Set<() => void>();
+  /** The period on screen (see refreshPeriod). */
   private period: number;
+  /** The game's period as last read, or as a move of this session saved it. */
   private savedPeriod: number;
-  /** Period moves that haven't answered yet: the saved period doesn't take over meanwhile. */
-  private movesPending = 0;
-  /** Those on their way for less than MOVE_WAIT_MS: a reload would lose them. */
+  /** How many moves this session made: only the latest one's outcome is said. */
+  private moves = 0;
+  /**
+   * The latest move made here, while the journal couldn't keep it (localStorage full)
+   * and its write is under way: on screen meanwhile, as nothing else remembers it.
+   */
+  private unkeptMove: { number: number; period: number } | null = null;
+  /** Moves the journal couldn't keep, on their way for less than MOVE_WAIT_MS. */
   private movesHoldingReload = 0;
+  /** Kept moves being written here, by id: one write of each at a time. */
+  private readonly movesSaving = new Set<string>();
+  /** Kept moves tried again on their own already, by id (that happens once, as for a tap). */
+  private readonly movesAutoRetried = new Set<string>();
   private undoInFlight = false;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private spotShot: SpotShot | null = null;
@@ -389,8 +427,11 @@ export class TrackingSession implements UnsavedTapHolder {
   constructor(gameId: string, period: number, deps: SessionDeps = repoDeps) {
     this.gameId = gameId;
     this.deps = deps;
-    this.period = period;
     this.savedPeriod = period;
+    // A move an earlier page (or another tab) kept but hasn't seen saved: back on screen
+    // at once, and saved by the next retry (the screen retries as it opens).
+    this.period = period;
+    this.refreshPeriod();
     // Taps an earlier page kept but couldn't save (or didn't hear back about): counted
     // at once, and saved by the next retry (the screen retries as it opens). Only a
     // save that fails here lists one as not saved.
@@ -665,6 +706,9 @@ export class TrackingSession implements UnsavedTapHolder {
       this.startSpotSave(id);
       tries.push(spotSave.settled);
     }
+    // The game's kept move, whoever made it: it's the move to make.
+    const kept = getPendingPeriod(this.gameId);
+    if (kept && !this.movesSaving.has(kept.id)) tries.push(this.saveMove(kept));
     return tries;
   }
 
@@ -705,9 +749,10 @@ export class TrackingSession implements UnsavedTapHolder {
    * taken back, and every saved stat being removed (it has stopped counting), has its
    * removal kept in the removals journal, from the Undo (or the log's delete) on: after
    * a reload, that still removes the stat, even one whose tap's save landed after all;
-   * and no period move has been on its way for less than MOVE_WAIT_MS (a reload shows
-   * the saved period; after that, a move that hasn't answered may never answer, and
-   * mustn't take Reload away for good).
+   * and no period move the journal couldn't keep has been on its way for less than
+   * MOVE_WAIT_MS (a reload would show the saved period; after that, a move that hasn't
+   * answered may never answer, and mustn't take Reload away for good). A kept move is
+   * resumed after a reload.
    */
   reloadSafe(): boolean {
     const keptRemovals = new Set([
@@ -760,14 +805,19 @@ export class TrackingSession implements UnsavedTapHolder {
       clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
       this.setSpotShot(null);
+      // Its kept move went with the journals (forgetPendingStats): the saved period shows.
+      this.unkeptMove = null;
+      this.refreshPeriod();
     } else {
       this.taps = this.taps.filter((record) => record.undone || record.stat.id !== id);
     }
     const forgotten = held.filter((record) => !this.taps.includes(record));
     this.emit();
     return () => {
-      // That write failed: this forget is undone, and the spots it held back come back.
+      // That write failed: this forget is undone, and the spots it held back come back
+      // (and its kept move, if nothing replaced it meanwhile).
       if (forgetting !== undefined) this.forgetsInEffect.delete(forgetting);
+      this.refreshPeriod();
       this.holdAgain(forgotten, spots);
       for (const [spotId, { spotSave, since }] of [...this.parkedSpots]) {
         if (this.forgottenSince(since)) continue;
@@ -1267,19 +1317,91 @@ export class TrackingSession implements UnsavedTapHolder {
   }
 
   /**
-   * Moves to another period: on screen at once (the taps tapped next land there), then
-   * saved. Resolves to true once it's saved, or to false if it couldn't be (the saved
-   * period is shown again, unless another move is on its way), whenever that is: one
-   * that doesn't answer stays on screen meanwhile, as a tap does before it's saved. It
-   * holds Reload back (reloadSafe) for `waitMs` at most, since it may never answer: a
-   * reload after that would show the saved period.
+   * The period on screen: the latest move made here while its write is under way, if the
+   * journal couldn't keep it; else the game's kept move (this session's, an earlier
+   * page's, or another tab's: the move to make); else the saved period.
+   */
+  private refreshPeriod(): void {
+    this.period =
+      this.unkeptMove?.period ?? getPendingPeriod(this.gameId)?.period ?? this.savedPeriod;
+  }
+
+  /**
+   * Moves to another period: on screen at once (the taps tapped next land there), kept
+   * in the pending-periods journal in place of the move kept before it, then saved.
+   * Resolves to false if the saved period is back on screen because the move couldn't be
+   * saved, nor kept; else to true once its write has answered (or failed: a kept move
+   * stays on screen and is tried again like a tap, however long that takes). A move the
+   * journal couldn't keep holds Reload back (reloadSafe) for `waitMs` at most, since it
+   * may never answer: a reload would show the saved period.
    */
   movePeriod(to: number, waitMs = MOVE_WAIT_MS): Promise<boolean> {
-    this.period = to;
-    this.movesPending += 1;
-    this.movesHoldingReload += 1;
+    const number = ++this.moves;
+    const move = newPendingPeriod(this.gameId, to);
+    // Kept before its write starts, so it outlives the page even if the write never lands.
+    const kept = keepPendingPeriod(move);
+    this.unkeptMove = kept ? null : { number, period: to };
+    // (Unkept, it holds Reload back while its write is under way: see saveUnkeptMove.)
+    if (!kept) this.movesHoldingReload += 1;
     this.setSpotShot(null);
+    this.refreshPeriod();
     this.emit();
+    if (!kept) return this.saveUnkeptMove(number, to, waitMs);
+    // (Lost: it's not kept any more, though no move took its place, nor saved it.)
+    return this.saveMove(move).then((outcome) => outcome !== 'lost' || number !== this.moves);
+  }
+
+  /**
+   * Writes a kept move (this session's, or one an earlier page or another tab kept), as
+   * long as it's still the kept one when the write runs, and forgets it once the saved
+   * game shows its period. One whose write fails stays kept (and on screen), and is tried
+   * again like a tap: once on its own after AUTO_RETRY_MS, then with every retry of the
+   * taps (the app-wide retry's too). Resolves (never rejects) to how it went: 'saved',
+   * 'overtaken' (a move made since takes its place), 'kept' (tried again later), or
+   * 'lost' (it couldn't be saved, and nothing is kept for the game any more).
+   */
+  private saveMove(move: PendingPeriod): Promise<'saved' | 'overtaken' | 'kept' | 'lost'> {
+    this.movesSaving.add(move.id);
+    const failed = (): 'kept' | 'overtaken' | 'lost' => {
+      if (!isPendingPeriod(move)) return getPendingPeriod(this.gameId) ? 'overtaken' : 'lost';
+      if (!this.movesAutoRetried.has(move.id)) {
+        this.movesAutoRetried.add(move.id);
+        this.scheduleRetry();
+      }
+      // The app-wide retry keeps at it, even once the screen has closed.
+      notifyPendingStats();
+      return 'kept';
+    };
+    return attempt(() =>
+      this.deps.setCurrentPeriod(this.gameId, move.period, {
+        onlyIf: () => isPendingPeriod(move),
+      }),
+    )
+      .then((game) => {
+        this.savedPeriod = game.currentPeriod;
+        if (game.currentPeriod === move.period) {
+          forgetPendingPeriod(move);
+          return 'saved' as const;
+        }
+        // Not written: a move made since takes its place, unless this one is kept again
+        // (as after a delete that failed), and so still to be saved.
+        return isPendingPeriod(move) ? failed() : ('overtaken' as const);
+      }, failed)
+      .then((outcome) => {
+        this.movesSaving.delete(move.id);
+        this.refreshPeriod();
+        this.emit();
+        return outcome;
+      });
+  }
+
+  /**
+   * Writes a move the journal couldn't keep: on screen while its write is under way, and
+   * holding Reload back for `waitMs` at most. Resolves to false if it's this session's
+   * latest move and it couldn't be saved: the saved period (or a move kept since) is back
+   * on screen.
+   */
+  private saveUnkeptMove(number: number, to: number, waitMs: number): Promise<boolean> {
     let holding = true;
     const stopHolding = () => {
       if (!holding) return;
@@ -1290,34 +1412,26 @@ export class TrackingSession implements UnsavedTapHolder {
       stopHolding();
       this.emit();
     }, waitMs);
-    return attempt(() => this.deps.setCurrentPeriod(this.gameId, to)).then(
-      () => {
-        clearTimeout(timer);
-        stopHolding();
-        this.movesPending -= 1;
-        this.savedPeriod = to;
-        this.emit();
-        return true;
-      },
-      () => {
-        clearTimeout(timer);
-        stopHolding();
-        this.movesPending -= 1;
-        if (this.movesPending === 0) this.period = this.savedPeriod;
-        this.emit();
-        return false;
-      },
+    const settle = (saved: Pick<Game, 'currentPeriod'> | undefined): boolean => {
+      clearTimeout(timer);
+      stopHolding();
+      if (saved) this.savedPeriod = saved.currentPeriod;
+      if (this.unkeptMove?.number === number) this.unkeptMove = null;
+      this.refreshPeriod();
+      this.emit();
+      return saved !== undefined || number !== this.moves;
+    };
+    return attempt(() => this.deps.setCurrentPeriod(this.gameId, to)).then(settle, () =>
+      settle(undefined),
     );
   }
 
   /** The game's period as saved (it changes when a move lands, or elsewhere). */
   syncSavedPeriod(period: number): void {
     this.savedPeriod = period;
-    // Not over a move still on its way (answered or not): she moved there.
-    if (this.movesPending === 0) {
-      this.period = period;
-      this.emit();
-    }
+    // (Not over a move kept, or on its way: she moved there.)
+    this.refreshPeriod();
+    this.emit();
   }
 }
 

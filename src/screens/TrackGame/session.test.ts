@@ -6,6 +6,13 @@ import {
   listPendingRemovals,
   removePendingRemoval,
 } from '@/data/pendingRemovals';
+import {
+  forgetPendingPeriods,
+  getPendingPeriod,
+  keepPendingPeriod,
+  listPendingPeriods,
+  newPendingPeriod,
+} from '@/data/pendingPeriods';
 import { replayPendingStats, retryPendingStats, savePendingStat } from '@/data/pendingSaves';
 import { addPendingSpot, listPendingSpots } from '@/data/pendingSpots';
 import {
@@ -21,6 +28,7 @@ import {
   createGame,
   deleteGame,
   deleteStat,
+  getGame,
   getGameEvents,
   recordStat,
   setCurrentPeriod,
@@ -66,16 +74,25 @@ const keptIds = () => listPendingStats().map((stat) => stat.id);
 /** The ids of the taps taken back whose removal is kept (the pending-removals journal). */
 const keptRemovalIds = () => listPendingRemovals().map((removal) => removal.id);
 
+/** Game g's move kept in the pending-periods journal, if any. */
+const keptMove = () => getPendingPeriod('g');
+
 /**
  * A fake database: each save waits until the test answers it (`save`/`fail`), so
  * every interleaving of taps and answers can be played out exactly. Like the real
  * one, it saves a tap once however often it's asked to (by the tap's id).
  */
-function fakeDeps() {
+function fakeDeps(startPeriod = 1) {
   // `kept`: the tap was in the pending-stats journal when its save started.
   const saves: { stat: PendingStat; kept: boolean; answer: Deferred<StatEvent> }[] = [];
   const deletes: string[] = [];
-  const moves: { period: number; answer: Deferred<unknown> }[] = [];
+  // Period moves, in call order: each waits for the test too (`landMove`).
+  const moves: {
+    period: number;
+    onlyIf?: () => boolean;
+    answer: Deferred<Pick<Game, 'currentPeriod'>>;
+  }[] = [];
+  let savedPeriod = startPeriod;
   // Spots put on saved stats, in call order; each waits for the test too (`saveSpot`).
   const spots: { id: string; location: CourtPoint; answer: Deferred<StatEvent | undefined> }[] = [];
   let stored: StatEvent[] = [];
@@ -101,9 +118,9 @@ function fakeDeps() {
       if (held) return new Promise((resolve) => held.push(() => resolve(remove())));
       return Promise.resolve(remove());
     },
-    setCurrentPeriod: (_gameId, period) => {
-      const answer = deferred<unknown>();
-      moves.push({ period, answer });
+    setCurrentPeriod: (_gameId, period, options) => {
+      const answer = deferred<Pick<Game, 'currentPeriod'>>();
+      moves.push({ period, onlyIf: options?.onlyIf, answer });
       return answer.promise;
     },
     setStatLocation: (eventId, location) => {
@@ -139,6 +156,18 @@ function fakeDeps() {
     return updated;
   };
   const failSpot = (index: number) => spots[index]?.answer.reject(new Error('Disk error'));
+  /**
+   * Answers period move number `index` as the repository would: the game moves there,
+   * unless its `onlyIf` (checked now, as the write runs) says no. Returns the period saved.
+   */
+  const landMove = (index: number): number => {
+    const call = moves[index];
+    if (!call) throw new Error(`No move #${index}`);
+    if (!call.onlyIf || call.onlyIf()) savedPeriod = call.period;
+    call.answer.resolve({ currentPeriod: savedPeriod });
+    return savedPeriod;
+  };
+  const failMove = (index: number) => moves[index]?.answer.reject(new Error('Disk error'));
   /** Answers save number `index` (0-based, in call order) with its stored stat. */
   const save = (index: number): StatEvent => {
     const event = land(index);
@@ -152,6 +181,10 @@ function fakeDeps() {
     saves,
     deletes,
     moves,
+    landMove,
+    failMove,
+    /** The game's period as the fake database has it. */
+    savedPeriod: () => savedPeriod,
     spots,
     saveSpot,
     failSpot,
@@ -202,7 +235,7 @@ afterEach(() => {
 });
 
 function setUp(period = 1) {
-  const fake = fakeDeps();
+  const fake = fakeDeps(period);
   const session = newSession('g', period, fake.deps);
   const unsavedTypes = () => session.getSnapshot().unsaved.map((tap) => tap.type);
   const pendingTypes = () => session.getSnapshot().pending.map((tap) => tap.type);
@@ -1088,24 +1121,29 @@ describe('TrackingSession', () => {
       expect(await taking.outcome).toBe('removed');
     });
 
-    it("doesn't hold while a period move is being saved, for its wait at most", async () => {
-      const { session, moves } = setUp();
+    it("never holds for a period move the journal keeps, and for its wait at most for one it can't", async () => {
+      const { session, landMove } = setUp();
       const reloadSafe = () => session.getSnapshot().reloadSafe;
+      // Kept on the phone (a reload resumes it): nothing to hold, even on its way.
       const moved = session.movePeriod(2);
-      expect(reloadSafe()).toBe(false);
-      moves[0]?.answer.resolve(undefined);
-      expect(await moved).toBe(true);
       expect(reloadSafe()).toBe(true);
+      landMove(0);
+      expect(await moved).toBe(true);
 
-      // A move that doesn't answer holds Reload back for its wait only: it may never
-      // answer. It stays on screen meanwhile (a reload would show the saved period).
+      // One the journal can't keep (localStorage is full) holds Reload back for its wait
+      // only: it may never answer. It stays on screen meanwhile (a reload would show the
+      // saved period).
+      const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      });
       const late = session.movePeriod(3, 50);
       expect(reloadSafe()).toBe(false);
       await waitMs(100);
       expect(reloadSafe()).toBe(true);
       expect(session.getSnapshot().period).toBe(3);
+      full.mockRestore();
       // Its answer, whenever it comes, still counts.
-      moves[1]?.answer.resolve(undefined);
+      landMove(1);
       expect(await late).toBe(true);
       expect(session.getSnapshot().period).toBe(3);
       expect(reloadSafe()).toBe(true);
@@ -1164,6 +1202,29 @@ describe('TrackingSession', () => {
       // Held again once only, however often it's asked.
       holdAgain();
       expect(pendingTypes()).toEqual(['stl']);
+    });
+
+    it('lets its kept move go with the data, and shows it again if that write fails', async () => {
+      const { session, moves, landMove } = setUp(1);
+      void session.movePeriod(3);
+      // (As forgetPendingStats does: the journals first, then the sessions.)
+      const periods = forgetPendingPeriods('g');
+      const holdAgain = session.forget();
+      expect(session.getSnapshot().period).toBe(1);
+      // Its write finds it gone: nothing is written.
+      expect(landMove(0)).toBe(1);
+      await flush();
+      expect(session.getSnapshot().period).toBe(1);
+
+      // That write failed: the move is kept again, back on screen, and saved next.
+      periods.putBack();
+      holdAgain();
+      expect(session.getSnapshot().period).toBe(3);
+      session.retry();
+      expect(moves.map((move) => move.period)).toEqual([3, 3]);
+      expect(landMove(1)).toBe(3);
+      await flush();
+      expect(keptMove()).toBeUndefined();
     });
 
     it('forgets the tap of a stat deleted elsewhere, but not one being taken back here', async () => {
@@ -1439,14 +1500,17 @@ describe('TrackingSession', () => {
 
   describe('period', () => {
     it('shows a move at once, keeps it while it saves, and follows the saved period', async () => {
-      const { session, moves } = setUp(1);
+      const { session, landMove } = setUp(1);
       const moved = session.movePeriod(2);
       expect(session.getSnapshot().period).toBe(2);
+      // Kept on the phone before its write starts, until it's saved.
+      expect(keptMove()).toMatchObject({ gameId: 'g', period: 2 });
       // A saved period arriving meanwhile (e.g. from an earlier write) is ignored...
       session.syncSavedPeriod(1);
       expect(session.getSnapshot().period).toBe(2);
-      moves[0]?.answer.resolve(undefined);
+      landMove(0);
       expect(await moved).toBe(true);
+      expect(keptMove()).toBeUndefined();
       session.syncSavedPeriod(2);
       expect(session.getSnapshot().period).toBe(2);
       // ...but once nothing is moving, the saved period (e.g. changed elsewhere) shows.
@@ -1454,16 +1518,34 @@ describe('TrackingSession', () => {
       expect(session.getSnapshot().period).toBe(4);
     });
 
-    it('goes back to the saved period if a move could not be saved', async () => {
-      const { session, moves } = setUp(3);
+    it('keeps a move whose write fails on screen, and tries it again like a tap until it is saved', async () => {
+      const { session, moves, landMove, failMove } = setUp(3);
       const moved = session.movePeriod(4);
-      moves[0]?.answer.reject(new Error('Disk error'));
-      expect(await moved).toBe(false);
-      expect(session.getSnapshot().period).toBe(3);
+      failMove(0);
+      // Still the move to make: kept, on screen, and nothing to say.
+      expect(await moved).toBe(true);
+      expect(session.getSnapshot().period).toBe(4);
+      expect(keptMove()).toMatchObject({ period: 4 });
+      session.syncSavedPeriod(3);
+      expect(session.getSnapshot().period).toBe(4);
+      expect(session.getSnapshot().reloadSafe).toBe(true);
+
+      // Tried again on its own a moment later (once)...
+      await vi.waitFor(() => expect(moves).toHaveLength(2), { timeout: AUTO_RETRY_MS + 500 });
+      failMove(1);
+      await waitMs(AUTO_RETRY_MS + 100);
+      expect(moves).toHaveLength(2);
+      // ...then with every retry of the taps: here, the next tap's.
+      session.record('stl');
+      expect(moves).toHaveLength(3);
+      expect(landMove(2)).toBe(4);
+      await flush();
+      expect(keptMove()).toBeUndefined();
+      expect(session.getSnapshot().period).toBe(4);
     });
 
     it('keeps a move that answers after its wait on screen, with the taps tapped meanwhile', async () => {
-      const { session, moves, saves } = setUp(1);
+      const { session, saves, landMove } = setUp(1);
       const moved = session.movePeriod(2, 50);
       await waitMs(100);
       // Still on its way: she's in Q2 (the saved game still says Q1), and taps go there.
@@ -1471,43 +1553,103 @@ describe('TrackingSession', () => {
       expect(session.getSnapshot().period).toBe(2);
       session.record('stl');
       expect(saves.map((call) => call.stat.period)).toEqual([2]);
-      moves[0]?.answer.resolve(undefined);
+      landMove(0);
       expect(await moved).toBe(true);
       expect(session.getSnapshot().period).toBe(2);
     });
 
-    it('goes back to the saved period if a move fails after its wait', async () => {
-      const { session, moves } = setUp(3);
-      const moved = session.movePeriod(4, 50);
-      await waitMs(100);
-      expect(session.getSnapshot().period).toBe(4);
-      moves[0]?.answer.reject(new Error('Disk error'));
-      expect(await moved).toBe(false);
-      expect(session.getSnapshot().period).toBe(3);
-    });
-
-    it('goes back to the last move that was saved, even before the saved game shows it', async () => {
-      const { session, moves } = setUp(1);
-      const saved = session.movePeriod(2);
-      moves[0]?.answer.resolve(undefined);
-      expect(await saved).toBe(true);
-      // The saved game hasn't come back with Q2 yet when the next move fails.
-      const failed = session.movePeriod(3);
-      moves[1]?.answer.reject(new Error('Disk error'));
-      expect(await failed).toBe(false);
+    it('resumes the move an earlier page kept, and saves it', async () => {
+      keepPendingPeriod(newPendingPeriod('g', 2));
+      const { session, moves, landMove, saves } = setUp(1);
+      expect(session.getSnapshot().period).toBe(2);
+      session.syncSavedPeriod(1);
+      expect(session.getSnapshot().period).toBe(2);
+      // The screen retries as it opens: the move is saved, and taps go there meanwhile.
+      session.retry();
+      expect(moves.map((move) => move.period)).toEqual([2]);
+      session.record('blk');
+      expect(saves.map((call) => call.stat.period)).toEqual([2]);
+      expect(moves).toHaveLength(1);
+      expect(landMove(0)).toBe(2);
+      await flush();
+      expect(keptMove()).toBeUndefined();
       expect(session.getSnapshot().period).toBe(2);
     });
 
-    it('keeps a later move when an earlier one fails', async () => {
-      const { session, moves } = setUp(1);
+    it('never saves a move over one made since, whichever write runs last', async () => {
+      const { session, landMove } = setUp(1);
       const first = session.movePeriod(2);
       const second = session.movePeriod(3);
-      moves[0]?.answer.reject(new Error('Disk error'));
-      expect(await first).toBe(false);
-      expect(session.getSnapshot().period).toBe(3);
-      moves[1]?.answer.resolve(undefined);
+      expect(keptMove()).toMatchObject({ period: 3 });
+      expect(landMove(1)).toBe(3);
+      // The first move's write runs last: it's not the kept move any more, so nothing is
+      // written, and there's nothing to say.
+      expect(landMove(0)).toBe(3);
+      expect(await first).toBe(true);
       expect(await second).toBe(true);
       expect(session.getSnapshot().period).toBe(3);
+      expect(keptMove()).toBeUndefined();
+    });
+
+    it('follows a move made in another tab since, and never saves its own over it', async () => {
+      const { session, moves, landMove } = setUp(1);
+      const moved = session.movePeriod(2);
+      // Another tab (or window) moves the game on meanwhile, keeping its move too.
+      const elsewhere = newPendingPeriod('g', 5);
+      keepPendingPeriod(elsewhere);
+      expect(landMove(0)).toBe(1);
+      expect(await moved).toBe(true);
+      expect(session.getSnapshot().period).toBe(5);
+      // Its retries save that move now: it's the one to make.
+      session.retry();
+      expect(moves.map((move) => move.period)).toEqual([2, 5]);
+      expect(landMove(1)).toBe(5);
+      await flush();
+      expect(keptMove()).toBeUndefined();
+    });
+
+    it('keeps a later move when an earlier one fails', async () => {
+      const { session, landMove, failMove } = setUp(1);
+      const first = session.movePeriod(2);
+      const second = session.movePeriod(3);
+      failMove(0);
+      // (The later move says what's what.)
+      expect(await first).toBe(true);
+      expect(session.getSnapshot().period).toBe(3);
+      landMove(1);
+      expect(await second).toBe(true);
+      expect(session.getSnapshot().period).toBe(3);
+    });
+
+    describe("a move the journal can't keep (localStorage is full)", () => {
+      it('goes back to the saved period if it could not be saved', async () => {
+        const { session, failMove } = setUp(3);
+        vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+          throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+        });
+        const moved = session.movePeriod(4);
+        expect(session.getSnapshot().period).toBe(4);
+        // (Nor is a move kept before it saved over it.)
+        expect(keptMove()).toBeUndefined();
+        failMove(0);
+        expect(await moved).toBe(false);
+        expect(session.getSnapshot().period).toBe(3);
+      });
+
+      it('goes back to the last move that was saved, even before the saved game shows it', async () => {
+        const { session, landMove, failMove } = setUp(1);
+        const saved = session.movePeriod(2);
+        landMove(0);
+        expect(await saved).toBe(true);
+        // The saved game hasn't come back with Q2 yet when the next move fails.
+        vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+          throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+        });
+        const failed = session.movePeriod(3);
+        failMove(1);
+        expect(await failed).toBe(false);
+        expect(session.getSnapshot().period).toBe(2);
+      });
     });
   });
 
@@ -2115,6 +2257,46 @@ describe('TrackingSession spots (the shot chart)', () => {
       expect(keptTaps()).toEqual([]);
       return { game, shot, session };
     }
+
+    it('resumes a move the page could not save on the next page, and taps go there', async () => {
+      const game = await newGame();
+      // The database stops answering the game's writes (a move never lands), though
+      // stats still save.
+      const before = newSession(game.id, 1, {
+        recordStat: savePendingStat,
+        deleteStat,
+        setCurrentPeriod: () => new Promise(() => {}),
+      });
+      void before.movePeriod(2);
+      before.record('stl');
+      await vi.waitFor(async () =>
+        expect((await getGameEvents(game.id)).map((event) => event.period)).toEqual([2]),
+      );
+      // Kept on the phone: a reload would lose nothing.
+      expect(before.getSnapshot().reloadSafe).toBe(true);
+
+      // A reload: the page (and all it held) is gone. The next page's session starts from
+      // the saved game, still in Q1, and resumes the move.
+      const saved = await getGame(game.id);
+      expect(saved?.currentPeriod).toBe(1);
+      const after = newSession(game.id, saved?.currentPeriod ?? 1);
+      expect(after.getSnapshot().period).toBe(2);
+      after.syncSavedEvents(await getGameEvents(game.id));
+      after.syncSavedPeriod(1);
+      expect(after.getSnapshot().period).toBe(2);
+      // Its taps go there, and its first retry (as the screen opens) saves the move.
+      after.record('blk');
+      after.retry();
+      await vi.waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(2));
+      await vi.waitFor(async () =>
+        expect((await getGameEvents(game.id)).map((event) => [event.type, event.period])).toEqual([
+          ['stl', 2],
+          ['blk', 2],
+        ]),
+      );
+      expect(listPendingPeriods()).toEqual([]);
+      expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+    });
 
     it('saves a spot the page could not save when the app starts again, once', async () => {
       const { game, shot } = await shotWithKeptSpot(CORNER);
