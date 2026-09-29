@@ -65,12 +65,16 @@ function removeSampleSubtitle(count: number, samplePlayer: Player | null): strin
 }
 
 /**
- * No games, and nothing the parent entered: sample data may replace the player. A
- * player that a first game created and never named counts as nothing (the game may
- * have been a test, since deleted).
+ * What "Try it with sample data" adds: the sample games for the player the parent set up
+ * (a name or a number), else with a sample player (see addSampleData).
  */
-function isFreshPhone(player: Player | null | undefined, games: readonly Game[]): boolean {
-  return games.length === 0 && !player?.name.trim() && !player?.jerseyNumber;
+function trySampleSubtitle(player: Player | null): string {
+  const later = 'You can remove them here any time.';
+  if (!player?.name.trim() && !player?.jerseyNumber) {
+    return `Adds a sample player with 10 finished games to look around. ${later}`;
+  }
+  const name = player.name.trim() || 'your player';
+  return `Adds 10 finished sample games for ${name} to look around. ${later}`;
 }
 
 /** The version, sample data to look around with (and removing it), and erasing everything. */
@@ -84,7 +88,8 @@ export function AboutSection({
   const navigate = useNavigate();
   const [addingSample, setAddingSample] = useState(false);
   const [removingSample, setRemovingSample] = useState(false);
-  const canTrySample = isFreshPhone(player, games);
+  // Whenever there are no games (sample ones included), named player or not.
+  const canTrySample = games.length === 0;
   const sampleGameCount = games.filter((game) => isDemoGameId(game.id)).length;
   // Still the sample player: removing the sample games takes her name and number too.
   const samplePlayer = player && isDemoPlayer(player) ? player : null;
@@ -150,7 +155,7 @@ export function AboutSection({
         {canTrySample ? (
           <ActionRow
             title="Try it with sample data"
-            subtitle="Adds a sample player with 10 finished games to look around. You can remove them here any time."
+            subtitle={trySampleSubtitle(player)}
             onClick={trySampleData}
             disabled={addingSample}
           />

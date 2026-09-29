@@ -334,16 +334,42 @@ describe('Settings: about', () => {
     expect(router.state.location.pathname).toBe(paths.home);
   });
 
-  it('offers no sample data once there are games or a named player', async () => {
+  it('offers no sample data once there are games', async () => {
     await createGame({ opponent: 'Lincoln', date: '2026-09-20', periodFormat: 'quarters' });
-    const { unmount } = await renderSettings();
-    expect(screen.queryByRole('button', { name: /Try it with sample data/ })).toBeNull();
-    unmount();
-
-    for (const game of await listGames()) await deleteGame(game.id);
-    await savePlayer({ name: 'Maya' });
     await renderSettings();
     expect(screen.queryByRole('button', { name: /Try it with sample data/ })).toBeNull();
+  });
+
+  it('offers sample data for a named player, and keeps her', async () => {
+    const maya = await savePlayer({ name: 'Maya', jerseyNumber: '23' });
+    const { user } = await renderSettings();
+
+    const offer = screen.getByRole('button', { name: /Try it with sample data/ });
+    expect(offer).toHaveTextContent(
+      'Adds 10 finished sample games for Maya to look around. You can remove them here any time.',
+    );
+    await user.click(offer);
+
+    await expectToast('Sample games added');
+    const games = await listGames();
+    expect(games).toHaveLength(10);
+    expect(games.every((game) => game.playerId === maya.id)).toBe(true);
+    expect(await getPlayer()).toEqual(maya);
+    expect(within(list('Player')).getByRole('button', { name: /Maya/ })).toBeVisible();
+  });
+
+  it('offers sample data again once the sample games are removed', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    const { user } = await renderSettings();
+    expect(screen.queryByRole('button', { name: /Try it with sample data/ })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /Remove sample games/ }));
+
+    expect(
+      await screen.findByRole('button', { name: /Try it with sample data/ }),
+    ).toHaveTextContent(
+      'Adds a sample player with 10 finished games to look around. You can remove them here any time.',
+    );
   });
 
   it('erases everything after an explicit confirmation', async () => {

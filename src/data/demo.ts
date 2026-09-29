@@ -444,12 +444,14 @@ export function isDemoPlayer(player: Pick<Player, 'id' | 'name' | 'jerseyNumber'
  * is still the sample player (isDemoPlayer), her name and number. Her record stays, so
  * games of the parent's own stay attached to it, and the app asks who's being tracked
  * again. A player the parent named or renamed, her games and the settings stay as they
- * are. Resolves to how many games it removed.
+ * are. All in one transaction: all or nothing. Resolves to how many games it removed.
  */
-export async function removeDemoData(): Promise<number> {
-  const sampleIds = (await listGames()).map((game) => game.id).filter(isDemoGameId);
-  for (const id of sampleIds) await deleteGame(id);
-  const player = await getPlayer();
-  if (player && isDemoPlayer(player)) await savePlayer({ name: '', jerseyNumber: null });
-  return sampleIds.length;
+export function removeDemoData(): Promise<number> {
+  return db.transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
+    const sampleIds = (await listGames()).map((game) => game.id).filter(isDemoGameId);
+    for (const id of sampleIds) await deleteGame(id);
+    const player = await getPlayer();
+    if (player && isDemoPlayer(player)) await savePlayer({ name: '', jerseyNumber: null });
+    return sampleIds.length;
+  });
 }

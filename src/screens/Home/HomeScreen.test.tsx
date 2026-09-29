@@ -149,6 +149,25 @@ describe('HomeScreen', () => {
       expect(screen.queryByText('Ava · #12')).not.toBeInTheDocument();
     });
 
+    it('offers a look around with sample data, quietly under New game', async () => {
+      const { user } = renderRoute(paths.home);
+      await screen.findByRole('region', { name: 'Who are you tracking?' });
+      const offer = screen.getByRole('button', { name: 'Try it with sample data' });
+      expect(offer.parentElement).toHaveTextContent('Just looking? Try it with sample data');
+      expect(isBefore(newGameLink(), offer)).toBe(true);
+
+      await user.click(offer);
+
+      await waitFor(() => {
+        expect(notifications()).toHaveTextContent(
+          'Sample games added. You can remove them in Settings.',
+        );
+      });
+      expect(await screen.findByText('Ava · #12')).toBeInTheDocument();
+      expect(await screen.findByRole('link', { name: /vs Eastlake/ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Try it with sample data' })).toBeNull();
+    });
+
     it('can start a game before the player is named', async () => {
       const { user, router } = renderRoute(paths.home);
       await screen.findByRole('region', { name: 'Who are you tracking?' });
@@ -208,6 +227,25 @@ describe('HomeScreen', () => {
 
       await user.click(newGameLink());
       expect(router.state.location.pathname).toBe(paths.newGame);
+    });
+
+    it('offers sample data for her while there are no games', async () => {
+      const player = await getPlayer();
+      const { user } = renderRoute(paths.home);
+      await screen.findByRole('heading', { name: 'No games yet' });
+
+      await user.click(screen.getByRole('button', { name: 'Try it with sample data' }));
+
+      expect(await screen.findByRole('link', { name: /vs Eastlake/ })).toBeInTheDocument();
+      expect(await getPlayer()).toEqual(player);
+      expect(screen.getByText('Ava · #12')).toBeInTheDocument();
+    });
+
+    it('offers no sample data once there is a game', async () => {
+      await addGame({ opponent: 'Central' });
+      renderRoute(paths.home);
+      await screen.findByRole('region', { name: 'Game in progress' });
+      expect(screen.queryByRole('button', { name: 'Try it with sample data' })).toBeNull();
     });
 
     it('lists every game newest first, with the player’s line and the result', async () => {

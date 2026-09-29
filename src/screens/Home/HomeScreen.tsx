@@ -11,6 +11,7 @@ import type { Player } from '@/data/types';
 import { cx } from '@/lib/cx';
 import { formatPlayerName, todayLocalISO } from '@/lib/format';
 import { paths } from '@/routes';
+import { FirstRunLinks } from './FirstRunLinks';
 import { GameList } from './GameList';
 import { LiveGameCard } from './LiveGameCard';
 import { PlayerSetupCard } from './PlayerSetupCard';
@@ -41,7 +42,8 @@ function NewGameButton({
 
 /**
  * The Games tab: the live game (to resume it), a first-run setup card, the New game
- * button and every game so far, newest first.
+ * button (with a quiet offer of sample data while there are no games) and every game
+ * so far, newest first.
  */
 export function HomeScreen() {
   const player = usePlayer();
@@ -119,7 +121,12 @@ export function HomeScreen() {
             icon="🏀"
             title="No games yet"
             message="Start one at tip-off, then tap a big button for each shot, rebound or assist. Every game you track shows up here."
-            action={<NewGameButton ref={newGameRef} variant="primary" />}
+            action={
+              <div className={styles.emptyActions}>
+                <NewGameButton ref={newGameRef} variant="primary" />
+                <FirstRunLinks />
+              </div>
+            }
           />
         ) : (
           <div className={styles.newGame}>
@@ -132,6 +139,7 @@ export function HomeScreen() {
               // A live game's Resume (or the first-run Save) is the main action when there is one.
               variant={liveGame || needsSetup ? 'secondary' : 'primary'}
             />
+            {noGames ? <FirstRunLinks /> : null}
           </div>
         )}
 
