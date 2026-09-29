@@ -571,7 +571,10 @@ describe('Settings: cloud backup paused or stopped', () => {
     const { user } = await renderSettings();
     const section = () => screen.getByRole('region', { name: 'Cloud backup' });
 
-    await user.click(screen.getByRole('link', { name: 'Cloud backup is paused. Tap to fix' }));
+    // (The banner reads the status on its own, so it may come a moment after Settings.)
+    await user.click(
+      await screen.findByRole('link', { name: 'Cloud backup is paused. Tap to fix' }),
+    );
     await waitFor(() => {
       expect(section()).toHaveFocus();
     });
@@ -706,8 +709,10 @@ describe('Settings: erasing all data with cloud backup', () => {
       'None of the 10 games in your last backup are on this phone, so automatic backup is paused to keep that backup safe.',
     );
     expect(cloudButton(/Back up anyway/)).toBeEnabled();
+    // The banner reads the status on its own (a live query of its own, like the
+    // section's), so it can show the pause a moment after the section does.
     expect(
-      screen.getByRole('link', { name: 'Cloud backup is paused. Tap to fix' }),
+      await screen.findByRole('link', { name: 'Cloud backup is paused. Tap to fix' }),
     ).toBeInTheDocument();
     expect(cloud.server.uploads).toHaveLength(1);
   });
