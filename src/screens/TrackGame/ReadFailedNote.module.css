@@ -52,3 +52,26 @@
 .reload:active {
   transform: scale(0.96);
 }
+
+/* Over the compact strip (beside the shot chart's court): the same, in less height. */
+.compact {
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+}
+
+.compact .message {
+  gap: 0;
+}
+
+.compact .title {
+  font-size: var(--font-size-md);
+}
+
+.compact .hint {
+  font-size: var(--font-size-xs);
+}
+
+.compact .reload {
+  min-width: calc(var(--tap-target) + var(--tap-target-lg) / 2);
+  padding-inline: var(--space-3);
+  font-size: var(--font-size-md);
+}

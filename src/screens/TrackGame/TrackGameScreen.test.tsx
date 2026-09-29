@@ -1119,6 +1119,8 @@ describe('TrackGameScreen', () => {
       expect(screen.getByText('Your taps are kept on this phone.')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled();
       expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull();
+      // Over the strip, which is compact beside the shot chart's court.
+      expect(screen.getByText(CANT_READ).closest('div')).toHaveClass('row', 'compact');
       await expectStrip('Steals: 2');
 
       // Saves fail now too: a tap still counts, at once, and is kept on the phone.

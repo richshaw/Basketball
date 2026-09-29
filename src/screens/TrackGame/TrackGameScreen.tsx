@@ -359,7 +359,7 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
           {readFailed && (unsaved.length === 0 || unsavedKept) ? (
             // Reload only while it would lose nothing: not this game's taps, spots, Undos
             // or period moves, nor another game's that only this page holds.
-            <ReadFailedNote canReload={reloadSafe && isReloadSafe()} />
+            <ReadFailedNote canReload={reloadSafe && isReloadSafe()} compact={withCourt} />
           ) : (
             <UnsavedStats
               unsaved={unsaved}

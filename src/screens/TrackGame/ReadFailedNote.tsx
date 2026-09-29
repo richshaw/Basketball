@@ -1,3 +1,4 @@
+import { cx } from '@/lib/cx';
 import styles from './ReadFailedNote.module.css';
 
 export interface ReadFailedNoteProps {
@@ -7,6 +8,8 @@ export interface ReadFailedNoteProps {
    * kept, and offers Reload. Otherwise it asks to keep the app open instead.
    */
   canReload: boolean;
+  /** Laid over the compact stat strip (see StatStrip): smaller type to fit it. */
+  compact?: boolean;
 }
 
 /**
@@ -16,9 +19,9 @@ export interface ReadFailedNoteProps {
  * reads are tried again on their own. Calm, since nothing is lost: a polite status, not
  * an alert. Reload (which the journals make safe) only ever happens on the parent's tap.
  */
-export function ReadFailedNote({ canReload }: ReadFailedNoteProps) {
+export function ReadFailedNote({ canReload, compact = false }: ReadFailedNoteProps) {
   return (
-    <div className={styles.row}>
+    <div className={cx(styles.row, compact && styles.compact)}>
       <p role="status" className={styles.message}>
         <span className={styles.title}>Can&apos;t read saved stats right now.</span>{' '}
         <span className={styles.hint}>
