@@ -39,6 +39,12 @@ async function gameEventTypes(page: Page, gameId: string): Promise<string[]> {
   return (await gameEvents(page, gameId)).map((event) => event.type);
 }
 
+/** The game's period as saved (the screen shows a move at once, before it's saved). */
+async function savedPeriod(page: Page, gameId: string): Promise<number | undefined> {
+  const data = await exportAll(page);
+  return data.games.find((game) => game.id === gameId)?.currentPeriod;
+}
+
 const TAPS = [
   '2PT Made',
   '2PT Made',
@@ -512,6 +518,8 @@ for (const [name, viewport] of [
         await lineButton(page, 'Try again').tap();
         await expect(lastAction(page)).toHaveText('Now in 10OT');
         await expect(page.getByRole('button', { name: 'Period 10OT' })).toBeVisible();
+        // (Saved: it shows at once, before its save lands.)
+        await expect.poll(() => savedPeriod(page, gameId)).toBe(14);
 
         // Its Undo, the same way.
         await failGameSaves(page, true);

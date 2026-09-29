@@ -24,7 +24,13 @@ export interface DemoOptions {
 export interface ExportedData {
   exportedAt: string;
   players: { id: string; name: string; jerseyNumber?: string }[];
-  games: { id: string; opponent: string; date: string; status: 'live' | 'final' }[];
+  games: {
+    id: string;
+    opponent: string;
+    date: string;
+    status: 'live' | 'final';
+    currentPeriod: number;
+  }[];
   events: {
     id: string;
     gameId: string;
