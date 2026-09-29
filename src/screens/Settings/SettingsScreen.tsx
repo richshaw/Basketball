@@ -20,10 +20,15 @@ import styles from './SettingsScreen.module.css';
 
 const CLOUD_BACKUP_SECTION: SettingsSection = 'cloud-backup';
 
-/** What the backup files' note says about cloud backup (none: the stats are only here). */
+/**
+ * What the backup files' note says about cloud backup: undefined when the stats are only
+ * here (no online backup, or none since it was turned off, deleted or yet to be made),
+ * `behind` when the latest ones are (paused or stopped).
+ */
 function onlineBackupNote(coverage: BackupCoverage | undefined): OnlineBackupNote | undefined {
-  if (!coverage || coverage.kind === 'none' || coverage.kind === 'off') return undefined;
-  return backupKeepsUp(coverage) ? 'keeping-up' : 'behind';
+  if (!coverage) return undefined;
+  if (backupKeepsUp(coverage)) return 'keeping-up';
+  return coverage.kind === 'behind' || coverage.kind === 'stopped' ? 'behind' : undefined;
 }
 
 /**

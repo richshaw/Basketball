@@ -734,6 +734,36 @@ describe('Settings: erasing all data with cloud backup', () => {
     expect(await eraseQuestion(user)).toHaveAccessibleDescription(
       `${ERASED} Your online backup was deleted, so none of this is backed up online. ${SAVE_A_FILE}`,
     );
+    expect(backupFilesNote()).toHaveTextContent('Your stats are stored only on this phone.');
+  });
+
+  it("says so when this phone hasn't backed up yet", async () => {
+    await seedOwnGames();
+    // Turned on with no signal: nothing is online yet.
+    cloud.server.networkDown = true;
+    await turnOnCloudBackup();
+    expect(await settledStatus()).toMatchObject({ state: 'waiting-for-signal' });
+    const { user } = await renderSettings();
+
+    expect(await eraseQuestion(user)).toHaveAccessibleDescription(
+      `${ERASED} This phone hasn't backed up online yet. ${SAVE_A_FILE}`,
+    );
+    expect(backupFilesNote()).toHaveTextContent('Your stats are stored only on this phone.');
+  });
+
+  it('says the latest stats are only here when backup stopped for another reason', async () => {
+    await seedOwnGames();
+    await turnOnCloudBackup();
+    await createGame({ opponent: 'Hillcrest', date: '2026-09-28', periodFormat: 'quarters' });
+    // The server no longer takes this code.
+    cloud.server.failNext({ status: 401, error: 'unauthorized', method: 'PUT' });
+    await backUpNow();
+    expect(await settledStatus()).toMatchObject({ state: 'needs-attention' });
+    const { user } = await renderSettings();
+
+    expect(await eraseQuestion(user)).toHaveAccessibleDescription(
+      `${ERASED.replace('10', '11')} Cloud backup has stopped, so your latest stats aren't backed up online. ${SAVE_A_FILE}`,
+    );
     expect(backupFilesNote()).toHaveTextContent('Your latest stats are stored only on this phone.');
   });
 
