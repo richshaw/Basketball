@@ -60,12 +60,6 @@ const repoDeps: SessionDeps = {
   setCurrentPeriod: (gameId, period) => setCurrentPeriod(gameId, period),
 };
 
-/**
- * Every session made, by trackingSession() or directly (as tests do), for
- * disposeTrackingSessions.
- */
-const made = new Set<TrackingSession>();
-
 /** One tap of a stat button. */
 export interface Tap {
   /** Its stat's id: the event it's saved as. */
@@ -239,7 +233,6 @@ export class TrackingSession implements UnsavedTapHolder {
       this.lastAt = Math.max(this.lastAt ?? stat.at, stat.at);
     }
     this.snapshot = this.nextSnapshot();
-    made.add(this);
   }
 
   /** For useSyncExternalStore. */
@@ -706,13 +699,14 @@ export function trackingSession(gameId: string, period: number): TrackingSession
 }
 
 /**
- * Stops every tracking session, made by trackingSession() or directly: forgets its taps
- * (never saving them) and stops its timers, so nothing it does carries into what comes
- * next. For the test setup, after each test. The app never needs it: a session lasts as
- * long as the page.
+ * Stops every session trackingSession() holds: drops it, forgets its taps (never saving
+ * them) and stops its timers, so nothing it does carries into what comes next. For the
+ * test setup, after each test; a test that makes a TrackingSession itself stops it with
+ * forget(). The app never needs it: a session lasts as long as the page.
  */
 export function disposeTrackingSessions(): void {
-  for (const unregister of [...registrations.values()]) unregister();
-  for (const session of made) session.forget();
-  made.clear();
+  for (const [session, unregister] of [...registrations]) {
+    unregister();
+    session.forget();
+  }
 }

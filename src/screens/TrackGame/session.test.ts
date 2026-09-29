@@ -135,9 +135,26 @@ function fakeDeps() {
   };
 }
 
+/**
+ * The sessions a test made itself, stopped after it (the test setup stops the ones
+ * trackingSession() made), so no retry timer of theirs runs into the next test.
+ */
+const made: TrackingSession[] = [];
+
+function newSession(...args: ConstructorParameters<typeof TrackingSession>): TrackingSession {
+  const session = new TrackingSession(...args);
+  made.push(session);
+  return session;
+}
+
+afterEach(() => {
+  for (const session of made.splice(0)) session.forget();
+  vi.useRealTimers();
+});
+
 function setUp(period = 1) {
   const fake = fakeDeps();
-  const session = new TrackingSession('g', period, fake.deps);
+  const session = newSession('g', period, fake.deps);
   const unsavedTypes = () => session.getSnapshot().unsaved.map((tap) => tap.type);
   const pendingTypes = () => session.getSnapshot().pending.map((tap) => tap.type);
   /** Shows the session the saved stats, as the screen does whenever they change. */
@@ -160,10 +177,6 @@ async function outcome(taking: TakingBack | 'nothing' | 'busy' | Promise<TakingB
 function event(id: string, type: StatType, createdAt: number): StatEvent {
   return { id, gameId: 'g', type, period: 1, createdAt };
 }
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 describe('TrackingSession', () => {
   it('saves each tap at once, in the period on screen, under an id and tap time made at the tap', async () => {
@@ -261,7 +274,7 @@ describe('TrackingSession', () => {
     });
     // Like WebKit losing its IndexedDB connection: the write commits, then rejects.
     let lies = 1;
-    const session = new TrackingSession(game.id, 1, {
+    const session = newSession(game.id, 1, {
       recordStat: async (stat) => {
         const saved = await savePendingStat(stat);
         if (lies-- > 0)
@@ -293,14 +306,14 @@ describe('TrackingSession', () => {
       deleteStat,
       setCurrentPeriod,
     };
-    const before = new TrackingSession(game.id, 2, broken);
+    const before = newSession(game.id, 2, broken);
     const block = before.record('blk');
     await vi.waitFor(() => expect(before.getSnapshot().unsaved).toEqual([block]));
     expect(keptIds()).toEqual([block.id]);
 
     // The page reloads: memory is gone, the journal isn't. The new session counts the
     // tap (it can be undone too) and saves it.
-    const after = new TrackingSession(game.id, 2);
+    const after = newSession(game.id, 2);
     expect(after.getSnapshot()).toMatchObject({ pending: [block], unsaved: [] });
     after.retry();
     await vi.waitFor(() => expect(keptIds()).toEqual([]));
@@ -333,10 +346,10 @@ describe('TrackingSession', () => {
 
   it("starts with its own game's kept taps only", () => {
     const { session } = setUp();
-    const other = new TrackingSession('other', 1, fakeDeps().deps);
+    const other = newSession('other', 1, fakeDeps().deps);
     const tap = other.record('ast');
-    expect(new TrackingSession('g', 1, fakeDeps().deps).getSnapshot().pending).toEqual([]);
-    expect(new TrackingSession('other', 1, fakeDeps().deps).getSnapshot().pending).toEqual([tap]);
+    expect(newSession('g', 1, fakeDeps().deps).getSnapshot().pending).toEqual([]);
+    expect(newSession('other', 1, fakeDeps().deps).getSnapshot().pending).toEqual([tap]);
     expect(session.getSnapshot().pending).toEqual([]);
   });
 
@@ -755,18 +768,18 @@ describe('TrackingSession', () => {
   });
 
   describe('disposeTrackingSessions (the test setup, after each test)', () => {
-    it('stops every session: its taps are forgotten and its timers stopped', async () => {
+    it('stops every session trackingSession() made: its taps are forgotten and its timers stopped', async () => {
       vi.useFakeTimers();
-      const { session, saves, fail, pendingTypes } = setUp();
+      const saves = vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Connection lost'));
+      const session = trackingSession('game-to-stop', 1);
       session.record('stl');
-      fail(0);
       await vi.advanceTimersByTimeAsync(0);
-      expect(pendingTypes()).toEqual(['stl']);
+      expect(session.getSnapshot().unsaved).toHaveLength(1);
 
       disposeTrackingSessions();
       await vi.advanceTimersByTimeAsync(10 * AUTO_RETRY_MS);
-      expect(saves).toHaveLength(1);
-      expect(pendingTypes()).toEqual([]);
+      expect(saves).toHaveBeenCalledTimes(1);
+      expect(session.getSnapshot().pending).toEqual([]);
     });
 
     it('drops the session trackingSession() keeps for each game, and its hold on the retry', () => {
