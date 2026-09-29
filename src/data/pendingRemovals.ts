@@ -11,8 +11,9 @@
  * every try of the app-wide retry (not found counts as done), and a game's tracking
  * session starts with its game's, not counting them, and removes them itself.
  *
- * A tap is kept here only once no save of it is under way any more (the session's save
- * has settled, landed or not), so no save can land after its stat was found gone.
+ * A tap is kept here from the Undo on, even while a save of it is under way: IndexedDB
+ * runs that earlier save before any later delete (this page's, or the next page's after
+ * a reload), so no save can land after its stat was found gone.
  *
  * One key per stat, `hoop-stats.pendingRemoval.<id>`, holding the tap as it was kept
  * (`{ id, gameId, type, period, at }`). Nothing here throws: without localStorage, a

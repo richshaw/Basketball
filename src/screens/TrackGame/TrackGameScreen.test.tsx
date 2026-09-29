@@ -26,7 +26,7 @@ import { clearAllData } from '@/data/transfer';
 import { MAX_PERIOD, type CourtPoint, type Game, type StatType } from '@/data/types';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
-import { AUTO_RETRY_MS, disposeTrackingSessions } from './session';
+import { AUTO_RETRY_MS, disposeTrackingSessions, MOVE_WAIT_MS } from './session';
 import { COURT_DEPTH } from './ShotCourt';
 import { DOUBLE_TAP_MS } from './tracking';
 
@@ -1362,6 +1362,59 @@ describe('TrackGameScreen', () => {
       expect(await eventTypes(gameA.id)).toEqual(['stl']);
       expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
       expect(screen.getByText('Your taps are kept on this phone.')).toBeInTheDocument();
+    });
+
+    describe('when a write never answers', () => {
+      it('keeps Reload through an Undo of a tap whose save never answers', async () => {
+        const game = await newGame();
+        await recordStat(game.id, 'stl');
+        await renderTracking(game);
+        // IndexedDB stops answering writes, and reads fail (the note shows).
+        vi.spyOn(repo, 'recordStat').mockReturnValue(new Promise(() => {}));
+        vi.spyOn(repo, 'getGameEvents').mockRejectedValue(lost());
+        fireEvent.click(statButton('Block'));
+        act(() => {
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+        expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+        // Wrong stat: Undo. Its save still hasn't answered (and never will): its removal
+        // is kept at once, so a reload would still take it out, and Reload stays.
+        fireEvent.click(statButton('Undo last stat'));
+        await waitFor(() => expect(lastAction()).toHaveTextContent('Removed Block'));
+        expect(listPendingRemovals().map((removal) => removal.type)).toEqual(['blk']);
+        expect(listPendingStats()).toEqual([]);
+        await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+        expect(screen.queryByText('Keep the app open until your taps are saved.')).toBeNull();
+      });
+
+      it('gives Reload back once a period move that never answers counts as not saved', async () => {
+        const game = await newGame();
+        await renderTracking(game);
+        vi.spyOn(repo, 'setCurrentPeriod').mockReturnValue(new Promise(() => {}));
+        vi.spyOn(repo, 'getGame').mockRejectedValue(lost());
+        fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
+        fireEvent.click(statButton('Steal'));
+        expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+        // While the move is on its way, a reload would lose it: no Reload yet.
+        expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
+        expect(
+          screen.getByText('Keep the app open until your taps are saved.'),
+        ).toBeInTheDocument();
+
+        // It never answers: after a while it counts as not saved, the saved period is back
+        // (a reload would show that too), and the line says so, with Try again.
+        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't go to Q2$/), {
+          timeout: MOVE_WAIT_MS + 2000,
+        });
+        expect(screen.getByRole('button', { name: 'Period Q1' })).toBeInTheDocument();
+        expect(lineButton('Try again')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+        // The Steal tapped meanwhile is saved where it was tapped.
+        await waitFor(async () => expect(await eventPeriods(game.id)).toEqual([['stl', 2]]));
+      }, 15_000);
     });
 
     describe("when the database can't be opened again (WebKit lost its connection)", () => {

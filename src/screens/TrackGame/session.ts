@@ -20,12 +20,15 @@
  *   most recent stat by tap time, a tap or a saved stat; one that turns out to be gone
  *   already is skipped, and never reported as removed.
  * - A tap taken back is removed by id once no save of it is under way (one may have
- *   landed). Until that's confirmed its removal is kept in the pending-removals journal
- *   (src/data/pendingRemovals.ts), so a reload still removes its stat, and it's tried
- *   again with the taps. A new session starts with its game's kept removals, not
- *   counting their stats.
+ *   landed). From the Undo until that's confirmed, its removal is kept in the
+ *   pending-removals journal (src/data/pendingRemovals.ts), so a reload still removes its
+ *   stat, and it's tried again with the taps. (Kept even while a save of it is under way:
+ *   IndexedDB runs that earlier save before any later delete, so the stat can't come
+ *   back after it.) A new session starts with its game's kept removals, not counting
+ *   their stats.
  * - The period moves on screen at once and is then saved; the saved period takes
- *   over again once no move is being saved (or a move couldn't be saved).
+ *   over again once no move is being saved (or a move couldn't be saved, or didn't
+ *   answer within MOVE_WAIT_MS).
  * - A 2PT/3PT tap can get its spot from a tap on the court (markSpot) for
  *   SPOT_WINDOW_MS, until the next stat, Undo or period change. The spot goes where
  *   the tap is: into its pending-stats entry while it isn't saved (its save takes the
@@ -65,6 +68,13 @@ export const AUTO_RETRY_MS = 1000;
 
 /** How long saveAll() waits for saves under way before counting them as not saved. */
 export const SAVE_ALL_WAIT_MS = 3000;
+
+/**
+ * How long a period move may go unanswered before it counts as not saved (the saved
+ * period is shown again): a write that never answers must not leave it on its way for
+ * good.
+ */
+export const MOVE_WAIT_MS = 5000;
 
 /** How long after a 2PT/3PT tap a tap on the court marks where it was taken. */
 export const SPOT_WINDOW_MS = 10_000;
@@ -644,11 +654,11 @@ export class TrackingSession implements UnsavedTapHolder {
    * Whether reloading the page now would lose nothing it holds: every tap that isn't
    * confirmed saved is kept in the journal (which outlives the page), with the spot
    * marked for it, and every spot not on its stat yet in the spots journal; every tap
-   * taken back has its removal kept in
-   * the removals journal (after a reload, that still removes a stat whose tap's save
-   * landed after all; the line has said it's removed), which it can't be while a save of
-   * it is under way; no saved stat is being removed (it has stopped counting); and no
-   * period move is still being saved (the next taps would land in the old period).
+   * taken back has its removal kept in the removals journal (after a reload, that still
+   * removes a stat whose tap's save landed after all; the line has said it's removed),
+   * from the Undo on; no saved stat is being removed (it has stopped counting); and no
+   * period move is still being saved (the next taps would land in the old period), which
+   * a move that doesn't answer stops being after MOVE_WAIT_MS.
    */
   reloadSafe(): boolean {
     const keptRemovals = new Set(
@@ -827,11 +837,14 @@ export class TrackingSession implements UnsavedTapHolder {
 
   /**
    * Keeps a taken-back tap's removal in the pending-removals journal (a reload then still
-   * removes its stat): once no save of it is under way, so none can land after it.
+   * removes its stat), or keeps it there again.
    */
   private keepRemoval(record: TapRecord): void {
     const { id, gameId, type, period, at } = record.stat;
-    record.removalKept = addPendingRemoval({ id, gameId, type, period, at }) || record.removalKept;
+    record.removalKept =
+      addPendingRemoval({ id, gameId, type, period, at }) ||
+      // (Kept already, though localStorage can't take it again right now.)
+      listPendingRemovals(gameId).some((removal) => removal.id === id);
   }
 
   /** Forgets a kept removal: its stat is gone, or it stays after all. */
@@ -851,9 +864,10 @@ export class TrackingSession implements UnsavedTapHolder {
     }
     const confirmed = record.status === 'saved';
     record.undone = true;
-    // Its removal is kept for after a reload, unless a save of it is under way (it's
-    // kept once that's done: a save landing later would bring back a stat found gone).
-    if (record.status !== 'saving') this.keepRemoval(record);
+    // Its removal is kept for after a reload from now on, even while a save of it is
+    // under way: IndexedDB runs that earlier save before any later delete (this page's,
+    // or the next page's after a reload), so its stat can't come back after the removal.
+    this.keepRemoval(record);
     // Never saved again, even after a reload; nor is its spot (unless the stat stays).
     removePendingStat(id);
     const spot = this.setSpotAside(id);
@@ -868,10 +882,11 @@ export class TrackingSession implements UnsavedTapHolder {
     spot: SpotSave | undefined,
     forgets: number,
   ): Promise<Removal> {
-    // A save of it may have landed (even one that seemed to fail): remove it by id. No
-    // save of it is under way any more, so its removal is kept until that's done.
+    // A save of it may have landed (even one that seemed to fail): remove it by id, its
+    // removal kept until that's done. Kept again: the app-wide retry may have finished
+    // (and forgotten) it meanwhile, and this removal is still to be confirmed.
     const confirmed = record.status === 'saved';
-    if (!record.removalKept) this.keepRemoval(record);
+    this.keepRemoval(record);
     return this.removeStat(record.stat.id).then((removal): Removal => {
       if (removal !== 'failed') {
         this.forgetRemoval(record);
@@ -1146,28 +1161,33 @@ export class TrackingSession implements UnsavedTapHolder {
 
   /**
    * Moves to another period: on screen at once, then saved. Resolves to false if it
-   * couldn't be saved (the saved period is shown again, unless another move is on
-   * its way).
+   * couldn't be saved, or didn't answer within `waitMs` (the saved period is shown
+   * again, unless another move is on its way). A move that answers after that changes
+   * nothing here: the saved period on screen follows the game as read (syncSavedPeriod).
    */
-  movePeriod(to: number): Promise<boolean> {
+  movePeriod(to: number, waitMs = MOVE_WAIT_MS): Promise<boolean> {
     this.period = to;
     this.movesInFlight += 1;
     this.setSpotShot(null);
     this.emit();
-    return attempt(() => this.deps.setCurrentPeriod(this.gameId, to)).then(
-      () => {
+    return new Promise<boolean>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = (moved: boolean) => {
+        if (timer === undefined) return;
+        clearTimeout(timer);
+        timer = undefined;
         this.movesInFlight -= 1;
-        this.savedPeriod = to;
+        if (moved) this.savedPeriod = to;
+        else if (this.movesInFlight === 0) this.period = this.savedPeriod;
         this.emit();
-        return true;
-      },
-      () => {
-        this.movesInFlight -= 1;
-        if (this.movesInFlight === 0) this.period = this.savedPeriod;
-        this.emit();
-        return false;
-      },
-    );
+        resolve(moved);
+      };
+      timer = setTimeout(() => done(false), waitMs);
+      attempt(() => this.deps.setCurrentPeriod(this.gameId, to)).then(
+        () => done(true),
+        () => done(false),
+      );
+    });
   }
 
   /** The game's period as saved (it changes when a move lands, or elsewhere). */
