@@ -261,6 +261,28 @@ export async function failNextSaves(page: Page, count: number) {
 }
 
 /**
+ * Makes removing a stat fail in IndexedDB while `on` (an Undo, say), as a write can when
+ * iOS brings the app back from the background: the stat's `delete` throws inside its
+ * transaction.
+ */
+export async function failStatDeletes(page: Page, on: boolean) {
+  await page.evaluate((failing) => {
+    const state = window as unknown as { failStatDeletes?: boolean };
+    if (state.failStatDeletes === undefined) {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound by apply() below
+      const remove = IDBObjectStore.prototype.delete;
+      IDBObjectStore.prototype.delete = function (this: IDBObjectStore, ...args) {
+        if (this.name === 'events' && state.failStatDeletes) {
+          throw new DOMException('Simulated write failure', 'UnknownError');
+        }
+        return remove.apply(this, args);
+      };
+    }
+    state.failStatDeletes = failing;
+  }, on);
+}
+
+/**
  * Makes saving a spot onto a saved shot fail in IndexedDB while `on`, as a write can
  * when iOS brings the app back from the background: the stat's `put` (setStatLocation)
  * throws inside its transaction. New stats are saved with `add`, so they still save.

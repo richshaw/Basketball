@@ -307,6 +307,27 @@ describe('TrackGameScreen', () => {
     await expectStrip('Steals: 1');
   });
 
+  it("says an Undo that didn't go through in a few words, and Try again takes back that stat", async () => {
+    const game = await newGame();
+    for (const type of ['stl', 'charge'] as const) await recordStat(game.id, type);
+    await renderTracking(game);
+    expect(statButton('Charge Taken')).toHaveAccessibleDescription('1 this game');
+    vi.spyOn(repo, 'deleteStat').mockRejectedValueOnce(new Error('Disk error'));
+
+    fireEvent.click(statButton('Undo last stat'));
+    // It couldn't be removed: it counts again, and the line says so, short enough to fit
+    // beside its button on the smallest iPhone (e2e/track-game.spec.ts checks it does).
+    await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't undo$/));
+    expect(statButton('Charge Taken')).toHaveAccessibleDescription('1 this game');
+    expect(await eventTypes(game.id)).toEqual(['stl', 'charge']);
+
+    // Try again: the Charge Taken is taken back this time.
+    await tapLineButton('Try again');
+    await waitFor(() => expect(lastAction()).toHaveTextContent('Removed Charge Taken'));
+    expect(statButton('Charge Taken')).not.toHaveAccessibleDescription();
+    expect(await eventTypes(game.id)).toEqual(['stl']);
+  });
+
   it('after a relaunch, the line offers to undo the latest saved stat', async () => {
     const game = await newGame();
     await recordStat(game.id, 'fg2_made');

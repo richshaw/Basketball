@@ -5,6 +5,7 @@ import { demoGameId, seedDemoData } from './support/data';
 import {
   expectAllSaved,
   failNextSaves,
+  failStatDeletes,
   failStatReads,
   lastAction,
   notSaved,
@@ -142,6 +143,14 @@ async function readFailed(page: Page) {
   await expect(page.getByRole('button', { name: 'Reload' })).toBeVisible();
 }
 
+/** Mid-game, an Undo that couldn't be done: the stat still counts, with Try again. */
+async function undoFailed(page: Page) {
+  await midGame(page);
+  await failStatDeletes(page, true);
+  await page.getByRole('button', { name: 'Undo last stat' }).tap();
+  await expect(lastAction(page)).toHaveText("Couldn't undo");
+}
+
 /** A finished game being corrected: one more foul puts her in foul trouble (4). */
 async function finishedGame(page: Page) {
   await page.goto('./');
@@ -228,6 +237,8 @@ const shots: Shot[] = [
   },
   { name: 'read-failed', device: IPHONE, capture: readFailed },
   { name: 'read-failed-se', device: IPHONE_SE, capture: readFailed },
+  { name: 'undo-failed-se', device: IPHONE_SE, capture: undoFailed },
+  { name: 'undo-failed-se-no-court', device: IPHONE_SE, shotChart: false, capture: undoFailed },
   {
     name: 'not-saved-se',
     device: IPHONE_SE,

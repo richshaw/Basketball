@@ -198,6 +198,8 @@ export type Removal =
 
 /** A stat that Undo (or the log) is taking back. */
 export interface TakingBack {
+  /** Its stat's id: undo() it again to try again, if its removal failed. */
+  readonly id: string;
   readonly type: StatType;
   /**
    * The tap was taken back at once (it no longer counts): true for a tap not
@@ -837,7 +839,7 @@ export class TrackingSession implements UnsavedTapHolder {
       // Taken back already: the same outcome (and another go at removing its stat, if
       // that failed).
       if (record.orphan) record.removal = this.removeOrphan(record);
-      return { type, immediate: false, removal: record.removal ?? Promise.resolve('removed') };
+      return { id, type, immediate: false, removal: record.removal ?? Promise.resolve('removed') };
     }
     const confirmed = record.status === 'saved';
     record.undone = true;
@@ -850,7 +852,7 @@ export class TrackingSession implements UnsavedTapHolder {
     const forgets = this.forgets;
     this.emit();
     record.removal = record.settled.then(() => this.finishTakingBack(record, spot, forgets));
-    return { type, immediate: !confirmed, removal: record.removal };
+    return { id, type, immediate: !confirmed, removal: record.removal };
   }
 
   private finishTakingBack(
@@ -894,7 +896,7 @@ export class TrackingSession implements UnsavedTapHolder {
     this.closeSpot();
     const record = this.taps.find((each) => each.stat.id === stat.id);
     if (record) return this.takeBack(record);
-    return { type: stat.type, immediate: false, removal: this.removeStat(stat.id) };
+    return { id: stat.id, type: stat.type, immediate: false, removal: this.removeStat(stat.id) };
   }
 
   /** The most recent stat tapped before `before`: a tap that counts, or a saved stat. */
@@ -941,7 +943,7 @@ export class TrackingSession implements UnsavedTapHolder {
       while (item) {
         const taking = isTapRecord(item)
           ? this.takeBack(item)
-          : { type: item.type, immediate: false, removal: this.removeStat(item.id) };
+          : { id: item.id, type: item.type, immediate: false, removal: this.removeStat(item.id) };
         if (taking.immediate) return taking;
         const removal = await taking.removal;
         if (removal !== 'gone') return { ...taking, removal: Promise.resolve(removal) };
