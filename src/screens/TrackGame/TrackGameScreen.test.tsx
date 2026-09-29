@@ -1174,6 +1174,82 @@ describe('TrackGameScreen', () => {
       expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
     });
 
+    it("doesn't offer Reload while an Undo isn't done: after a reload, the stat would count again", async () => {
+      const game = await newGame();
+      await renderTracking(game);
+      const savedTypes = async () =>
+        (await db.events.where('gameId').equals(game.id).toArray()).map((event) => event.type);
+      // Reads fail from now on, and the 3PT Made's write lands but the page hears it failed.
+      vi.spyOn(repo, 'getGameEvents').mockRejectedValue(lost());
+      const { recordStat: save } = repo;
+      vi.spyOn(repo, 'recordStat').mockImplementationOnce(async (...args) => {
+        await save(...args);
+        throw lost();
+      });
+      fireEvent.click(statButton('3PT Made'));
+      expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+      await waitFor(() => expect(lastAction()).toHaveTextContent('3PT Made not saved'));
+
+      // Removing it fails too. The line says it's removed, and it no longer counts, but
+      // its stat is saved, and only this page knows to remove it.
+      const deletes = vi.spyOn(repo, 'deleteStat').mockRejectedValue(lost());
+      await tapLineButton();
+      expect(lastAction()).toHaveTextContent('Removed 3PT Made');
+      await expectStrip('3-pointers: 0 of 0');
+      await waitFor(() => expect(deletes).toHaveBeenCalled());
+      expect(await savedTypes()).toEqual(['fg3_made']);
+      expect(screen.getByText('Keep the app open until your taps are saved.')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+
+      // Removing works again, and the app comes back into view: it's removed, and a
+      // reload would lose nothing (the stats still can't be read).
+      deletes.mockRestore();
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(await screen.findByRole('button', { name: 'Reload' })).toBeInTheDocument();
+      expect(screen.getByText('Your taps are kept on this phone.')).toBeInTheDocument();
+      expect(await savedTypes()).toEqual([]);
+      await expectStrip('3-pointers: 0 of 0');
+    });
+
+    it("doesn't offer Reload while another game has a tap that's neither saved nor kept", async () => {
+      const gameA = await newGame({ opponent: 'Alpha' });
+      const gameB = await newGame({ opponent: 'Bravo' });
+      const { router } = await renderTracking(gameA);
+      // localStorage is full and saves fail: game A's Steal lives only in memory.
+      const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      });
+      const failing = vi.spyOn(repo, 'recordStat').mockRejectedValue(lost());
+      fireEvent.click(statButton('Steal'));
+      expect(await screen.findByRole('alert')).toHaveTextContent("It's not kept on this phone.");
+
+      // On to game B's live screen, where reading then fails.
+      await act(() => router.navigate(paths.trackGame(gameB.id)));
+      await screen.findByRole('heading', { name: 'vs Bravo' });
+      vi.spyOn(repo, 'getGame').mockRejectedValue(lost());
+      await act(() => setCurrentPeriod(gameB.id, 2));
+      expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+      // A reload would lose game A's Steal.
+      expect(screen.getByText('Keep the app open until your taps are saved.')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+
+      // The app-wide retry saves it: now a reload would lose nothing (the screen says so
+      // with its next read).
+      full.mockRestore();
+      failing.mockRestore();
+      await act(() => retryPendingStats());
+      expect(await eventTypes(gameA.id)).toEqual(['stl']);
+      expect(
+        await screen.findByRole(
+          'button',
+          { name: 'Reload' },
+          { timeout: (READ_RETRY_DELAYS_MS[0] ?? 0) + 2000 },
+        ),
+      ).toBeInTheDocument();
+    });
+
     it('shows the error screen if even the first read fails: there is nothing to keep yet', async () => {
       const game = await newGame();
       vi.spyOn(repo, 'getGame').mockRejectedValue(lost());

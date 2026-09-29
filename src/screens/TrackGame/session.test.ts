@@ -774,6 +774,71 @@ describe('TrackingSession', () => {
     });
   });
 
+  describe('reloadSafe (whether Reload may be offered)', () => {
+    it('holds while every tap not saved yet is kept on the phone, and not while one is not', async () => {
+      const { session, save, fail } = setUp();
+      const reloadSafe = () => session.getSnapshot().reloadSafe;
+      expect(reloadSafe()).toBe(true);
+      session.record('stl');
+      fail(0);
+      await flush();
+      expect(reloadSafe()).toBe(true);
+
+      const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      });
+      session.record('ast'); // (retries the Steal first: save #1)
+      expect(reloadSafe()).toBe(false);
+      full.mockRestore();
+      save(2);
+      await flush();
+      expect(reloadSafe()).toBe(true);
+      expect(session.reloadSafe()).toBe(true);
+    });
+
+    it("doesn't hold while a tap is being taken back, nor after its removal failed", async () => {
+      const { session, land, fail, failDeletes, storedTypes } = setUp();
+      const reloadSafe = () => session.getSnapshot().reloadSafe;
+      const foul = session.record('foul');
+      land(0); // it landed...
+      fail(0); // ...but the page heard it failed
+      await flush();
+      failDeletes(true);
+      const taking = session.undo(foul);
+      expect(reloadSafe()).toBe(false);
+      // Said to be removed, but only this page knows to remove its stat: a reload would
+      // bring it back.
+      expect(await taking.removal).toBe('removed');
+      expect(storedTypes()).toEqual(['foul']);
+      expect(reloadSafe()).toBe(false);
+
+      failDeletes(false);
+      session.retry();
+      await flush();
+      expect(storedTypes()).toEqual([]);
+      expect(reloadSafe()).toBe(true);
+    });
+
+    it("doesn't hold while a saved stat is being removed, or a period move saved", async () => {
+      const { session, store, sync, holdDeletes, releaseDeletes, moves } = setUp();
+      const reloadSafe = () => session.getSnapshot().reloadSafe;
+      store(event('steal', 'stl', 10));
+      sync();
+      holdDeletes();
+      const removal = session.undoLatest();
+      expect(reloadSafe()).toBe(false);
+      releaseDeletes();
+      expect(await outcome(removal)).toEqual(['stl', 'removed']);
+      expect(reloadSafe()).toBe(true);
+
+      const moved = session.movePeriod(2);
+      expect(reloadSafe()).toBe(false);
+      moves[0]?.answer.resolve(undefined);
+      expect(await moved).toBe(true);
+      expect(reloadSafe()).toBe(true);
+    });
+  });
+
   describe("when its game's data is deleted or replaced", () => {
     it('forgets every tap, and never saves one again', async () => {
       const { session, saves, fail, pendingTypes } = setUp();

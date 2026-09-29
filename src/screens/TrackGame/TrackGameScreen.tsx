@@ -7,6 +7,7 @@ import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useToast } from '@/components/Toast/toastContext';
 import { useSteadyGame, useSteadyGameEvents } from '@/data/hooks';
+import { isReloadSafe } from '@/data/pendingStats';
 import { endGame, type FinalScore } from '@/data/repo';
 import { computeStatLine, periodLabel } from '@/data/stats';
 import { MAX_PERIOD, type Game, type StatEvent, type StatType } from '@/data/types';
@@ -86,7 +87,7 @@ function Tracker({ game, events, readFailed }: TrackerProps) {
   // Done on a finished game: the stats that weren't saved, and whether it's busy.
   const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [session, { period, pending, unsaved, unsavedKept, allKept, retrying, takenBack }] =
+  const [session, { period, pending, unsaved, unsavedKept, reloadSafe, retrying, takenBack }] =
     useTrackingSession(game.id, game.currentPeriod, events);
   // A double tap on the grid's Undo or on Next acts once.
   const [undoGuard] = useState(() => createTapGuard());
@@ -311,7 +312,9 @@ function Tracker({ game, events, readFailed }: TrackerProps) {
           <StatStrip line={line} />
           {/* A tap not saved and not kept keeps its own row: it asks to keep the app open. */}
           {readFailed && (unsaved.length === 0 || unsavedKept) ? (
-            <ReadFailedNote kept={allKept} />
+            // Reload only while it would lose nothing: not this game's taps, Undos or
+            // period moves, nor another game's taps that only this page holds.
+            <ReadFailedNote canReload={reloadSafe && isReloadSafe()} />
           ) : (
             <UnsavedStats
               unsaved={unsaved}

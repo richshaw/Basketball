@@ -153,10 +153,11 @@ export interface SessionSnapshot {
   /** Every one of those is kept in the journal (on this phone, even across a relaunch). */
   readonly unsavedKept: boolean;
   /**
-   * Every tap that isn't confirmed saved (being saved or not) is kept in the journal, so
-   * a reload would lose none.
+   * Reloading the page now would lose nothing the session holds (see reloadSafe()):
+   * every tap that isn't confirmed saved is kept in the journal, and no Undo or period
+   * move is still being saved.
    */
-  readonly allKept: boolean;
+  readonly reloadSafe: boolean;
   /** Some of them are being saved again right now (not counting quiet background tries). */
   readonly retrying: boolean;
   /**
@@ -254,7 +255,7 @@ export class TrackingSession implements UnsavedTapHolder {
     const pending = this.taps.filter((record) => !record.undone);
     const unsaved = pending.filter((record) => record.hasFailed && record.status !== 'saved');
     const unsavedKept = unsaved.every((record) => record.kept);
-    const allKept = pending.every((record) => record.kept || record.status === 'saved');
+    const reloadSafe = this.reloadSafe();
     const retrying = unsaved.some((record) => record.status === 'saving' && !record.quiet);
     const takenBack = [
       ...new Set([
@@ -266,7 +267,7 @@ export class TrackingSession implements UnsavedTapHolder {
     if (
       previous?.period === this.period &&
       previous.unsavedKept === unsavedKept &&
-      previous.allKept === allKept &&
+      previous.reloadSafe === reloadSafe &&
       previous.retrying === retrying &&
       sameTaps(previous.pending, pending) &&
       sameTaps(previous.unsaved, unsaved) &&
@@ -279,7 +280,7 @@ export class TrackingSession implements UnsavedTapHolder {
       pending: pending.map(tapOf),
       unsaved: unsaved.map(tapOf),
       unsavedKept,
-      allKept,
+      reloadSafe,
       retrying,
       takenBack,
     };
@@ -449,6 +450,21 @@ export class TrackingSession implements UnsavedTapHolder {
     this.emit();
   }
 
+  /**
+   * Whether reloading the page now would lose nothing it holds: every tap that isn't
+   * confirmed saved is kept in the journal (which outlives the page), no tap or stat is
+   * still being taken back (after a reload, nothing would remove a stat whose tap's save
+   * landed after all, and the line has said it's removed), and no period move is still
+   * being saved (the next taps would land in the old period).
+   */
+  reloadSafe(): boolean {
+    return (
+      this.removals.size === 0 &&
+      this.movesInFlight === 0 &&
+      this.taps.every((record) => !record.undone && (record.kept || record.status === 'saved'))
+    );
+  }
+
   /** Whether it holds a tap not saved yet, or a taken-back one whose removal failed. */
   hasUnsaved(): boolean {
     return this.taps.some((record) => (record.undone ? record.orphan : record.status !== 'saved'));
@@ -514,19 +530,21 @@ export class TrackingSession implements UnsavedTapHolder {
     const underWay = this.removals.get(id);
     if (underWay) return underWay;
     this.removing.add(id);
-    // It stops counting at once, before the saved stats on screen catch up.
-    this.emit();
     const removal = attempt(() => this.deps.deleteStat(id))
       .then(
         (event): Removal => (event ? 'removed' : 'gone'),
         (): Removal => {
           this.removing.delete(id);
-          this.emit();
           return 'failed';
         },
       )
-      .finally(() => this.removals.delete(id));
+      .finally(() => {
+        this.removals.delete(id);
+        this.emit();
+      });
     this.removals.set(id, removal);
+    // It stops counting at once, before the saved stats on screen catch up.
+    this.emit();
     return removal;
   }
 
@@ -686,14 +704,13 @@ export class TrackingSession implements UnsavedTapHolder {
       () => {
         this.movesInFlight -= 1;
         this.savedPeriod = to;
+        this.emit();
         return true;
       },
       () => {
         this.movesInFlight -= 1;
-        if (this.movesInFlight === 0) {
-          this.period = this.savedPeriod;
-          this.emit();
-        }
+        if (this.movesInFlight === 0) this.period = this.savedPeriod;
+        this.emit();
         return false;
       },
     );
@@ -736,6 +753,7 @@ export function trackingSession(gameId: string, period: number): TrackingSession
     release = holdUnsavedTaps({
       gameId,
       hasUnsaved: () => session.hasUnsaved(),
+      reloadSafe: () => session.reloadSafe(),
       retryQuietly: () => session.retryQuietly(),
       saved: (id) => session.saved(id),
       forget: (id) => {

@@ -154,6 +154,12 @@ export interface UnsavedTapHolder {
   /** Whether it holds a tap that isn't saved yet (or a taken-back one to remove again). */
   hasUnsaved(): boolean;
   /**
+   * Whether reloading the page now would lose nothing it holds: each of its taps that
+   * isn't saved yet is kept in the journal, and nothing is still being taken back (a
+   * reload would forget to remove its stat) or moved to another period.
+   */
+  reloadSafe(): boolean;
+  /**
    * Tries again to save them without showing it on screen (only a save that lands
    * changes anything there). Settles once those tries are done; never rejects.
    */
@@ -205,6 +211,14 @@ export async function retryHeldTaps(): Promise<void> {
       }
     }),
   );
+}
+
+/**
+ * Whether reloading the page now would lose nothing held in memory, for any game (see
+ * UnsavedTapHolder.reloadSafe): what the journal keeps outlives the page anyway.
+ */
+export function isReloadSafe(): boolean {
+  return [...holders].every((holder) => holder.reloadSafe());
 }
 
 /**

@@ -45,7 +45,9 @@ function holdTaps(
   holder: Pick<UnsavedTapHolder, 'gameId' | 'hasUnsaved' | 'retryQuietly'> &
     Partial<UnsavedTapHolder>,
 ) {
-  cleanups.push(holdUnsavedTaps({ saved: () => {}, forget: () => () => {}, ...holder }));
+  cleanups.push(
+    holdUnsavedTaps({ reloadSafe: () => true, saved: () => {}, forget: () => () => {}, ...holder }),
+  );
 }
 
 /** Makes every save fail, as when WebKit has lost its IndexedDB connection. */
