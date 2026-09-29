@@ -98,6 +98,40 @@ describe('opening the database again once it closed for good', () => {
     expect(opens).toHaveBeenCalledTimes(4);
   });
 
+  it('gives up on a try that never answers, so the next ones still run', async () => {
+    setReopenDelaysForTests([50], 200);
+    const game = await createGame({
+      opponent: 'Central',
+      date: '2026-09-27',
+      periodFormat: 'quarters',
+    });
+    const changes = watchChanges();
+    // Lost: every open throws; the next read fails, and Dexie gives up.
+    const realOpen = indexedDB.open.bind(indexedDB);
+    let mode: 'throw' | 'hang' | 'work' = 'throw';
+    vi.spyOn(indexedDB, 'open').mockImplementation((name: string, version?: number) => {
+      if (mode === 'throw') throw lost();
+      // Never fires success or error (as WebKit's open can, once in a while).
+      if (mode === 'hang') return {} as IDBOpenDBRequest;
+      return realOpen(name, version);
+    });
+    db.close({ disableAutoOpen: false });
+    await getGame(game.id).catch(() => undefined);
+    await vi.waitFor(() => expect(changes).toEqual(['closed']));
+
+    // The next try's open never answers. Then the connection is really back, and the app
+    // comes back into view: a try that answers opens it.
+    mode = 'hang';
+    await sleep(150);
+    mode = 'work';
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await vi.waitFor(() => expect(changes).toEqual(['closed', 'reopened']), { timeout: 2000 });
+    expect(db.isOpen()).toBe(true);
+    expect(await getGame(game.id)).toEqual(game);
+  });
+
   it('leaves a database that opens again by itself alone', async () => {
     const opens = vi.spyOn(db, 'open');
     const changes = watchChanges();

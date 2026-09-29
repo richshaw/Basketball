@@ -14,7 +14,9 @@
  * does, after a failed open). It tries REOPEN_DELAYS_MS later (1 s, 3 s, 10 s, then every
  * 30 s), and at once when the app comes back into view. One try at a time, never while
  * the database is open or being opened, and never in the way of a tap: a tap is kept and
- * counted as ever, and its save simply fails (and is kept) until the database is back.
+ * counted as ever, and its save simply fails (and is kept) until the database is back. A
+ * try that doesn't answer within REOPEN_TRY_LIMIT_MS (WebKit's open can hang) is
+ * cancelled with db.close(), so the tries after it still run.
  * Once it is, every live query reads again (as Dexie does itself for a page restored from
  * the back-forward cache), and the watchers hear of it: the live game screen and the
  * app-wide retry save what they hold.
@@ -25,8 +27,16 @@ import { db } from './db';
 /** How long to wait before each try to open it again, in a row; the last from then on. */
 export const REOPEN_DELAYS_MS: readonly number[] = [1000, 3000, 10_000, 30_000];
 
+/**
+ * How long one try may take. WebKit's open can fail to answer at all, now and then: the
+ * try is then cancelled (db.close()), and the next one scheduled.
+ */
+export const REOPEN_TRY_LIMIT_MS = 10_000;
+
 /** The waits in use: REOPEN_DELAYS_MS, unless a test set shorter ones. */
 let delaysMs = REOPEN_DELAYS_MS;
+/** The limit in use: REOPEN_TRY_LIMIT_MS, unless a test set a shorter one. */
+let tryLimitMs = REOPEN_TRY_LIMIT_MS;
 
 /** What watchDatabase() hears: the database closed for good, or it's open again. */
 export type DatabaseChange = 'closed' | 'reopened';
@@ -98,6 +108,28 @@ function check(): void {
   tell('closed');
 }
 
+/** Opens it: open() waits for one being opened, and is done if it's open. */
+function openWithinLimit(): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const limit = setTimeout(() => {
+      // It never answered: cancelled, so the next try opens afresh (with auto-open off
+      // meanwhile, reads and writes fail at once, as they did while it was closed).
+      db.close();
+      reject(new Error('Opening the database again did not answer in time.'));
+    }, tryLimitMs);
+    db.open().then(
+      () => {
+        clearTimeout(limit);
+        resolve();
+      },
+      (error: unknown) => {
+        clearTimeout(limit);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
 async function tryToReopen(): Promise<void> {
   if (!recovering || trying) return;
   clearTimeout(timer);
@@ -105,11 +137,11 @@ async function tryToReopen(): Promise<void> {
   trying = true;
   try {
     // Only a database Dexie gave up on is closed first (an open one would lose the
-    // writes under way); open() waits for one being opened, and is done if it's open.
+    // writes under way).
     if (db.hasFailed()) db.close({ disableAutoOpen: false });
-    await db.open();
+    await openWithinLimit();
   } catch {
-    // Still closed: tried again later.
+    // Still closed, or the try never answered: tried again later.
   } finally {
     trying = false;
   }
@@ -134,9 +166,16 @@ db.on('close', () => {
   setTimeout(check, 0);
 });
 
-/** For tests: waits to use instead of REOPEN_DELAYS_MS, until stopReopeningDatabase(). */
-export function setReopenDelaysForTests(delays: readonly number[]): void {
+/**
+ * For tests: waits to use instead of REOPEN_DELAYS_MS (and a limit for each try instead
+ * of REOPEN_TRY_LIMIT_MS), until stopReopeningDatabase().
+ */
+export function setReopenDelaysForTests(
+  delays: readonly number[],
+  tryLimit = REOPEN_TRY_LIMIT_MS,
+): void {
   delaysMs = delays;
+  tryLimitMs = tryLimit;
 }
 
 /**
@@ -148,6 +187,7 @@ export function stopReopeningDatabase(): void {
   recovering = false;
   misses = 0;
   delaysMs = REOPEN_DELAYS_MS;
+  tryLimitMs = REOPEN_TRY_LIMIT_MS;
   clearTimeout(timer);
   timer = undefined;
   tryWhenAppShown(false);
