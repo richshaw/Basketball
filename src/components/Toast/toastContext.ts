@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useLayoutEffect } from 'react';
 
 /**
  * - `bottom` (default): above the home indicator, and above the tab bar and update
@@ -51,4 +51,23 @@ export function useToast(): Toaster {
   const toaster = useContext(ToastContext);
   if (!toaster) throw new Error('useToast() needs a <ToastProvider> above it (see App.tsx).');
   return toaster;
+}
+
+/** Keeps toasts off the screen until the function it returns is called (see useNoToasts). */
+export type BlockToasts = () => () => void;
+
+export const ToastBlockContext = createContext<BlockToasts | null>(null);
+
+/**
+ * For a screen that must never show a toast: the live game screen, whose own controls
+ * fill its bottom edge (it says everything on its last-action line instead). While a
+ * component calling it is mounted, the toast on screen goes at once as it mounts (one
+ * shown by the screen before it, like "Game deleted"), with any waiting, and a toast
+ * shown meanwhile, from anywhere, never appears. Toasts show again once it's gone.
+ */
+export function useNoToasts(): void {
+  const block = useContext(ToastBlockContext);
+  if (!block) throw new Error('useNoToasts() needs a <ToastProvider> above it (see App.tsx).');
+  // Before the screen is painted, so the toast never shows on it, not even for a frame.
+  useLayoutEffect(() => block(), [block]);
 }

@@ -395,6 +395,49 @@ test('the log deletes a stat once confirmed', async ({ page }) => {
   expect(await gameEventTypes(page, gameId)).toEqual(['stl', 'blk']);
 });
 
+test('a toast the screen before left never shows on the live game screen', async ({ page }) => {
+  const notifications = page.getByRole('status', { name: 'Notifications' });
+  await page.goto('./');
+  await seedDemoData(page, { liveGame: true });
+
+  // A game deleted on its report, then Resume game on Games at once.
+  await page.goto(appUrl(paths.gameReport(demoGameId(9))));
+  await page.getByRole('button', { name: 'Delete game' }).tap();
+  await page
+    .getByRole('alertdialog', { name: 'Delete this game?' })
+    .getByRole('button', { name: 'Delete game' })
+    .tap();
+  await expect(notifications).toHaveText('Game deleted');
+  await page.getByRole('link', { name: 'Resume game' }).tap();
+  await expect(page.getByRole('heading', { level: 1, name: 'vs Westfield' })).toBeVisible();
+  // Gone as the screen opens. (Checked once, not waited for: left alone, it would go
+  // after its 4 s, having sat over Log and End game all that time.)
+  expect(await notifications.textContent()).toBe('');
+
+  // A play deleted on a report, then Add or fix stats at once.
+  await page.goto(appUrl(paths.gameReport(demoGameId(10))));
+  const firstQuarter = page.getByRole('button', { name: /^1st quarter, / });
+  await firstQuarter.scrollIntoViewIfNeeded();
+  await firstQuarter.tap();
+  await page.getByRole('list', { name: '1st quarter plays' }).getByRole('button').first().tap();
+  await page
+    .getByRole('alertdialog', { name: 'Delete this stat?' })
+    .getByRole('button', { name: 'Delete stat' })
+    .tap();
+  await expect(notifications).toContainText('Deleted');
+  await page.getByRole('link', { name: 'Add or fix stats' }).tap();
+  await expect(page.getByText('Finished game', { exact: true })).toBeVisible();
+  expect(await notifications.textContent()).toBe('');
+  // Nothing covers the controls along the bottom.
+  const log = await page.getByRole('button', { name: 'Log' }).boundingBox();
+  if (!log) throw new Error('No Log button');
+  const hit = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.textContent,
+    { x: log.x + log.width / 2, y: log.y + log.height / 2 },
+  );
+  expect(hit).toBe('Log');
+});
+
 test('a stat tapped just after a sheet closes counts: the sheet takes no taps as it slides away', async ({
   page,
 }) => {

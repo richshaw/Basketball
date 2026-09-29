@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -10,7 +11,13 @@ import {
 import { createPortal } from 'react-dom';
 import { useOpenSheets } from '@/components/Sheet/sheetStack';
 import { cx } from '@/lib/cx';
-import { ToastContext, type Toaster, type ToastOptions } from './toastContext';
+import {
+  ToastBlockContext,
+  ToastContext,
+  type BlockToasts,
+  type Toaster,
+  type ToastOptions,
+} from './toastContext';
 import styles from './Toast.module.css';
 
 const DEFAULT_DURATION_MS = 4000;
@@ -78,25 +85,42 @@ const initialState: State = { current: null, leaving: false, next: null };
  * closes. So screen readers always announce new toasts. In a sheet a toast takes room
  * of its own under the header instead of floating, so it never covers the sheet's
  * content or buttons; and a sheet or dialog that opens clears the toast shown before
- * it (about the screen it now covers), with any waiting to follow it.
+ * it (about the screen it now covers), with any waiting to follow it. While a screen
+ * that shows no toasts is up (useNoToasts: the live game screen), there's none at all.
  */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const lastId = useRef(0);
   const actedOn = useRef<number | null>(null);
   const toastRef = useRef<HTMLDivElement>(null);
+  // How many screens that show no toasts are up (see useNoToasts).
+  const blocks = useRef(0);
 
   const toaster = useMemo<Toaster>(
     () => ({
       show: (options) => {
         lastId.current += 1;
-        dispatch({ type: 'show', toast: { id: lastId.current, options } });
+        // Never shown, not even once that screen has gone: it was about something else.
+        if (blocks.current === 0) {
+          dispatch({ type: 'show', toast: { id: lastId.current, options } });
+        }
         return lastId.current;
       },
       hide: (id) => dispatch({ type: 'hide', id }),
     }),
     [],
   );
+
+  const blockToasts = useCallback<BlockToasts>(() => {
+    blocks.current += 1;
+    dispatch({ type: 'clear' });
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      blocks.current -= 1;
+    };
+  }, []);
 
   const { current, leaving } = state;
 
@@ -193,7 +217,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   return (
     <ToastContext value={toaster}>
-      {children}
+      <ToastBlockContext value={blockToasts}>{children}</ToastBlockContext>
       <div ref={pageSlot} />
       {createPortal(viewport, region)}
     </ToastContext>

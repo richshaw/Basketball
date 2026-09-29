@@ -5,7 +5,7 @@ import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
-import { useToast } from '@/components/Toast/toastContext';
+import { useNoToasts } from '@/components/Toast/toastContext';
 import { useSteadyGame, useSteadyGameEvents, useSteadySettings } from '@/data/hooks';
 import { isReloadSafe } from '@/data/pendingStats';
 import { endGame, type FinalScore } from '@/data/repo';
@@ -36,6 +36,7 @@ import { TopBar } from './TopBar';
 import {
   countByType,
   createTapGuard,
+  END_GAME_FAILED,
   FOUL_TROUBLE_AT,
   FOULED_OUT_AT,
   spotNote,
@@ -75,7 +76,6 @@ interface TrackerProps {
 
 /** The live tracking UI for a loaded game. */
 function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
-  const toast = useToast();
   const confirm = useConfirm();
   const navigate = useNavigate();
   // Set as the screen opens: the court never comes or goes (moving the buttons) while
@@ -259,9 +259,9 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
       const result = await session.undo(event).removal;
       if (result === 'removed') show({ message: `Deleted ${what}`, tone: 'muted' });
       else if (result === 'gone') show({ message: `${what} was already deleted`, tone: 'muted' });
-      else toast.show({ message: `Couldn't delete ${what}. Try again.` });
+      else show({ message: `Couldn't delete ${what}. Try again.`, tone: 'error' });
     },
-    [confirm, toast, show, session, periodFormat],
+    [confirm, show, session, periodFormat],
   );
 
   // End game: every stat is saved first, unless it's "End anyway" (kept stats are
@@ -279,14 +279,15 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
       try {
         await endGame(gameId, score);
       } catch (error) {
-        toast.show({ message: "Couldn't end the game. Try again." });
+        // (The end-game sheet, over the line, says so too.)
+        show({ message: END_GAME_FAILED, tone: 'error' });
         throw error;
       }
       // Ended, but "Keep tracking" was tapped meanwhile: stay, on the finished game.
       if (sheetTurn.current === turn) await navigate(paths.gameReport(gameId), { replace: true });
       return null;
     },
-    [gameId, navigate, session, toast],
+    [gameId, navigate, session, show],
   );
 
   // Done, on a finished game: the same, with its own "not saved yet" sheet.
@@ -462,6 +463,8 @@ function GameNotFound() {
  * again on its own.
  */
 export function TrackGameScreen() {
+  // No toast ever covers the bottom row of buttons: the line says everything.
+  useNoToasts();
   const { gameId } = useParams();
   const game = useSteadyGame(gameId);
   const events = useSteadyGameEvents(gameId);

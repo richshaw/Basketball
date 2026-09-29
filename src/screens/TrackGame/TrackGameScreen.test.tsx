@@ -541,6 +541,65 @@ describe('TrackGameScreen', () => {
     expect(notifications()).toBeEmptyDOMElement();
   });
 
+  it("says on the line, never in a toast, when a stat couldn't be deleted from the log", async () => {
+    const game = await newGame();
+    await recordStat(game.id, 'stl');
+    const { user } = await renderTracking(game);
+    vi.spyOn(repo, 'deleteStat').mockRejectedValueOnce(new Error('Connection lost'));
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    const sheet = screen.getByRole('dialog', { name: 'Stat log' });
+    await user.click(within(sheet).getByRole('button', { name: /^Steal/ }));
+    const confirm = screen.getByRole('alertdialog', { name: 'Delete Steal (Q1)?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() =>
+      expect(lastAction()).toHaveTextContent("Couldn't delete Steal (Q1). Try again."),
+    );
+    expect(notifications()).toBeEmptyDOMElement();
+    expect(await eventTypes(game.id)).toEqual(['stl']);
+  });
+
+  it("says in the sheet and on the line, never in a toast, when the game couldn't be ended", async () => {
+    const game = await newGame();
+    const { user } = await renderTracking(game);
+    vi.spyOn(repo, 'endGame').mockRejectedValueOnce(new Error('Connection lost'));
+
+    await user.click(screen.getByRole('button', { name: 'End game' }));
+    const sheet = screen.getByRole('dialog', { name: 'Final score' });
+    await user.click(within(sheet).getByRole('button', { name: 'End game' }));
+
+    // The sheet covers the line, so it says so itself...
+    await waitFor(() =>
+      expect(within(sheet).getByRole('alert')).toHaveTextContent(
+        "Couldn't end the game. Try again.",
+      ),
+    );
+    expect(notifications()).toBeEmptyDOMElement();
+    // ...and the line still does once the sheet is closed.
+    await user.click(within(sheet).getByRole('button', { name: 'Keep tracking' }));
+    expect(lastAction()).toHaveTextContent("Couldn't end the game. Try again.");
+    expect((await getGame(game.id))?.status).toBe('live');
+  });
+
+  it('never shows a toast: the one the screen before left goes as it opens', async () => {
+    // Deleting a play on a finished game's report says so in a toast...
+    const game = await newGame();
+    await recordStat(game.id, 'stl');
+    await recordStat(game.id, 'ast');
+    await endGame(game.id, { teamScore: 40, opponentScore: 31 });
+    const { user } = renderRoute(paths.gameReport(game.id));
+    await user.click(await screen.findByRole('button', { name: /Assist/ }));
+    const confirm = screen.getByRole('alertdialog', { name: 'Delete this stat?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Delete stat' }));
+    await waitFor(() => expect(notifications()).toHaveTextContent('Deleted Assist'));
+
+    // ...and "Add or fix stats" right after opens the live screen without it.
+    await user.click(screen.getByRole('link', { name: 'Add or fix stats' }));
+    await screen.findByRole('group', { name: 'Record a stat' });
+    expect(notifications()).toBeEmptyDOMElement();
+  });
+
   it('says so when the log is empty', async () => {
     const game = await newGame();
     const { user } = await renderTracking(game);

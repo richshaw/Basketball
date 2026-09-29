@@ -109,6 +109,9 @@ export function notSavedMessage(notSaved: NotSaved): string {
   return `${notSavedTitle(notSaved)}. ${unsavedNote(notSaved.count, notSaved.kept)}`;
 }
 
+/** What the end-game sheet, and the line under it, say when the game couldn't be ended. */
+export const END_GAME_FAILED = "Couldn't end the game. Try again.";
+
 /** Overtimes the period picker always offers after regulation. */
 const OVERTIMES_OFFERED = 4;
 
