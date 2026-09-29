@@ -176,6 +176,7 @@ const shots: Shot[] = [
   { name: 'spot-to-mark', device: IPHONE, capture: spotToMark },
   { name: 'spot-marked', device: IPHONE, capture: spotMarked },
   { name: 'spot-marked-se', device: IPHONE_SE, capture: spotMarked },
+  { name: 'spot-marked-pro-max', device: IPHONE_PRO_MAX, capture: spotMarked },
   {
     name: 'spot-beyond-arc',
     device: IPHONE,
