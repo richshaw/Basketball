@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
 import { demoGameId, seedDemoData } from '@/data/demo';
-import { READ_RETRY_DELAYS_MS } from '@/data/hooks';
+import { READ_RETRY_DELAYS_MS, READ_WATCHDOG_MS } from '@/data/hooks';
 import { replayPendingStats, retryPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
 import { addPendingStat, listPendingStats, newPendingStat } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
@@ -1248,6 +1248,26 @@ describe('TrackGameScreen', () => {
           { timeout: (READ_RETRY_DELAYS_MS[0] ?? 0) + 2000 },
         ),
       ).toBeInTheDocument();
+    });
+
+    it('reads again if the first read never answers (Dexie drops an aborted one without a word)', async () => {
+      const game = await newGame();
+      const reads = vi
+        .spyOn(repo, 'getGame')
+        .mockRejectedValueOnce(new DOMException('The transaction was aborted.', 'AbortError'));
+      renderRoute(paths.trackGame(game.id));
+      await waitFor(() => expect(reads).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole('group', { name: 'Record a stat' })).toBeNull();
+
+      expect(
+        await screen.findByRole(
+          'group',
+          { name: 'Record a stat' },
+          { timeout: READ_WATCHDOG_MS + 2000 },
+        ),
+      ).toBeInTheDocument();
+      expect(readNote()).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull();
     });
 
     it('shows the error screen if even the first read fails: there is nothing to keep yet', async () => {

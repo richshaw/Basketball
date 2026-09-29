@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   READ_RETRY_DELAYS_MS,
+  READ_WATCHDOG_MS,
   useAllEvents,
   useGame,
   useGameEvents,
@@ -173,6 +174,28 @@ describe('steady reads (the live game screen)', () => {
     });
     await act(() => endGame(game.id));
     await waitFor(() => expect(result.current.value?.status).toBe('final'));
+  });
+
+  it('read again when a read never answers (as Dexie does with an aborted one)', async () => {
+    const game = await newGame();
+    const { result } = renderHook(() => useSteadyGame(game.id));
+    await waitFor(() => expect(result.current.value?.status).toBe('live'));
+
+    // Reading the game again after it ends is aborted: Dexie gives neither a result nor
+    // an error, so nothing says the game on screen is out of date.
+    const reads = vi
+      .spyOn(repo, 'getGame')
+      .mockRejectedValueOnce(new DOMException('The transaction was aborted.', 'AbortError'));
+    await act(() => endGame(game.id));
+    await waitFor(() => expect(reads).toHaveBeenCalledTimes(1));
+    expect(result.current).toMatchObject({ failed: false, value: { status: 'live' } });
+
+    // It's read again a moment later.
+    await waitFor(() => expect(result.current.value?.status).toBe('final'), {
+      timeout: READ_WATCHDOG_MS + 2000,
+    });
+    expect(result.current.failed).toBe(false);
+    expect(reads).toHaveBeenCalledTimes(2);
   });
 
   it('say "loading" (and not the other game) after switching games, and "not found" as null', async () => {

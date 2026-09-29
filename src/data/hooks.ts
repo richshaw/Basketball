@@ -7,7 +7,7 @@
  */
 import { liveQuery } from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   getAllEvents,
   getGame,
@@ -105,6 +105,15 @@ export interface SteadyRead<T> {
  */
 export const READ_RETRY_DELAYS_MS: readonly number[] = [1000, 3000, 10_000];
 
+/**
+ * How long a read may go unanswered before it's read again (twice as long each time in
+ * a row, up to READ_WATCHDOG_MAX_MS). Dexie's liveQuery drops some failures without a
+ * word (an AbortError or a DatabaseClosedError: neither a result nor an error comes
+ * back), which would otherwise leave the screen blank, or out of date, for good.
+ */
+export const READ_WATCHDOG_MS = 3000;
+const READ_WATCHDOG_MAX_MS = 30_000;
+
 interface SteadyState<K, T> {
   key: K;
   hasValue: boolean;
@@ -120,28 +129,56 @@ interface SteadyState<K, T> {
  * replace the screen, e.g. once WebKit loses its IndexedDB connection in the
  * background). The last good result stays, with `failed` set, and the read is tried
  * again when the app comes back into view and on a timer (Dexie reopens a lost
- * connection on the next query), never by reloading the page.
+ * connection on the next query), never by reloading the page. A read that doesn't
+ * answer at all is read again too (READ_WATCHDOG_MS).
  */
 function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): SteadyRead<T> {
-  // Moves on to read again after a failure (a new live query).
+  // Moves on to read again after a failure, or a read that never answered (a new live
+  // query).
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<SteadyState<K, T>>(() => ({
     key,
     hasValue: false,
     failures: 0,
   }));
+  // Reads in a row that never answered: how far the watchdog has backed off.
+  const unanswered = useRef(0);
 
   useEffect(() => {
-    const subscription = liveQuery(() => query(key)).subscribe({
-      next: (value) => setState({ key, hasValue: true, value, failures: 0 }),
-      error: (error: unknown) =>
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const answered = () => {
+      clearTimeout(watchdog);
+      watchdog = undefined;
+      unanswered.current = 0;
+    };
+    const subscription = liveQuery(() => {
+      // Each run (the first, and again whenever its data changes) must answer in time,
+      // or it's read again.
+      clearTimeout(watchdog);
+      const wait = Math.min(READ_WATCHDOG_MS * 2 ** unanswered.current, READ_WATCHDOG_MAX_MS);
+      watchdog = setTimeout(() => {
+        unanswered.current += 1;
+        setAttempt((count) => count + 1);
+      }, wait);
+      return query(key);
+    }).subscribe({
+      next: (value) => {
+        answered();
+        setState({ key, hasValue: true, value, failures: 0 });
+      },
+      error: (error: unknown) => {
+        answered();
         setState((current) =>
           Object.is(current.key, key)
             ? { ...current, error, failures: current.failures + 1 }
             : { key, hasValue: false, error, failures: 1 },
-        ),
+        );
+      },
     });
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(watchdog);
+      subscription.unsubscribe();
+    };
   }, [key, query, attempt]);
 
   const current = Object.is(state.key, key) ? state : undefined;
