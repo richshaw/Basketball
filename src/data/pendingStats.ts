@@ -28,7 +28,13 @@
 import { isRealPoint } from '@/lib/court';
 import { compareIds, newId } from '@/lib/id';
 import { nextTimestamp } from './db';
-import { removeJournalEntries } from './journal';
+import {
+  listJournalEntries,
+  parseJournalEntry,
+  removeJournalEntries,
+  removeJournalEntry,
+  writeJournalEntry,
+} from './journal';
 import { forgetPendingRemovals, listPendingRemovals } from './pendingRemovals';
 import { forgetPendingSpots, listPendingSpots } from './pendingSpots';
 import { isFieldGoalType } from './stats';
@@ -76,21 +82,12 @@ export function newPendingStat(
  * memory.
  */
 export function addPendingStat(stat: PendingStat): boolean {
-  try {
-    localStorage.setItem(KEY_PREFIX + stat.id, JSON.stringify(stat));
-    return true;
-  } catch {
-    return false;
-  }
+  return writeJournalEntry(KEY_PREFIX + stat.id, stat);
 }
 
 /** Forgets a tap: it's saved, or it was undone. */
 export function removePendingStat(id: string): void {
-  try {
-    localStorage.removeItem(KEY_PREFIX + id);
-  } catch {
-    // Blocked storage: nothing could have been kept there.
-  }
+  removeJournalEntry(KEY_PREFIX + id);
 }
 
 /**
@@ -107,15 +104,9 @@ export function isPendingStat(id: string): boolean | undefined {
 
 /** One entry, or undefined if it isn't a tap this version can save. */
 function parseEntry(key: string, text: string | null): PendingStat | undefined {
-  if (text === null) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (typeof value !== 'object' || value === null) return undefined;
-  const { id, gameId, type, period, at, location } = value as Record<string, unknown>;
+  const value = parseJournalEntry(text);
+  if (!value) return undefined;
+  const { id, gameId, type, period, at, location } = value;
   // The checks its stat gets when it's saved, so a kept tap can always be saved.
   const checked = statEventSchema.safeParse({ id, gameId, type, period, createdAt: at });
   if (!checked.success || key !== KEY_PREFIX + checked.data.id) return undefined;
@@ -138,18 +129,9 @@ function parseEntry(key: string, text: string | null): PendingStat | undefined {
  * can't read is skipped but left alone (a newer version of the app may have kept it).
  */
 export function listPendingStats(gameId?: string): PendingStat[] {
-  const stats: PendingStat[] = [];
-  try {
-    for (let index = 0; index < localStorage.length; index++) {
-      const key = localStorage.key(index);
-      if (!key?.startsWith(KEY_PREFIX)) continue;
-      const stat = parseEntry(key, localStorage.getItem(key));
-      if (stat && (gameId === undefined || stat.gameId === gameId)) stats.push(stat);
-    }
-  } catch {
-    // Blocked storage: nothing could have been kept there.
-  }
-  return stats.sort((a, b) => a.at - b.at || compareIds(a.id, b.id));
+  return listJournalEntries(KEY_PREFIX, parseEntry, gameId).sort(
+    (a, b) => a.at - b.at || compareIds(a.id, b.id),
+  );
 }
 
 // ---------------------------------------------------------------------------

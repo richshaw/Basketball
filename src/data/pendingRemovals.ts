@@ -22,7 +22,14 @@
  * (forgetPendingStats in pendingStats.ts), so no later restore loses a stat to one.
  */
 import { compareIds } from '@/lib/id';
-import { removeJournalEntries, type RemovedEntries } from './journal';
+import {
+  listJournalEntries,
+  parseJournalEntry,
+  removeJournalEntries,
+  removeJournalEntry,
+  writeJournalEntry,
+  type RemovedEntries,
+} from './journal';
 import type { StatType } from './types';
 import { statEventSchema } from './validation';
 
@@ -46,34 +53,19 @@ const KEY_PREFIX = 'hoop-stats.pendingRemoval.';
  */
 export function addPendingRemoval(removal: PendingRemoval): boolean {
   const { id, gameId, type, period, at } = removal;
-  try {
-    localStorage.setItem(KEY_PREFIX + id, JSON.stringify({ id, gameId, type, period, at }));
-    return true;
-  } catch {
-    return false;
-  }
+  return writeJournalEntry(KEY_PREFIX + id, { id, gameId, type, period, at });
 }
 
 /** Forgets a kept removal: its stat is gone (or stays after all). */
 export function removePendingRemoval(id: string): void {
-  try {
-    localStorage.removeItem(KEY_PREFIX + id);
-  } catch {
-    // Blocked storage: nothing could have been kept there.
-  }
+  removeJournalEntry(KEY_PREFIX + id);
 }
 
 /** One entry, or undefined if it isn't one this version can read. */
 function parseEntry(key: string, text: string | null): PendingRemoval | undefined {
-  if (text === null) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (typeof value !== 'object' || value === null) return undefined;
-  const { id, gameId, type, period, at } = value as Record<string, unknown>;
+  const value = parseJournalEntry(text);
+  if (!value) return undefined;
+  const { id, gameId, type, period, at } = value;
   const checked = statEventSchema.safeParse({ id, gameId, type, period, createdAt: at });
   if (!checked.success || key !== KEY_PREFIX + checked.data.id) return undefined;
   return {
@@ -90,18 +82,9 @@ function parseEntry(key: string, text: string | null): PendingRemoval | undefine
  * can't read is skipped but left alone.
  */
 export function listPendingRemovals(gameId?: string): PendingRemoval[] {
-  const removals: PendingRemoval[] = [];
-  try {
-    for (let index = 0; index < localStorage.length; index++) {
-      const key = localStorage.key(index);
-      if (!key?.startsWith(KEY_PREFIX)) continue;
-      const removal = parseEntry(key, localStorage.getItem(key));
-      if (removal && (gameId === undefined || removal.gameId === gameId)) removals.push(removal);
-    }
-  } catch {
-    // Blocked storage: nothing could have been kept there.
-  }
-  return removals.sort((a, b) => a.at - b.at || compareIds(a.id, b.id));
+  return listJournalEntries(KEY_PREFIX, parseEntry, gameId).sort(
+    (a, b) => a.at - b.at || compareIds(a.id, b.id),
+  );
 }
 
 /**

@@ -7,7 +7,7 @@
  * a removal), so a tap saved twice is still one stat.
  */
 import { waitAtMost } from '@/lib/wait';
-import { listPendingRemovals, removePendingRemoval } from './pendingRemovals';
+import { listPendingRemovals } from './pendingRemovals';
 import { getPendingSpot, listPendingSpots, removePendingSpot } from './pendingSpots';
 import {
   hasPendingStats,
@@ -104,9 +104,8 @@ export async function replayPendingStats(): Promise<ReplayResult> {
 async function replayPendingRemovals(result: ReplayResult): Promise<void> {
   for (const { id } of listPendingRemovals()) {
     try {
+      // (Once the stat is gone, or found gone, deleteStat forgets the kept removal.)
       const removed = await deleteStat(id);
-      // (deleteStat forgets it too, once the stat is gone.)
-      removePendingRemoval(id);
       if (removed) result.saved += 1;
       else result.dropped += 1;
     } catch {
