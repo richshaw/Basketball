@@ -161,6 +161,8 @@ describe('steady reads (the live game screen)', () => {
     expect(result.current.error).toBeUndefined();
   });
 
+  // Waits out the real retry delays (1 s, then 3 s): longer than Vitest's 5 s default
+  // allows for, on a busy machine.
   it('read again on their own, sooner at first, and keep following changes after', async () => {
     const game = await newGame();
     const { result } = renderHook(() => useSteadyGame(game.id));
@@ -178,7 +180,7 @@ describe('steady reads (the live game screen)', () => {
     });
     await act(() => endGame(game.id));
     await waitFor(() => expect(result.current.value?.status).toBe('final'));
-  });
+  }, 15_000);
 
   it('read again when a read never answers (as Dexie does with an aborted one)', async () => {
     const game = await newGame();
