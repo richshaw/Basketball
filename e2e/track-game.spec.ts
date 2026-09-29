@@ -1,11 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, emulateIPhoneSafeArea, expectRoute, IPHONE_SAFE_BOTTOM } from './support/app';
-import { DEMO_LIVE_GAME_ID, demoGameId, exportAll, seedDemoData } from './support/data';
+import { DEMO_LIVE_GAME_ID, demoGameId, exportAll, patchGames, seedDemoData } from './support/data';
 import {
   canLoseDatabaseConnection,
   doubleTap,
   expectStats,
+  failGameSaves,
   failNextSaves,
   failStatDeletes,
   failStatReads,
@@ -21,6 +22,7 @@ import {
   showPageAgain,
   startGame,
   statGrid,
+  tapCourt,
   tapStats,
 } from './support/tracking';
 
@@ -485,8 +487,98 @@ for (const [name, viewport] of [
         await expect(lastAction(page)).toHaveText('Removed Charge Taken');
         expect(await gameEventTypes(page, gameId)).toEqual(['deflection']);
       });
+
+      test('failed period changes and saves, and a stat gone from the log, fit the line whole', async ({
+        page,
+      }) => {
+        if (!court) await setShotChart(page, false);
+        const gameId = await startGame(page);
+        await tapStats(page, ['Charge Taken']);
+        await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['charge']);
+        // Deep into overtime: the next period, 10OT, is as wide as period names get.
+        await patchGames(page, { [gameId]: { currentPeriod: 13 } });
+        await page.goto('about:blank');
+        await page.goto(appUrl(paths.trackGame(gameId)));
+        await expect(page.getByRole('button', { name: 'Period 9OT' })).toBeVisible();
+
+        // A period change that can't be saved: the saved period stays, with Try again.
+        await failGameSaves(page, true);
+        await page.getByRole('button', { name: 'Next period' }).tap();
+        await expect(lastAction(page)).toHaveText("Couldn't go to 10OT");
+        await expect(lineButton(page, 'Try again')).toBeInViewport({ ratio: 1 });
+        expect(await lineShowsAll(page)).toBe(true);
+        await expect(page.getByRole('button', { name: 'Period 9OT' })).toBeVisible();
+        await failGameSaves(page, false);
+        await lineButton(page, 'Try again').tap();
+        await expect(lastAction(page)).toHaveText('Now in 10OT');
+        await expect(page.getByRole('button', { name: 'Period 10OT' })).toBeVisible();
+
+        // Its Undo, the same way.
+        await failGameSaves(page, true);
+        await expect(lineButton(page, 'Undo')).toBeEnabled();
+        await lineButton(page, 'Undo').tap();
+        await expect(lastAction(page)).toHaveText("Couldn't go to 9OT");
+        expect(await lineShowsAll(page)).toBe(true);
+        await failGameSaves(page, false);
+
+        // Saves that fail: the longest stat name, and a shot with its spot marked.
+        await failNextSaves(page, 1000);
+        await tapStats(page, ['Charge Taken']);
+        await expect(lastAction(page)).toHaveText('Charge Taken not saved');
+        expect(await lineShowsAll(page)).toBe(true);
+        if (court) {
+          await tapStats(page, ['3PT Miss']);
+          await tapCourt(page, { x: 6, y: 15 });
+          await expect(lastAction(page)).toContainText('3PT Miss not saved');
+          await expect(lastAction(page)).toContainText('Spot marked · inside the arc');
+          expect(await lineShowsAll(page)).toBe(true);
+        }
+        await failNextSaves(page, 0);
+        await showPageAgain(page);
+        await expect.poll(() => keptTaps(page)).toEqual([]);
+
+        // The log: the first Charge Taken (from Q1) turns out to be gone already (deleted in
+        // another tab, say), which the line says without its period.
+        const [first] = (await gameEvents(page, gameId)).filter((event) => event.type === 'charge');
+        if (!first) throw new Error('No Charge Taken');
+        await page.getByRole('button', { name: 'Log' }).tap();
+        const log = page.getByRole('dialog', { name: 'Stat log' });
+        await deleteBehindTheScreen(page, first.id);
+        await log.getByRole('button', { name: /^Charge Taken.*Q1/ }).tap();
+        await page
+          .getByRole('alertdialog', { name: 'Delete Charge Taken (Q1)?' })
+          .getByRole('button', { name: 'Delete' })
+          .tap();
+        await log.getByRole('button', { name: 'Close' }).tap();
+        await expect(lastAction(page)).toHaveText('Charge Taken was already deleted');
+        expect(await lineShowsAll(page)).toBe(true);
+      });
     });
   }
+}
+
+/**
+ * Deletes a stat straight from IndexedDB, where the screen doesn't see it: as another tab
+ * would, without this one hearing of it yet.
+ */
+async function deleteBehindTheScreen(page: Page, id: string) {
+  await page.evaluate(async (eventId) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('hoop-stats');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('Could not open the database'));
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction('events', 'readwrite');
+        transaction.objectStore('events').delete(eventId);
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error('Delete failed'));
+      });
+    } finally {
+      db.close();
+    }
+  }, id);
 }
 
 test('the log deletes a stat once confirmed', async ({ page }) => {

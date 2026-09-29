@@ -283,6 +283,29 @@ export async function failStatDeletes(page: Page, on: boolean) {
 }
 
 /**
+ * Makes saving the game itself fail in IndexedDB while `on` (moving to another period,
+ * say), as a write can when iOS brings the app back from the background: the game's
+ * `put` throws inside its transaction. (A stat's save writes the game too, so taps fail
+ * meanwhile as well.)
+ */
+export async function failGameSaves(page: Page, on: boolean) {
+  await page.evaluate((failing) => {
+    const state = window as unknown as { failGameSaves?: boolean };
+    if (state.failGameSaves === undefined) {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound by apply() below
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args) {
+        if (this.name === 'games' && state.failGameSaves) {
+          throw new DOMException('Simulated write failure', 'UnknownError');
+        }
+        return put.apply(this, args);
+      };
+    }
+    state.failGameSaves = failing;
+  }, on);
+}
+
+/**
  * Makes saving a spot onto a saved shot fail in IndexedDB while `on`, as a write can
  * when iOS brings the app back from the background: the stat's `put` (setStatLocation)
  * throws inside its transaction. New stats are saved with `add`, so they still save.

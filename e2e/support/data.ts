@@ -83,13 +83,16 @@ export interface GamePatch {
   season?: string;
   date?: string;
   opponent?: string;
+  /** 1-based; past regulation is overtime (e.g. 14 is 10OT in quarters). */
+  currentPeriod?: number;
 }
 
 /**
  * Changes stored games straight in IndexedDB, for states the demo data can't make
- * (a long season name, games in another year). Call it after `seedDemoData`, then
- * load the page afresh (e.g. `page.goto('about:blank')` and back) so the app reads
- * the change. Test data only: the app itself always writes through src/data/repo.ts.
+ * (a long season name, games in another year, deep overtime). Call it after
+ * `seedDemoData` (or `startGame`), then load the page afresh (e.g. `page.goto('about:blank')`
+ * and back) so the app reads the change. Test data only: the app itself always writes
+ * through src/data/repo.ts.
  */
 export async function patchGames(page: Page, patches: Record<string, GamePatch>): Promise<void> {
   await page.evaluate(async (byId) => {

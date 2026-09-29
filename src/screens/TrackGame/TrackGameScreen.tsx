@@ -206,30 +206,37 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
     return true;
   }, [session, show, takeBack, undoGuard]);
 
-  /** Moves to another period at once (stats tapped next land there), with an Undo. */
-  const moveTo = useCallback(
-    (to: number) => {
+  /**
+   * Moves to another period at once (stats tapped next land there), with an Undo. A move
+   * (or its Undo) that couldn't be saved puts the saved period back on screen, and the
+   * line says so with Try again for that move: short enough to fit beside its button on
+   * the smallest iPhone, even for a double-digit overtime.
+   */
+  const moveTo = useMemo(() => {
+    const move = (to: number): void => {
       const from = session.getSnapshot().period;
       if (to === from) return;
-      const toText = periodLabel(to, periodFormat);
-      const fromText = periodLabel(from, periodFormat);
-      const sayIfFailed = (message: string) => (moved: boolean) => {
-        if (!moved) show({ message, tone: 'error' });
+      const sayIfFailed = (target: number) => (moved: boolean) => {
+        if (moved) return;
+        show({
+          message: `Couldn't go to ${periodLabel(target, periodFormat)}`,
+          tone: 'error',
+          actionLabel: 'Try again',
+          onAction: () => move(target),
+        });
       };
-      void session.movePeriod(to).then(sayIfFailed(`Couldn't move to ${toText}. Try again.`));
+      void session.movePeriod(to).then(sayIfFailed(to));
       show({
-        message: `Now in ${toText}`,
+        message: `Now in ${periodLabel(to, periodFormat)}`,
         actionLabel: 'Undo',
         onAction: () => {
-          show({ message: `Back in ${fromText}`, tone: 'muted' });
-          void session
-            .movePeriod(from)
-            .then(sayIfFailed(`Couldn't go back to ${fromText}. Try again.`));
+          show({ message: `Back in ${periodLabel(from, periodFormat)}`, tone: 'muted' });
+          void session.movePeriod(from).then(sayIfFailed(from));
         },
       });
-    },
-    [session, show, periodFormat],
-  );
+    };
+    return move;
+  }, [session, show, periodFormat]);
 
   const nextPeriod = useCallback(() => {
     if (!nextGuard()) return;
@@ -260,8 +267,10 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
       // The log shows it's gone; the line says so once the log is closed.
       const result = await session.undo(event).removal;
       if (result === 'removed') show({ message: `Deleted ${what}`, tone: 'muted' });
-      else if (result === 'gone') show({ message: `${what} was already deleted`, tone: 'muted' });
-      else toast.show({ message: `Couldn't delete ${what}. Try again.` });
+      // (Without its period, to fit the line whole on the smallest iPhone.)
+      else if (result === 'gone') {
+        show({ message: `${statLabel(event.type)} was already deleted`, tone: 'muted' });
+      } else toast.show({ message: `Couldn't delete ${what}. Try again.` });
     },
     [confirm, toast, show, session, periodFormat],
   );

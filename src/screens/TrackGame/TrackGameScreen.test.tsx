@@ -463,6 +463,30 @@ describe('TrackGameScreen', () => {
     await waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(2));
   });
 
+  it("says a period change that couldn't be saved in a few words, with Try again for that move", async () => {
+    const game = await newGame();
+    await renderTracking(game);
+    vi.spyOn(repo, 'setCurrentPeriod').mockRejectedValueOnce(new Error('Disk error'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
+    // The saved period is back on screen, and the line says so, short enough to fit
+    // beside its button on the smallest iPhone (e2e/track-game.spec.ts checks it does).
+    await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't go to Q2$/));
+    expect(screen.getByRole('button', { name: 'Period Q1' })).toBeInTheDocument();
+    await tapLineButton('Try again');
+    await screen.findByRole('button', { name: 'Period Q2' });
+    expect(lastAction()).toHaveTextContent('Now in Q2');
+    await waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(2));
+
+    // Its Undo, the same way.
+    vi.spyOn(repo, 'setCurrentPeriod').mockRejectedValueOnce(new Error('Disk error'));
+    await tapLineButton('Undo');
+    await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't go to Q1$/));
+    expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
+    await tapLineButton('Try again');
+    await screen.findByRole('button', { name: 'Period Q1' });
+    await waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(1));
+  });
+
   it('a double tap on Next moves one period', async () => {
     const game = await newGame();
     await setCurrentPeriod(game.id, 3);
@@ -562,6 +586,24 @@ describe('TrackGameScreen', () => {
     // Said on the line (under the log), not in a toast that would outstay the log.
     await waitFor(() => expect(lastAction()).toHaveTextContent('Deleted 2PT Made (Q1)'));
     expect(notifications()).toBeEmptyDOMElement();
+  });
+
+  it("says a stat the log couldn't find any more was already deleted, short enough to fit the line", async () => {
+    const game = await newGame();
+    await setCurrentPeriod(game.id, 14);
+    await recordStat(game.id, 'charge');
+    const { user } = await renderTracking(game);
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    const sheet = screen.getByRole('dialog', { name: 'Stat log' });
+    // Deleted elsewhere (in another tab, say) a moment before.
+    vi.spyOn(repo, 'deleteStat').mockResolvedValueOnce(undefined);
+    await user.click(within(sheet).getByRole('button', { name: /^Charge Taken/ }));
+    const confirm = screen.getByRole('alertdialog', { name: 'Delete Charge Taken (10OT)?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
+    // Without its period, which would cut it off on an iPhone SE.
+    await waitFor(() =>
+      expect(lastAction()).toHaveTextContent(/^Charge Taken was already deleted$/),
+    );
   });
 
   it('says so when the log is empty', async () => {
