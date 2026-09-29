@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeStatLine, type StatLine } from '@/data/stats';
 import type { Game, StatType } from '@/data/types';
-import { buildGameRecap, gameOutcome, matchupLabel, recapTitle, resultLabel } from './recap';
+import { buildGameRecap, gameOutcome, recapTitle, resultLabel } from './recap';
 
 /** A stat line from counts of each stat type, e.g. `lineOf({ fg2_made: 2, ast: 1 })`. */
 function lineOf(counts: Partial<Record<StatType, number>>): StatLine {
@@ -46,15 +46,6 @@ const fullLine = lineOf({
   blk: 1,
   tov: 1,
   foul: 2,
-});
-
-describe('matchupLabel', () => {
-  it('says "vs" at home, on a neutral court or when unknown, and "@" away', () => {
-    expect(matchupLabel({ opponent: 'Central', homeAway: 'home' })).toBe('vs Central');
-    expect(matchupLabel({ opponent: 'Central', homeAway: 'neutral' })).toBe('vs Central');
-    expect(matchupLabel({ opponent: 'Central' })).toBe('vs Central');
-    expect(matchupLabel({ opponent: 'Central', homeAway: 'away' })).toBe('@ Central');
-  });
 });
 
 describe('gameOutcome', () => {

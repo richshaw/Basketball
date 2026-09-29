@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StatEvent, StatType } from '@/data/types';
-import { countPlays, formatClockTime, periodName, periodSummary, playByPlay } from './playByPlay';
+import { countPlays, periodName, periodSummary, playByPlay } from './playByPlay';
 
 let nextId = 0;
 function event(type: StatType, period: number, createdAt: number): StatEvent {
@@ -133,15 +133,5 @@ describe('periodName', () => {
     ]);
     expect(periodName(15, 'quarters')).toBe('11th overtime');
     expect(periodName(16, 'halves')).toBe('14th overtime');
-  });
-});
-
-describe('formatClockTime', () => {
-  it('shows local time on a 12-hour clock without AM/PM', () => {
-    expect(formatClockTime(new Date(2026, 8, 27, 18, 5).getTime())).toBe('6:05');
-    expect(formatClockTime(new Date(2026, 8, 27, 9, 41).getTime())).toBe('9:41');
-    expect(formatClockTime(new Date(2026, 8, 27, 0, 30).getTime())).toBe('12:30');
-    expect(formatClockTime(new Date(2026, 8, 27, 12, 0).getTime())).toBe('12:00');
-    expect(formatClockTime(new Date(2026, 8, 27, 23, 59).getTime())).toBe('11:59');
   });
 });

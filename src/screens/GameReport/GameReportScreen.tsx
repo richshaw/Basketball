@@ -18,6 +18,7 @@ import { shotChartSection, shotsFromEvents } from '@/data/shots';
 import { computeStatLine } from '@/data/stats';
 import type { Game, Player, StatEvent } from '@/data/types';
 import { formatGameDate } from '@/lib/format';
+import { gameTitle } from '@/lib/gameTitle';
 import { shareText } from '@/lib/share';
 import { paths } from '@/routes';
 import { HeadlineStats, HustleStats, ShootingStats } from './BoxScore';
@@ -26,7 +27,7 @@ import type { ScoreField } from './gameForm';
 import { GameSummary } from './GameSummary';
 import { PeriodTable } from './PeriodTable';
 import { PlayByPlay } from './PlayByPlay';
-import { buildGameRecap, matchupLabel, recapTitle } from './recap';
+import { buildGameRecap, recapTitle } from './recap';
 import { ReportSection } from './ReportSection';
 import styles from './GameReportScreen.module.css';
 
@@ -131,7 +132,7 @@ function GameReport({ game, events, player, askForSpots, onLeaving }: GameReport
   const shots = shotsFromEvents(events);
   const shotChart = shotChartSection(shots, askForSpots);
   const live = game.status === 'live';
-  const matchup = matchupLabel(game);
+  const matchup = gameTitle(game);
 
   const openEditor = (focusScore?: ScoreField) =>
     setEditor((current) => ({ open: true, session: current.session + 1, focusScore }));

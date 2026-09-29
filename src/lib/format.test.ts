@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   formatAvg,
+  formatClockTime,
   formatGameDate,
   formatMadeAttempted,
   formatPct,
@@ -105,6 +106,25 @@ describe('number formatting', () => {
   it('formats makes and attempts', () => {
     expect(formatMadeAttempted(5, 9)).toBe('5/9');
     expect(formatMadeAttempted(0, 0)).toBe('0/0');
+  });
+});
+
+describe('formatClockTime', () => {
+  it('shows local time on a 12-hour clock without AM/PM', () => {
+    expect(formatClockTime(new Date(2026, 8, 27, 18, 5).getTime())).toBe('6:05');
+    expect(formatClockTime(new Date(2026, 8, 27, 9, 41).getTime())).toBe('9:41');
+    expect(formatClockTime(new Date(2026, 8, 27, 0, 30).getTime())).toBe('12:30');
+    expect(formatClockTime(new Date(2026, 8, 27, 12, 0).getTime())).toBe('12:00');
+    expect(formatClockTime(new Date(2026, 8, 27, 23, 59).getTime())).toBe('11:59');
+  });
+
+  it('can add the seconds', () => {
+    const time = new Date(2026, 8, 27, 18, 5, 9).getTime();
+    expect(formatClockTime(time, { seconds: true })).toBe('6:05:09');
+    expect(formatClockTime(time, { seconds: false })).toBe('6:05');
+    expect(formatClockTime(new Date(2026, 8, 27, 0, 0, 0).getTime(), { seconds: true })).toBe(
+      '12:00:00',
+    );
   });
 });
 

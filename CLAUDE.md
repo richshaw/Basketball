@@ -161,7 +161,9 @@ The live game screen keeps every stat tap that isn't confirmed saved in a small 
 - `formatAvg(12.34)` gives '12.3' (rounded half up, so `formatAvg(17 / 20)` is '0.9').
 - `formatMadeAttempted(5, 9)` gives '5/9'.
 - `pad2(7)` gives '07' (e.g. for clock times).
+- `formatClockTime(event.createdAt)` gives '6:05', local time on a 12-hour clock without AM/PM (`{ seconds: true }` gives '6:05:09'): when a stat was recorded.
 - `formatPlayerName(player)`.
+- `gameTitle(game)` (`lib/gameTitle.ts`) gives 'vs Central', or '@ Central' for an away game: how a game is named everywhere.
 
 ### Backups, demo data and storage
 
