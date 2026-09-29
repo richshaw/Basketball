@@ -17,9 +17,9 @@
  * counted as ever, and its save simply fails (and is kept) until the database is back. A
  * try that doesn't answer within REOPEN_TRY_LIMIT_MS (WebKit's open can hang) is
  * cancelled with db.close(), so the tries after it still run.
- * Once it is, every live query reads again (as Dexie does itself for a page restored from
- * the back-forward cache), and the watchers hear of it: the live game screen and the
- * app-wide retry save what they hold.
+ * Once it is, every live query reads IndexedDB itself again, not Dexie's cached results
+ * (as Dexie does for a page restored from the back-forward cache), and the watchers hear
+ * of it: the live game screen and the app-wide retry save what they hold.
  */
 import { Dexie, RangeSet } from 'dexie';
 import { db } from './db';
@@ -154,9 +154,33 @@ async function tryToReopen(): Promise<void> {
   recovering = false;
   misses = 0;
   tryWhenAppShown(false);
-  // Every live query reads again: those that failed meanwhile were dropped without a word.
-  Dexie.on.storagemutated.fire({ all: new RangeSet(-Infinity, [[]]) });
+  readEverythingAgain();
   tell('reopened');
+}
+
+/**
+ * The event Dexie (4) listens to for changes made in this window by another copy of it:
+ * it drops the cached results of the queries a change touches, has their live queries
+ * read again, and tells no other tab.
+ */
+const DEXIE_CHANGED_HERE_EVENT = 'x-storagemutated-1';
+
+/**
+ * Has every live query read IndexedDB itself again, as Dexie does for a page restored
+ * from the back-forward cache (its pageshow handling): Dexie's cached results are
+ * dropped, so a save that landed while the database was closed (or that this page never
+ * heard of) shows, and reads that failed meanwhile, dropped without a word, are made
+ * again. Only this window: nothing changed for other tabs. (Dexie.on.storagemutated.fire
+ * would reuse the cached results, and tell every tab.)
+ */
+function readEverythingAgain(): void {
+  const everything = { all: new RangeSet(-Infinity, [[]]) };
+  if (typeof dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+    dispatchEvent(new CustomEvent(DEXIE_CHANGED_HERE_EVENT, { detail: everything }));
+  } else {
+    // (No window: nothing but this code to tell.)
+    Dexie.on.storagemutated.fire(everything);
+  }
 }
 
 // Dexie closes the database when an open fails, which is how it comes to be closed for

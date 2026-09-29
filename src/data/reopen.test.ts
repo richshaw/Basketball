@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { liveQuery } from 'dexie';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { db } from './db';
 import { useGames } from './hooks';
@@ -8,7 +9,7 @@ import {
   watchDatabase,
   type DatabaseChange,
 } from './reopen';
-import { createGame, getGame, listGames } from './repo';
+import { createGame, getGame, getGameEvents, listGames, recordStat } from './repo';
 
 const lost = () =>
   new DOMException(
@@ -36,6 +37,25 @@ function watchChanges(): DatabaseChange[] {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Writes an event through a raw connection of its own: Dexie, in this page, never hears. */
+async function addBehindDexie(event: object) {
+  const raw = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('hoop-stats');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('Could not open the database'));
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = raw.transaction('events', 'readwrite');
+      transaction.objectStore('events').put(event);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('Write failed'));
+    });
+  } finally {
+    raw.close();
+  }
+}
 
 beforeEach(() => {
   // Dexie warns as it works around a failed open; that's expected here.
@@ -142,6 +162,36 @@ describe('opening the database again once it closed for good', () => {
     expect(opens).toHaveBeenCalledTimes(1);
     expect(changes).toEqual([]);
     expect(db.isOpen()).toBe(true);
+  });
+
+  it("has live queries read IndexedDB again once it is open, not Dexie's cached results, telling no other tab", async () => {
+    setReopenDelaysForTests([30]);
+    const game = await createGame({
+      opponent: 'Central',
+      date: '2026-09-27',
+      periodFormat: 'quarters',
+    });
+    const first = await recordStat(game.id, 'stl');
+    const seen: string[][] = [];
+    const subscription = liveQuery(() => getGameEvents(game.id)).subscribe({
+      next: (events) => seen.push(events.map((event) => event.type)),
+    });
+    onTestFinished(() => subscription.unsubscribe());
+    await vi.waitFor(() => expect(seen).toEqual([['stl']]));
+    // A save that landed though this page never heard of it (as when WebKit loses the
+    // connection just after a commit).
+    await addBehindDexie({ ...first, id: 'landed', type: 'blk', createdAt: first.createdAt + 1 });
+
+    const changes = watchChanges();
+    const connection = loseConnection();
+    await expect(getGame(game.id)).rejects.toThrow();
+    await vi.waitFor(() => expect(changes).toEqual(['closed']));
+    const told = vi.spyOn(BroadcastChannel.prototype, 'postMessage');
+    connection.restore();
+    await vi.waitFor(() => expect(changes).toEqual(['closed', 'reopened']));
+    await vi.waitFor(() => expect(seen.at(-1)).toEqual(['stl', 'blk']));
+    // Nothing changed for other tabs: none is told.
+    expect(told).not.toHaveBeenCalled();
   });
 
   it('has every live query read again once it is open, even one whose read was dropped', async () => {
