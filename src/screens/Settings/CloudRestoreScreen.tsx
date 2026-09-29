@@ -142,7 +142,7 @@ export function CloudRestoreScreen() {
     setRequest({
       kind: 'preview',
       backup: next.backup.file,
-      phoneGameCount: games?.length ?? 0,
+      phoneGameIds: games?.map((game) => game.id) ?? [],
       summary: cloudBackupSummary(next.backup),
     });
     setSheetOpen(true);

@@ -5,21 +5,37 @@ import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { Sheet } from '@/components/Sheet/Sheet';
 import { useToast } from '@/components/Toast/toastContext';
-import { importAll, type ExportFile, type ImportMode, type ImportSummary } from '@/data/transfer';
+import {
+  importAll,
+  sampleGamesToRemove,
+  type ExportFile,
+  type ImportMode,
+  type ImportSummary,
+} from '@/data/transfer';
 import { cx } from '@/lib/cx';
 import { ActionRow } from './ActionRow';
-import { backupSummary, nothingNewMessage, restoredMessage } from './backupFiles';
+import {
+  backupSummary,
+  nothingNewMessage,
+  restoredMessage,
+  sampleGamesRemovedNote,
+} from './backupFiles';
 import { useStillHere } from './useStillHere';
 import styles from './RestoreSheet.module.css';
 
 /**
- * What the sheet shows: a backup ready to restore (with how many games the phone had
- * when it was picked, so the choices don't change as it restores, and optionally what
- * to say it holds instead of `backupSummary`), or why a file can't be restored
+ * What the sheet shows: a backup ready to restore (with the games the phone had when it
+ * was picked, by id, so the choices don't change as it restores, and optionally what to
+ * say it holds instead of `backupSummary`), or why a file can't be restored
  * (`notABackup`: the wrong file was picked, so say which to pick).
  */
 export type RestoreRequest =
-  | { kind: 'preview'; backup: ExportFile; phoneGameCount: number; summary?: readonly string[] }
+  | {
+      kind: 'preview';
+      backup: ExportFile;
+      phoneGameIds: readonly string[];
+      summary?: readonly string[];
+    }
   | { kind: 'error'; message: string; notABackup: boolean };
 
 export interface RestoreSheetProps {
@@ -83,7 +99,9 @@ function replaceSubtitle(phoneGameCount: number, backup: ExportFile): string {
  * Shows what a backup holds and restores it: added to this phone's data (merge,
  * recommended) or replacing it (after a confirmation). With no games on the phone
  * it just adds the backup: a merge, so the player's name and the settings set up
- * here are kept (Replace would erase them too).
+ * here are kept (Replace would erase them too). A backup with games of her own removes
+ * the sample games from the phone (see sampleGamesToRemove), and the sheet says so
+ * before anything is picked; a phone with only those is as good as empty.
  */
 export function RestoreSheet({
   open,
@@ -134,8 +152,12 @@ export function RestoreSheet({
     );
   }
 
-  const { backup, phoneGameCount } = request;
-  const phoneIsEmpty = phoneGameCount === 0;
+  const { backup, phoneGameIds } = request;
+  const phoneGameCount = phoneGameIds.length;
+  // The sample games adding this backup removes: the backup has games of her own.
+  const samplesRemoved = sampleGamesToRemove(phoneGameIds, backup).length;
+  // Nothing on the phone would be left to lose (sample games aside): just add it.
+  const phoneIsEmpty = phoneGameCount === samplesRemoved;
 
   const restore = async (mode: ImportMode) => {
     if (restoring) return;
@@ -169,7 +191,8 @@ export function RestoreSheet({
     }
     setRestoring(false);
     if (!stillHere()) return;
-    if (mode === 'merge' && taken.games === 0 && backup.games.length > 0 && !phoneIsEmpty) {
+    const nothingChanged = taken.games === 0 && !taken.sampleGamesRemoved;
+    if (mode === 'merge' && nothingChanged && backup.games.length > 0 && !phoneIsEmpty) {
       // Nothing to add: say so next to Replace, the way to get the backup's versions.
       setNothingNew({ request, note });
       return;
@@ -210,18 +233,26 @@ export function RestoreSheet({
       {children ? <div className={styles.before}>{children}</div> : null}
       {phoneIsEmpty ? (
         <p className={styles.note}>
-          There are no games on this phone yet, so nothing will be lost.
+          {samplesRemoved > 0
+            ? `${sampleGamesRemovedNote(samplesRemoved)} Nothing else will be lost.`
+            : 'There are no games on this phone yet, so nothing will be lost.'}
         </p>
       ) : (
         <>
+          {samplesRemoved > 0 ? (
+            <p className={cx(styles.note, styles.before)}>
+              {sampleGamesRemovedNote(samplesRemoved)}
+            </p>
+          ) : null}
           <GroupedList aria-label="How to restore">
             <ActionRow
               title="Add to what's on this phone"
               subtitle={
                 <>
-                  <strong className={styles.recommended}>Recommended.</strong> Keeps everything here
-                  and adds what&apos;s missing, even games deleted here. For a game on both, the
-                  newer version wins, stats and all.
+                  <strong className={styles.recommended}>Recommended.</strong>{' '}
+                  {samplesRemoved > 0 ? 'Keeps your games here' : 'Keeps everything here'} and adds
+                  what&apos;s missing, even games deleted here. For a game on both, the newer
+                  version wins, stats and all.
                 </>
               }
               onClick={() => void restore('merge')}

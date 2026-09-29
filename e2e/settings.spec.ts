@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, IPHONE_SAFARI_UA, screenHeading, tabBar } from './support/app';
-import { clearAllData, demoGameId, exportAll, seedDemoData } from './support/data';
+import { clearAllData, exportAll, seedDemoData } from './support/data';
+import { ownGameId, seedOwnGames } from './support/ownGames';
 
 const BACKUP_FIXTURE = fileURLToPath(new URL('./fixtures/settings-backup.json', import.meta.url));
 
@@ -103,8 +104,7 @@ test('restores games from a backup file', async ({ page }) => {
 
 test('adds a backup to the games already on the phone', async ({ page }) => {
   await page.goto('./');
-  await seedDemoData(page);
-  await openSettings(page);
+  await seedOwnGames(page);
 
   await restoreFrom(page, BACKUP_FIXTURE);
   await page
@@ -115,7 +115,28 @@ test('adds a backup to the games already on the phone', async ({ page }) => {
   await expect(notifications(page)).toContainText('Restored 2 games');
   const merged = await exportAll(page);
   expect(merged.games).toHaveLength(12);
-  expect(merged.games.map((game) => game.id)).toContain(demoGameId(10));
+  expect(merged.games.map((game) => game.id)).toContain(ownGameId(10));
+});
+
+test('a backup of her own games takes the place of the sample games she tried', async ({
+  page,
+}) => {
+  await page.goto('./');
+  await seedDemoData(page);
+  await openSettings(page);
+
+  // It says so before anything is restored, in plain words.
+  await restoreFrom(page, BACKUP_FIXTURE);
+  const sheet = page.getByRole('dialog', { name: 'Restore this backup?' });
+  await expect(sheet).toContainText(
+    'The 10 sample games on this phone will be removed. Nothing else will be lost.',
+  );
+  await sheet.getByRole('button', { name: 'Restore backup' }).tap();
+
+  await expect(notifications(page)).toContainText('Restored 2 games · 10 sample games removed');
+  const restored = await exportAll(page);
+  expect(restored.games.map((game) => game.opponent)).toEqual(['Hillcrest', 'Brookside']);
+  expect(restored.players).toEqual([expect.objectContaining({ name: 'Maya', jerseyNumber: '7' })]);
 });
 
 test('explains a file that is not a backup', async ({ page }) => {

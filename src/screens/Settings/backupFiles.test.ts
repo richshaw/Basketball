@@ -15,6 +15,7 @@ import {
   readLastBackupFile,
   rememberBackupFile,
   restoredMessage,
+  sampleGamesRemovedNote,
   spreadsheetFileName,
 } from './backupFiles';
 
@@ -169,6 +170,20 @@ describe('describing a backup', () => {
     );
     expect(restoredMessage({ games: 0, events: 0 }, 10)).toBe('Nothing new in this backup');
     expect(restoredMessage({ games: 0, events: 0 }, 0)).toBe('Backup restored');
+  });
+
+  it('says so when the sample games were removed', () => {
+    expect(restoredMessage({ games: 6, events: 90, sampleGamesRemoved: 10 }, 6)).toBe(
+      'Restored 6 games · 10 sample games removed',
+    );
+    expect(restoredMessage({ games: 0, events: 0, sampleGamesRemoved: 1 }, 2)).toBe(
+      'Nothing new in this backup · 1 sample game removed',
+    );
+  });
+
+  it('says before the restore which sample games it removes', () => {
+    expect(sampleGamesRemovedNote(10)).toBe('The 10 sample games on this phone will be removed.');
+    expect(sampleGamesRemovedNote(1)).toBe('The sample game on this phone will be removed.');
   });
 
   it('explains a backup with nothing new, and points to Replace', () => {

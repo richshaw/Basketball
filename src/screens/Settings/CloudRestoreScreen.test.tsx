@@ -241,16 +241,54 @@ describe('Restore from a backup code', () => {
     await seedDemoData({ today: '2026-12-01' });
     const view = await renderRestore();
 
+    // Nothing of hers is on the phone: the sheet just restores, and says what goes.
     await find(view, code);
     const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).toHaveTextContent(
+      'The 10 sample games on this phone will be removed. Nothing else will be lost.',
+    );
+    await view.user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+
+    await expectToast(
+      'Restored 10 games · 10 sample games removed. This phone now backs up with this code.',
+    );
+    await expectGames(view);
+    expect(await getPlayer()).toMatchObject({ name: 'Mia', jerseyNumber: '7' });
+    expect(await screen.findByText('Mia · #7')).toBeInTheDocument();
+    // Her season alone: none of the sample games count in her stats, or go online.
+    const games = await listGames();
+    expect(games.map((game) => game.id).sort()).toEqual(real.games.map((game) => game.id).sort());
+    await backUpNow();
+    const uploaded = await fetchCloudBackup(code);
+    expect(uploaded.ok && uploaded.value.file.games).toHaveLength(10);
+  });
+
+  it('says first that adding her backup removes the sample games next to her own', async () => {
+    const { code } = await backUpThenNewPhone();
+    // On the new phone: sample games she tried, and a game of her own tracked since.
+    await seedDemoData({ today: '2026-12-01' });
+    const own = await createGame({
+      opponent: 'Hillcrest',
+      date: '2026-12-01',
+      periodFormat: 'quarters',
+    });
+    const view = await renderRestore();
+
+    await find(view, code);
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).toHaveTextContent('The 10 sample games on this phone will be removed.');
     await view.user.click(
       within(sheet).getByRole('button', { name: /Add to what's on this phone/ }),
     );
 
-    await expectToast('Restored 10 games. This phone now backs up with this code.');
+    await expectToast(
+      'Restored 10 games · 10 sample games removed. This phone now backs up with this code.',
+    );
     await expectGames(view);
-    expect(await getPlayer()).toMatchObject({ name: 'Mia', jerseyNumber: '7' });
-    expect(await screen.findByText('Mia · #7')).toBeInTheDocument();
+    const games = await listGames();
+    expect(games).toHaveLength(11);
+    expect(games.some((game) => game.id === own.id)).toBe(true);
+    expect(games.some((game) => game.id.startsWith('demo-'))).toBe(false);
   });
 
   it('replaces everything on the phone after asking', async () => {

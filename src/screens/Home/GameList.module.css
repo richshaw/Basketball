@@ -10,6 +10,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* "Sample" after a sample game's title, on its line (or the title's last line). */
+.sample {
+  vertical-align: text-bottom;
+}
+
 .keyLine {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);

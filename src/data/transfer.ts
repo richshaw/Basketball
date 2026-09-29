@@ -7,7 +7,7 @@
 import * as z from 'zod/mini';
 import { compareIds } from '@/lib/id';
 import { db, META_KEYS, touchLastChange } from './db';
-import { isDemoPlayer } from './demoIds';
+import { isDemoGameId, isDemoPlayer } from './demoIds';
 import { forgetPendingStats } from './pendingStats';
 import { getSettings, primaryPlayer } from './repo';
 import type { Game, Player, Settings, StatEvent } from './types';
@@ -187,6 +187,28 @@ export interface ImportSummary {
   games: number;
   /** Stat events taken from the file along with those games. */
   events: number;
+  /**
+   * 'merge' only, and only when it removed any: the sample games it removed from the
+   * phone, since the file holds games of her own (see sampleGamesToRemove).
+   */
+  sampleGamesRemoved?: number;
+}
+
+/**
+ * The sample games (by id, from `phoneGameIds`) that adding `file` to this phone
+ * removes, so they can never count in her stats alongside her own games: when the file
+ * holds a game of her own (any game that isn't a sample game, isDemoGameId), every
+ * sample game on the phone that the file doesn't have too. None when the file holds
+ * only sample games: adding it then works as it always has. (Sample games in the file
+ * were in her backup, so they stay, merged like any other game.)
+ */
+export function sampleGamesToRemove(
+  phoneGameIds: readonly string[],
+  file: Pick<ExportFile, 'games'>,
+): string[] {
+  const fileGameIds = new Set(file.games.map((game) => game.id));
+  if (![...fileGameIds].some((id) => !isDemoGameId(id))) return [];
+  return phoneGameIds.filter((id) => isDemoGameId(id) && !fileGameIds.has(id));
 }
 
 /** What an import did, and whether the device's data actually changed. */
@@ -264,8 +286,20 @@ async function replaceAll(file: ExportFile): Promise<ImportOutcome> {
   return { summary, changed: true };
 }
 
-async function mergeAll(file: ExportFile): Promise<ImportOutcome> {
+/**
+ * `sampleIds`: the sample games to remove first (see sampleGamesToRemove), with their
+ * stats, so they never count alongside the games of her own coming in.
+ */
+async function mergeAll(file: ExportFile, sampleIds: string[]): Promise<ImportOutcome> {
   let changed = false;
+
+  let sampleGamesRemoved = 0;
+  if (sampleIds.length > 0) {
+    sampleGamesRemoved = (await db.games.bulkGet(sampleIds)).filter(Boolean).length;
+    const sampleEvents = await db.events.where('gameId').anyOf(sampleIds).delete();
+    await db.games.bulkDelete(sampleIds);
+    if (sampleGamesRemoved > 0 || sampleEvents > 0) changed = true;
+  }
 
   // One player: the file's player and this device's player are the same person.
   const localPlayer = primaryPlayer(await db.players.toArray());
@@ -306,7 +340,9 @@ async function mergeAll(file: ExportFile): Promise<ImportOutcome> {
     if (canonical(await getSettings()) !== canonical(file.settings)) changed = true;
     await db.meta.put({ key: META_KEYS.settings, value: file.settings });
   }
-  return { summary: { games: newer.length, events: events.length }, changed };
+  const summary: ImportSummary = { games: newer.length, events: events.length };
+  if (sampleGamesRemoved > 0) summary.sampleGamesRemoved = sampleGamesRemoved;
+  return { summary, changed };
 }
 
 /**
@@ -318,8 +354,10 @@ async function mergeAll(file: ExportFile): Promise<ImportOutcome> {
  *   unit, and whichever copy was updated most recently wins whole: a newer copy in
  *   the file replaces that game's events too, an older one is skipped (so stats
  *   undone on the device stay undone). Games on only one side are kept, so a merge
- *   brings back games deleted on the device. One player is kept, with the most
- *   recently set-up name and number, and the device keeps its own settings.
+ *   brings back games deleted on the device, except the sample games: a file with
+ *   games of her own removes them from the phone (see sampleGamesToRemove), with their
+ *   taps and spots not saved yet (as removeDemoData does). One player is kept, with the
+ *   most recently set-up name and number, and the device keeps its own settings.
  * `meta.lastChangeAt` only moves if the import changed something.
  * The file is validated again first, so passing an unchecked object is safe.
  */
@@ -328,18 +366,23 @@ export async function importAll(file: ExportFile, mode: ImportMode): Promise<Imp
     throw new TypeError(`Unknown import mode: ${String(mode)}`);
   }
   const valid = parseExportFile(file);
-  // Right before the write: then no retry can save a tap into the data replacing it.
-  const keepAgain = mode === 'replace' ? forgetPendingStats() : undefined;
+  const sampleIds =
+    mode === 'merge' ? sampleGamesToRemove(await db.games.toCollection().primaryKeys(), valid) : [];
+  // Right before the write: then no retry can save a tap into the data replacing it, or
+  // into a sample game it removes (added again later, it would have the same id).
+  const keepAgain =
+    mode === 'replace' ? [forgetPendingStats()] : sampleIds.map((id) => forgetPendingStats(id));
   try {
     return await db.transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
-      const outcome = mode === 'replace' ? await replaceAll(valid) : await mergeAll(valid);
+      const outcome =
+        mode === 'replace' ? await replaceAll(valid) : await mergeAll(valid, sampleIds);
       // An import that changes nothing mustn't look like a change (the backup would
       // upload again after every merge).
       if (outcome.changed) await touchLastChange(Date.now());
       return outcome.summary;
     });
   } catch (error) {
-    keepAgain?.();
+    for (const again of keepAgain) again();
     throw error;
   }
 }

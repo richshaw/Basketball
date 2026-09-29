@@ -35,7 +35,7 @@ const notifications = () => screen.getByRole('status', { name: 'Notifications' }
 const request: RestoreRequest = {
   kind: 'preview',
   backup: parseExportFile(fixtureJson),
-  phoneGameCount: 0,
+  phoneGameIds: [],
 };
 
 /** The sheet as a screen shows it: open until closed, and gone once the screen is left. */
