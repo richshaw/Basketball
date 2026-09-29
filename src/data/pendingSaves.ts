@@ -5,6 +5,7 @@
  * not the live game screen is open. Saving is idempotent (recordStat with the tap's
  * id), so a tap saved twice is still one stat.
  */
+import { waitAtMost } from '@/lib/wait';
 import {
   hasPendingStats,
   isPendingStat,
@@ -81,18 +82,6 @@ export async function retryPendingStats(): Promise<void> {
   // saving it again.
   await replayPendingStats();
   await retryHeldTaps();
-}
-
-/** Waits for `task` (which never rejects), but no longer than `ms`: then it runs on alone. */
-async function waitAtMost(task: Promise<void>, ms: number): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    task,
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, ms);
-    }),
-  ]);
-  clearTimeout(timer);
 }
 
 /** How long preparing an export waits, at most, for the taps not saved yet to be saved. */

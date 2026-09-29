@@ -37,6 +37,7 @@ import {
 import { deleteStat, setCurrentPeriod } from '@/data/repo';
 import type { StatEvent, StatType } from '@/data/types';
 import { compareIds } from '@/lib/id';
+import { waitAtMost } from '@/lib/wait';
 
 /** How long after a tap couldn't be saved it's tried again on its own. */
 export const AUTO_RETRY_MS = 1000;
@@ -458,16 +459,7 @@ export class TrackingSession implements UnsavedTapHolder {
     const saving = this.taps
       .filter((record) => !record.undone && record.status === 'saving')
       .map((record) => record.settled);
-    if (saving.length > 0) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        Promise.all(saving),
-        new Promise((resolve) => {
-          timer = setTimeout(resolve, waitMs);
-        }),
-      ]);
-      clearTimeout(timer);
-    }
+    if (saving.length > 0) await waitAtMost(Promise.all(saving), waitMs);
     const notSaved = this.taps.filter((record) => !record.undone && record.status !== 'saved');
     // Left for later (e.g. "End anyway"): the app-wide retry keeps trying them.
     if (notSaved.length > 0) notifyPendingStats();
