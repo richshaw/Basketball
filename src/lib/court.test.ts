@@ -8,6 +8,7 @@ import {
   HALF_COURT_LINE_Y,
   isInPaint,
   isOnHalfCourt,
+  isRealPoint,
   isThreePoint,
   LANE_WIDTH,
   shotDistanceFt,
@@ -107,5 +108,16 @@ describe('clampToHalfCourt', () => {
     expect(isOnHalfCourt(corner)).toBe(true);
     expect(clampToHalfCourt(corner)).toEqual(corner);
     expect(isOnHalfCourt({ x: 0, y: HALF_COURT_LINE_Y + 0.1 })).toBe(false);
+  });
+});
+
+describe('isRealPoint', () => {
+  it('takes a point with finite coordinates, and nothing else', () => {
+    expect(isRealPoint({ x: -3.5, y: 0 })).toBe(true);
+    expect(isRealPoint({ x: Number.NaN, y: 2 })).toBe(false);
+    expect(isRealPoint({ x: 1, y: Number.POSITIVE_INFINITY })).toBe(false);
+    expect(isRealPoint({ x: '1', y: 2 })).toBe(false);
+    expect(isRealPoint(null)).toBe(false);
+    expect(isRealPoint(undefined)).toBe(false);
   });
 });

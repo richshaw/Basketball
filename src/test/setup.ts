@@ -29,7 +29,9 @@ afterEach(() => {
   // Vitest globals are off, so Testing Library can't register this itself.
   cleanup();
   // The live game screen's sessions outlive their screen (one per game, for the page):
-  // stop them, so no retry of theirs writes into the next test's journal.
+  // stop them, so none of their taps, spots or retry timers (src/screens/TrackGame/
+  // session.ts) carry into the next test, where a late retry could keep a tap or save
+  // one. Before the timers are real again, so fake ones are cleared too.
   disposeTrackingSessions();
   // IndexedDB runs on real timers: never let one test's fake timers stall the next reset.
   vi.useRealTimers();

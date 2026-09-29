@@ -11,10 +11,11 @@
  * keeps its value, and `null` or '' clears it.
  */
 import { Dexie } from 'dexie';
-import { clampToHalfCourt } from '@/lib/court';
+import { clampToHalfCourt, isRealPoint } from '@/lib/court';
 import { newId } from '@/lib/id';
 import { db, eventsOfGame, META_KEYS, nextTimestamp, touchLastChange } from './db';
-import { removeGamePendingSpots, removePendingSpot } from './pendingSpots';
+import { removePendingSpot } from './pendingSpots';
+import { forgetPendingStat, forgetPendingStats } from './pendingStats';
 import { isFieldGoalType } from './stats';
 import {
   STAT_TYPES,
@@ -288,17 +289,27 @@ export function reopenGame(gameId: string): Promise<Game> {
   return modifyGame(gameId, (game) => ({ ...game, status: 'live', endedAt: undefined }));
 }
 
-/** Deletes a game and all of its stats. Does nothing if the game doesn't exist. */
-export async function deleteGame(gameId: string): Promise<void> {
-  await db.transaction('rw', [db.games, db.events, db.meta], async () => {
-    const game = await db.games.get(gameId);
-    const deletedEvents = await db.events.where('gameId').equals(gameId).delete();
-    if (!game && deletedEvents === 0) return;
-    await db.games.delete(gameId);
-    await touchLastChange(Date.now());
-  });
-  // Spots the live game screen kept to put on its stats (the shot chart) go with them.
-  removeGamePendingSpots(gameId);
+/**
+ * Deletes a game and all of its stats, and forgets its taps not saved yet and the spots
+ * kept for its stats (the shot chart; see forgetPendingStats). Does nothing else if the
+ * game doesn't exist.
+ */
+export function deleteGame(gameId: string): Promise<void> {
+  // First: then no retry can save one of its taps (or spots) once it's gone, e.g. into
+  // the game restored from a backup later.
+  const keepAgain = forgetPendingStats(gameId);
+  return db
+    .transaction('rw', [db.games, db.events, db.meta], async () => {
+      const game = await db.games.get(gameId);
+      const deletedEvents = await db.events.where('gameId').equals(gameId).delete();
+      if (!game && deletedEvents === 0) return;
+      await db.games.delete(gameId);
+      await touchLastChange(Date.now());
+    })
+    .catch((error: unknown) => {
+      keepAgain();
+      throw error;
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -312,10 +323,6 @@ export function getGameEvents(gameId: string): Promise<StatEvent[]> {
 /** Every event of every game (for season stats), grouped by game, oldest first. */
 export function getAllEvents(): Promise<StatEvent[]> {
   return db.events.orderBy('[gameId+createdAt]').toArray();
-}
-
-function isRealPoint(point: CourtPoint): boolean {
-  return Number.isFinite(point.x) && Number.isFinite(point.y);
 }
 
 /**
@@ -353,8 +360,10 @@ export interface RecordStatOptions {
   /**
    * When it was tapped (epoch ms), used as its `createdAt`, so it sorts where it was
    * tapped however late it's saved. Make it with `nextTimestamp` after the game's
-   * latest stat; if another stat of the game already has that time, the next free
-   * millisecond is used. Leave it out for "now", just after the game's latest stat.
+   * latest stat; if another stat of the game already has that time, the free
+   * millisecond just after it (or else just before it) is used, so it still sorts
+   * between the stats tapped before and after it. Leave it out for "now", just after
+   * the game's latest stat.
    */
   at?: number;
   /**
@@ -364,12 +373,22 @@ export interface RecordStatOptions {
   period?: number;
 }
 
-/** `at`, or the first millisecond after it that no other stat of the game has. */
+/**
+ * A time for a stat tapped at `at` that no other stat of the game has: `at`, else the
+ * millisecond just after it, else the one just before it. Either way it keeps its place
+ * among the stats tapped before and after it (one tapped in the same millisecond may
+ * end up on either side). Only if all three are taken (stats in three milliseconds in a
+ * row, e.g. from two tabs) does it move on to the next free millisecond after them,
+ * past a stat or two tapped a moment later.
+ */
 async function freeTimestamp(gameId: string, at: number): Promise<number> {
-  let time = at;
-  while ((await db.events.where('[gameId+createdAt]').equals([gameId, time]).count()) > 0) {
-    time += 1;
-  }
+  const taken = async (time: number) =>
+    (await db.events.where('[gameId+createdAt]').equals([gameId, time]).count()) > 0;
+  if (!(await taken(at))) return at;
+  if (!(await taken(at + 1))) return at + 1;
+  if (at > 0 && !(await taken(at - 1))) return at - 1;
+  let time = at + 2;
+  while (await taken(time)) time += 1;
   return time;
 }
 
@@ -472,19 +491,30 @@ async function removeEvent(event: StatEvent, now: number): Promise<void> {
 export function undoLastStat(gameId: string): Promise<StatEvent | undefined> {
   return db.transaction('rw', [db.games, db.events, db.meta], async () => {
     const last = await eventsOfGame(gameId).last();
-    if (last) await removeEvent(last, Date.now());
+    if (last) {
+      // Its tap, if one is still kept, must never be saved again.
+      forgetPendingStat(last.id);
+      await removeEvent(last, Date.now());
+    }
     return last;
   });
 }
 
-/** Removes one event (e.g. from the event log). Resolves to it, or undefined if missing. */
+/**
+ * Removes one event (e.g. from the event log), and forgets its tap if one is still
+ * kept, so it can't be saved again, and the spot kept for it (the shot chart). Resolves
+ * to it, or undefined if missing.
+ */
 export async function deleteStat(eventId: string): Promise<StatEvent | undefined> {
+  // First: then no retry can save it once it's gone.
+  forgetPendingStat(eventId);
   const event = await db.transaction('rw', [db.games, db.events, db.meta], async () => {
     const found = await db.events.get(eventId);
     if (found) await removeEvent(found, Date.now());
     return found;
   });
-  // A spot the live game screen kept to put on it (the shot chart) goes with it.
+  // Its spot goes only once it's gone: a spot never brings back its stat, and a stat
+  // that stays (the delete failed) still gets it.
   removePendingSpot(eventId);
   return event;
 }

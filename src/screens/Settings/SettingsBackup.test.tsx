@@ -2,6 +2,9 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { restoreStubs } from '@/test/browser';
 import { seedDemoData } from '@/data/demo';
+import { EXPORT_SAVE_WAIT_MS } from '@/data/pendingSaves';
+import { addPendingStat, listPendingStats, newPendingStat } from '@/data/pendingStats';
+import * as repo from '@/data/repo';
 import {
   createGame,
   endGame,
@@ -332,6 +335,41 @@ describe('Settings: export spreadsheet', () => {
     const csv = within(backupList()).getByRole('button', { name: /Export spreadsheet/ });
     expect(csv).toBeDisabled();
     expect(csv).toHaveTextContent('Available once a game is finished');
+  });
+});
+
+describe('Settings: stats not saved yet', () => {
+  it('saves them first, so the backup file and the spreadsheet have them', async () => {
+    const game = await seedPhoneGame();
+    // Added on the finished game ("Add or fix stats"), but the database didn't take it
+    // then ("Done anyway"): kept on the phone.
+    addPendingStat(newPendingStat({ gameId: game.id, type: 'fg2_made', period: 4 }));
+    const downloads = captureDownloads();
+    const { user } = await renderSettings();
+
+    await user.click(await enabledButton(/Save a backup file/));
+    await expectToast('Backup file downloaded');
+    const backup = parseExportFile(await (downloads[0]?.file as Blob).text());
+    expect(backup.events.map((event) => event.type)).toEqual(['fg3_made', 'fg2_made']);
+    expect(listPendingStats()).toEqual([]);
+
+    await user.click(await enabledButton(/Export spreadsheet \(CSV\)/));
+    await expectToast('Spreadsheet downloaded');
+    const [header, row] = (await (downloads[1]?.file as Blob).text()).trimEnd().split('\r\n');
+    const points = header?.split(',').indexOf('PTS') ?? -1;
+    expect(row?.split(',')[points]).toBe('5');
+  });
+
+  it("doesn't wait long for a database that can't save them", async () => {
+    const game = await seedPhoneGame();
+    addPendingStat(newPendingStat({ gameId: game.id, type: 'fg2_made', period: 4 }));
+    // A save that never answers.
+    vi.spyOn(repo, 'recordStat').mockReturnValue(new Promise(() => {}));
+    captureDownloads();
+    await renderSettings();
+    const save = within(backupList()).getByRole('button', { name: /Save a backup file/ });
+    await waitFor(() => expect(save).toBeEnabled(), { timeout: EXPORT_SAVE_WAIT_MS + 2000 });
+    expect(listPendingStats()).toHaveLength(1);
   });
 });
 

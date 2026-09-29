@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { savePendingStatsBeforeExport } from '@/data/pendingSaves';
 import { getLastChangeAt, subscribeToChanges } from '@/data/repo';
 import { exportAll, type ExportFile } from '@/data/transfer';
 
@@ -25,7 +26,10 @@ export interface BackupSnapshotState {
  * Everything on the phone, read ahead of time: the share sheet only opens straight
  * from a tap, with no waiting on the database in between. Every write marks it out
  * of date at once (subscribeToChanges) and reads it again, so a tap can never save a
- * file that misses the newest change.
+ * file that misses the newest change. First, the taps not saved yet (e.g. from a game
+ * ended with "End anyway") are saved if the database takes them within a moment
+ * (savePendingStatsBeforeExport), so the files have those stats too: until then the
+ * snapshot is shown, but not fresh.
  */
 export function useBackupSnapshot(): BackupSnapshotState {
   const [state, setState] = useState<{ snapshot?: BackupSnapshot; fresh: boolean }>({
@@ -37,6 +41,8 @@ export function useBackupSnapshot(): BackupSnapshotState {
     let active = true;
     let changes = 0;
     let reading = false;
+    // The taps not saved yet have been tried (or waited for long enough).
+    let triedPending = false;
 
     const read = async () => {
       if (reading) return; // The loop below sees the new change and reads again.
@@ -51,8 +57,9 @@ export function useBackupSnapshot(): BackupSnapshotState {
           snapshot = { file: await exportAll(), lastChangeAt };
           if (!active) return;
         } while (seen !== changes);
-        currentRef.current = snapshot;
-        setState({ snapshot, fresh: true });
+        // (A tap saved meanwhile is a change: the loop has read it.)
+        currentRef.current = triedPending ? snapshot : undefined;
+        setState({ snapshot, fresh: triedPending });
       } catch (error) {
         // Stays out of date (Save stays off); the next change tries again.
         console.error('Reading the data for a backup file failed', error);
@@ -68,6 +75,10 @@ export function useBackupSnapshot(): BackupSnapshotState {
       void read();
     });
     void read();
+    void savePendingStatsBeforeExport().then(() => {
+      triedPending = true;
+      if (active) void read();
+    });
     return () => {
       active = false;
       stop();

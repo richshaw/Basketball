@@ -38,7 +38,8 @@ export function UnsavedStats({
   return (
     <div className={cx(styles.row, compact && styles.compact)}>
       <p role="alert" className={styles.message}>
-        <span className={styles.title}>{message}</span>
+        {/* The space keeps the two apart when read out: "Steal not saved It's kept…". */}
+        <span className={styles.title}>{message}</span>{' '}
         <span className={styles.hint}>
           {retrying ? 'Saving again…' : unsavedNote(unsaved.length, kept)}
         </span>

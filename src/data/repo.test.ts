@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db, META_KEYS } from './db';
+import { replayPendingStats, savePendingStat } from './pendingSaves';
+import { addPendingStat, listPendingStats, newPendingStat } from './pendingStats';
 import {
   createGame,
   DEFAULT_SETTINGS,
@@ -27,6 +29,7 @@ import {
   updateSettings,
   type NewGame,
 } from './repo';
+import { exportAll, importAll } from './transfer';
 import { MAX_PERIOD, type Game, type Player, type StatEvent } from './types';
 
 const T0 = new Date(2026, 8, 27, 18, 0).getTime();
@@ -494,15 +497,44 @@ describe('recordStat', () => {
       expect((await undoLastStat(game.id))?.id).toBe('third');
     });
 
-    it('moves a tap time another stat of the game has to the next free millisecond', async () => {
-      const game = await newGame();
-      const other = await newGame({ opponent: 'Roosevelt' });
-      await recordStat(game.id, 'ast', undefined, { at: T0 });
-      await recordStat(game.id, 'ast', undefined, { at: T0 + 1 });
-      await recordStat(other.id, 'ast', undefined, { at: T0 + 2 });
-      const stat = await recordStat(game.id, 'stl', undefined, { id: 'late', at: T0 });
-      expect(stat.createdAt).toBe(T0 + 2);
-      expect((await getGameEvents(game.id)).map((e) => e.createdAt)).toEqual([T0, T0 + 1, T0 + 2]);
+    describe('when another stat of the game has its tap time', () => {
+      /** The game's stats as 'id@ms after T0', in order. */
+      async function order(gameId: string) {
+        return (await getGameEvents(gameId)).map((e) => `${e.id}@${e.createdAt - T0}`);
+      }
+
+      it('takes the free millisecond just after it, before any stat tapped later', async () => {
+        const game = await newGame();
+        const other = await newGame({ opponent: 'Roosevelt' });
+        await recordStat(game.id, 'ast', undefined, { id: 'same', at: T0 });
+        await recordStat(game.id, 'blk', undefined, { id: 'later', at: T0 + 2 });
+        await recordStat(other.id, 'ast', undefined, { at: T0 + 1 });
+        const stat = await recordStat(game.id, 'stl', undefined, { id: 'late', at: T0 });
+        expect(stat.createdAt).toBe(T0 + 1);
+        expect(await order(game.id)).toEqual(['same@0', 'late@1', 'later@2']);
+      });
+
+      it('takes the one just before it when the next one is taken, never passing a later stat', async () => {
+        const game = await newGame();
+        // Stats tapped at T0 (in the same millisecond, e.g. in another tab) and after it.
+        for (const [index, type] of (['stl', 'ast', 'blk'] as const).entries()) {
+          await recordStat(game.id, type, undefined, { id: `s${index}`, at: T0 + index });
+        }
+        // A tap kept since T0 is saved late.
+        await recordStat(game.id, 'foul', undefined, { id: 'late', at: T0 });
+        expect(await order(game.id)).toEqual(['late@-1', 's0@0', 's1@1', 's2@2']);
+        expect((await undoLastStat(game.id))?.id).toBe('s2');
+      });
+
+      it('moves on past the taken milliseconds only when both sides are taken', async () => {
+        const game = await newGame();
+        for (const time of [T0 - 1, T0, T0 + 1, T0 + 2]) {
+          await recordStat(game.id, 'ast', undefined, { id: `s${time - T0}`, at: time });
+        }
+        const stat = await recordStat(game.id, 'stl', undefined, { id: 'late', at: T0 });
+        expect(stat.createdAt).toBe(T0 + 3);
+        expect(await order(game.id)).toEqual(['s-1@-1', 's0@0', 's1@1', 's2@2', 'late@3']);
+      });
     });
 
     it('rejects an id another stat has, and a tap time that is not a timestamp', async () => {
@@ -621,6 +653,23 @@ describe('undoLastStat and deleteStat', () => {
     await deleteStat(stat.id);
     expect((await mustGetGame(game.id)).updatedAt).toBe(T0 + 4);
   });
+
+  it("forgets a deleted stat's tap if it's still kept, so it can't be saved again", async () => {
+    const game = await newGame();
+    const steal = newPendingStat({ gameId: game.id, type: 'stl', period: 1 });
+    const block = newPendingStat({ gameId: game.id, type: 'blk', period: 1 }, steal.at);
+    const assist = newPendingStat({ gameId: game.id, type: 'ast', period: 1 }, block.at);
+    for (const tap of [steal, block, assist]) addPendingStat(tap);
+    // The Block and the Assist were saved, but the page heard they failed: still kept.
+    await savePendingStat(block);
+    await savePendingStat(assist);
+
+    await deleteStat(block.id); // e.g. on the report
+    await undoLastStat(game.id); // the Assist
+    expect(listPendingStats()).toEqual([steal]);
+    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
+    expect((await getGameEvents(game.id)).map((event) => event.type)).toEqual(['stl']);
+  });
 });
 
 describe('endGame and reopenGame', () => {
@@ -691,6 +740,32 @@ describe('deleteGame', () => {
     const before = await getLastChangeAt();
     await deleteGame('nope');
     expect(await getLastChangeAt()).toBe(before);
+  });
+
+  it("forgets the game's taps not saved yet, so restoring it later can't bring them back", async () => {
+    const doomed = await newGame();
+    const kept = await newGame({ opponent: 'Roosevelt' });
+    await recordStat(doomed.id, 'ast');
+    const backup = await exportAll();
+    addPendingStat(newPendingStat({ gameId: doomed.id, type: 'foul', period: 1 }));
+    addPendingStat(newPendingStat({ gameId: kept.id, type: 'stl', period: 1 }));
+
+    await deleteGame(doomed.id);
+    expect(listPendingStats().map((stat) => stat.gameId)).toEqual([kept.id]);
+    // A merge-restore brings the game back; the next start saves what's still kept.
+    await importAll(backup, 'merge');
+    await replayPendingStats();
+    expect((await getGameEvents(doomed.id)).map((event) => event.type)).toEqual(['ast']);
+    expect((await getGameEvents(kept.id)).map((event) => event.type)).toEqual(['stl']);
+  });
+
+  it("keeps the game's taps if it couldn't be deleted", async () => {
+    const game = await newGame();
+    const tap = newPendingStat({ gameId: game.id, type: 'foul', period: 1 });
+    addPendingStat(tap);
+    vi.spyOn(db.games, 'delete').mockRejectedValue(new Error('Disk error'));
+    await expect(deleteGame(game.id)).rejects.toThrow('Disk error');
+    expect(listPendingStats()).toEqual([tap]);
   });
 });
 

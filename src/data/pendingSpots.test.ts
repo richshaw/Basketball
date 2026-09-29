@@ -1,15 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import { db } from './db';
+import { seedDemoData } from './demo';
+import { replayPendingStats } from './pendingSaves';
 import {
   addPendingSpot,
+  forgetPendingSpots,
   getPendingSpot,
   listPendingSpots,
-  removeGamePendingSpots,
   removePendingSpot,
 } from './pendingSpots';
-import { replayPendingStats } from './pendingStats';
 import * as repo from './repo';
-import { createGame, deleteGame, deleteStat, getGameEvents, recordStat } from './repo';
+import {
+  createGame,
+  deleteGame,
+  deleteStat,
+  getAllEvents,
+  getGameEvents,
+  recordStat,
+} from './repo';
+import { clearAllData, exportAll, importAll } from './transfer';
 
 const KEY_PREFIX = 'hoop-stats.pendingSpot.';
 const ELBOW = { x: -6, y: 13.75 };
@@ -32,8 +41,21 @@ describe('the pending-spots journal', () => {
 
     removePendingSpot('a');
     expect(getPendingSpot('a')).toBeUndefined();
-    removeGamePendingSpots('g2');
-    expect(listPendingSpots()).toEqual([]);
+    addPendingSpot({ id: 'c', gameId: 'g1', location: ELBOW });
+    // A game's data is deleted: its spots go, and come back if that fails.
+    const forgotten = forgetPendingSpots('g2');
+    expect(forgotten.count).toBe(1);
+    expect(listPendingSpots().map((spot) => spot.id)).toEqual(['c']);
+    forgotten.putBack();
+    expect(
+      listPendingSpots()
+        .map((spot) => spot.id)
+        .sort(),
+    ).toEqual(['b', 'c']);
+    // All the data is: every entry goes, even one this version can't read.
+    localStorage.setItem(`${KEY_PREFIX}junk`, '{not json');
+    expect(forgetPendingSpots().count).toBe(3);
+    expect(Object.keys(localStorage)).toEqual([]);
   });
 
   it("skips entries it can't use, and leaves them (and other keys) alone", () => {
@@ -85,6 +107,45 @@ describe('deleting stats forgets their kept spots', () => {
     await expect(deleteStat(shot.id)).rejects.toThrow('Disk full');
     expect(getPendingSpot(shot.id)).toBeDefined();
     expect(await getGameEvents(game.id)).toHaveLength(1);
+  });
+
+  it("deleteGame keeps its game's spots if the game couldn't be deleted", async () => {
+    const game = await newGame();
+    const shot = await recordStat(game.id, 'fg3_miss');
+    addPendingSpot({ id: shot.id, gameId: game.id, location: CORNER });
+    vi.spyOn(db, 'transaction').mockRejectedValueOnce(new Error('Disk full'));
+    await expect(deleteGame(game.id)).rejects.toThrow('Disk full');
+    expect(getPendingSpot(shot.id)).toEqual({ id: shot.id, gameId: game.id, location: CORNER });
+  });
+
+  it('Erase all data forgets every kept spot: none lands on sample data seeded again', async () => {
+    await seedDemoData({ force: true });
+    const shot = (await getAllEvents()).find((event) => event.type === 'fg3_miss');
+    if (!shot) throw new Error('No sample 3PT Miss');
+    addPendingSpot({ id: shot.id, gameId: shot.gameId, location: CORNER });
+
+    await clearAllData();
+    expect(listPendingSpots()).toEqual([]);
+    // "Try it with sample data": the same ids again, and nothing to put on them.
+    await seedDemoData({ force: true });
+    expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+    expect((await getGameEvents(shot.gameId)).find((event) => event.id === shot.id)).toEqual(shot);
+  });
+
+  it('a replace restore forgets them too, and keeps them if it fails', async () => {
+    const game = await newGame();
+    const shot = await recordStat(game.id, 'fg3_miss');
+    const backup = await exportAll();
+    addPendingSpot({ id: shot.id, gameId: game.id, location: CORNER });
+
+    vi.spyOn(db, 'transaction').mockRejectedValueOnce(new Error('Disk full'));
+    await expect(importAll(backup, 'replace')).rejects.toThrow('Disk full');
+    expect(getPendingSpot(shot.id)).toBeDefined();
+
+    await importAll(backup, 'replace');
+    expect(listPendingSpots()).toEqual([]);
+    expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+    expect((await getGameEvents(game.id)).map((event) => event.location)).toEqual([undefined]);
   });
 
   it("deleteGame forgets its game's kept spots, and only those", async () => {

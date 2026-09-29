@@ -86,3 +86,13 @@ export function clampToHalfCourt(point: CourtPoint): CourtPoint {
 export function isOnHalfCourt(point: CourtPoint): boolean {
   return Math.abs(point.x) <= SIDELINE_X && point.y >= BASELINE_Y && point.y <= HALF_COURT_LINE_Y;
 }
+
+/**
+ * Whether `value` is a point with finite coordinates: not NaN or Infinity (e.g. from a
+ * court measured at zero size), nor anything else read back from storage.
+ */
+export function isRealPoint(value: unknown): value is CourtPoint {
+  if (typeof value !== 'object' || value === null) return false;
+  const { x, y } = value as Record<string, unknown>;
+  return Number.isFinite(x) && Number.isFinite(y);
+}

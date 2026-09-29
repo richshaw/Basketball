@@ -49,6 +49,17 @@ describe('withTaps', () => {
       ]).map((stat) => stat.id),
     ).toEqual(['a', 'b', 'c']);
   });
+
+  it('leaves out the stats being taken back, even while they are still saved', () => {
+    const saved = [
+      { id: 'a', type: 'stl' as const },
+      { id: 'b', type: 'ast' as const },
+    ];
+    expect(withTaps(saved, [], ['a']).map((stat) => stat.id)).toEqual(['b']);
+    expect(
+      withTaps(saved, [{ id: 'c', type: 'blk' }], ['b', 'gone']).map((stat) => stat.id),
+    ).toEqual(['a', 'c']);
+  });
 });
 
 describe('not saved yet', () => {
@@ -56,7 +67,12 @@ describe('not saved yet', () => {
     expect(notSavedTitle(1)).toBe("1 stat isn't saved yet");
     expect(notSavedTitle(3)).toBe("3 stats aren't saved yet");
     expect(unsavedNote(1, true)).toBe("It's kept on this phone and will be saved automatically.");
-    expect(unsavedNote(2, false)).toBe("They're not kept on this phone, so keep the app open.");
+    expect(unsavedNote(1, false)).toBe(
+      "It's not kept on this phone. Keep the app open until it's saved.",
+    );
+    expect(unsavedNote(2, false)).toBe(
+      "They're not kept on this phone. Keep the app open until they're saved.",
+    );
     expect(notSavedMessage(1, true)).toBe(
       "1 stat isn't saved yet. It's kept on this phone and will be saved automatically.",
     );

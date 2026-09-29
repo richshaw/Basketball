@@ -5,7 +5,9 @@
  * restores exactly what was exported.
  */
 import * as z from 'zod/mini';
+import { compareIds } from '@/lib/id';
 import { db, META_KEYS, touchLastChange } from './db';
+import { forgetPendingStats } from './pendingStats';
 import { getSettings, primaryPlayer } from './repo';
 import type { Game, Player, Settings, StatEvent } from './types';
 import {
@@ -92,10 +94,6 @@ export function exportAll(): Promise<ExportFile> {
       settings,
     };
   });
-}
-
-function compareIds(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -305,7 +303,8 @@ async function mergeAll(file: ExportFile): Promise<ImportOutcome> {
 /**
  * Restores a backup in one transaction: if anything fails, nothing changes.
  * - 'replace': the device ends up with exactly the file's data (its settings too,
- *   if the file has them).
+ *   if the file has them). Taps not saved yet are forgotten (see forgetPendingStats),
+ *   so none of the data it replaces can come back into a restored game.
  * - 'merge': combines the file with the device's data. A game and its events are one
  *   unit, and whichever copy was updated most recently wins whole: a newer copy in
  *   the file replaces that game's events too, an older one is skipped (so stats
@@ -320,39 +319,51 @@ export async function importAll(file: ExportFile, mode: ImportMode): Promise<Imp
     throw new TypeError(`Unknown import mode: ${String(mode)}`);
   }
   const valid = parseExportFile(file);
-  const summary = await db.transaction(
-    'rw',
-    [db.players, db.games, db.events, db.meta],
-    async () => {
+  // Right before the write: then no retry can save a tap into the data replacing it.
+  const keepAgain = mode === 'replace' ? forgetPendingStats() : undefined;
+  try {
+    return await db.transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
       const outcome = mode === 'replace' ? await replaceAll(valid) : await mergeAll(valid);
       // An import that changes nothing mustn't look like a change (the backup would
       // upload again after every merge).
       if (outcome.changed) await touchLastChange(Date.now());
       return outcome.summary;
-    },
-  );
-  return summary;
+    });
+  } catch (error) {
+    keepAgain?.();
+    throw error;
+  }
 }
 
 /**
- * Deletes the player, every game and stat, and the settings. Other device-local
- * records in `meta` (such as the backup's own state) are kept.
+ * Deletes the player, every game and stat, and the settings, and forgets every tap not
+ * saved yet (see forgetPendingStats), so nothing of the erased games is left on the
+ * phone, and none of their taps can come back into a new game with the same id (sample
+ * games always have the same ids). Other device-local records in `meta` (such as the
+ * backup's own state) are kept.
  */
 export function clearAllData(): Promise<void> {
-  return db.transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
-    const [players, games, events, settings] = await Promise.all([
-      db.players.count(),
-      db.games.count(),
-      db.events.count(),
-      db.meta.get(META_KEYS.settings),
-    ]);
-    if (players + games + events === 0 && settings === undefined) return;
-    await Promise.all([
-      db.players.clear(),
-      db.games.clear(),
-      db.events.clear(),
-      db.meta.delete(META_KEYS.settings),
-    ]);
-    await touchLastChange(Date.now());
-  });
+  // Right before the write: then no retry can save a tap once the data is gone.
+  const keepAgain = forgetPendingStats();
+  return db
+    .transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
+      const [players, games, events, settings] = await Promise.all([
+        db.players.count(),
+        db.games.count(),
+        db.events.count(),
+        db.meta.get(META_KEYS.settings),
+      ]);
+      if (players + games + events === 0 && settings === undefined) return;
+      await Promise.all([
+        db.players.clear(),
+        db.games.clear(),
+        db.events.clear(),
+        db.meta.delete(META_KEYS.settings),
+      ]);
+      await touchLastChange(Date.now());
+    })
+    .catch((error: unknown) => {
+      keepAgain();
+      throw error;
+    });
 }

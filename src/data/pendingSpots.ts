@@ -9,13 +9,16 @@
  * stat. The difference matters: a kept tap is saved again (recordStat), which would
  * bring back a stat deleted since; a kept spot is only ever put on its stat
  * (setStatLocation), so if the stat is gone (deleted on the game report, say) the spot
- * is simply dropped. replayPendingStats() saves what's left here at app start, and a
- * game's tracking session saves its game's spots when it starts.
+ * is simply dropped. replayPendingStats() (pendingSaves.ts) saves what's left here, at
+ * app start and with every try of the app-wide retry, and a game's tracking session
+ * saves its game's spots when it starts.
  *
  * One key per stat, `hoop-stats.pendingSpot.<id>`, holding `{ id, gameId, location }`.
  * Like the pending-stats journal, nothing here throws: without localStorage, spots are
  * still saved, just not kept across a reload.
  */
+import { isRealPoint } from '@/lib/court';
+import { removeJournalEntries, type RemovedEntries } from './journal';
 import type { CourtPoint } from './types';
 
 /** A spot to put on a saved stat. */
@@ -46,12 +49,6 @@ export function removePendingSpot(id: string): void {
   } catch {
     // Blocked storage: nothing could have been kept there.
   }
-}
-
-function isRealPoint(value: unknown): value is CourtPoint {
-  if (typeof value !== 'object' || value === null) return false;
-  const { x, y } = value as Record<string, unknown>;
-  return Number.isFinite(x) && Number.isFinite(y);
 }
 
 /** One entry, or undefined if it isn't a spot this version can save. */
@@ -98,7 +95,12 @@ export function listPendingSpots(gameId?: string): PendingSpot[] {
   return spots;
 }
 
-/** Forgets every spot kept for a game's stats (the game was deleted). */
-export function removeGamePendingSpots(gameId: string): void {
-  for (const spot of listPendingSpots(gameId)) removePendingSpot(spot.id);
+/**
+ * Forgets the spots kept for one game's stats, or for every stat (then every entry, even
+ * one this version can't read). For writes that delete or replace data, through
+ * forgetPendingStats (pendingStats.ts): no spot may be put on a stat restored or made
+ * again under the same id afterwards. Says how to keep them again if the write fails.
+ */
+export function forgetPendingSpots(gameId?: string): RemovedEntries {
+  return removeJournalEntries(KEY_PREFIX, gameId);
 }

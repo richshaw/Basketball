@@ -1,6 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  READ_RETRY_DELAYS_MS,
+  READ_WATCHDOG_MS,
   useAllEvents,
   useGame,
   useGameEvents,
@@ -9,7 +11,10 @@ import {
   usePlayer,
   useSeasons,
   useSettings,
+  useSteadyGame,
+  useSteadyGameEvents,
 } from './hooks';
+import * as repo from './repo';
 import {
   createGame,
   endGame,
@@ -117,5 +122,90 @@ describe('data hooks', () => {
       expect(live.result.current).toBeNull();
       expect(settings.result.current?.shotChart).toBe(false);
     });
+  });
+});
+
+describe('steady reads (the live game screen)', () => {
+  const lost = () =>
+    new DOMException('Connection to Indexed Database server lost.', 'UnknownError');
+
+  beforeEach(() => {
+    // Each failed read is logged; that's expected here.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('keep the last good result through a failed read, and read again when the app is shown', async () => {
+    const game = await newGame();
+    await recordStat(game.id, 'stl');
+    const { result } = renderHook(() => useSteadyGameEvents(game.id));
+    await waitFor(() => expect(result.current.value?.map((e) => e.type)).toEqual(['stl']));
+    expect(result.current.failed).toBe(false);
+
+    const reads = vi.spyOn(repo, 'getGameEvents').mockRejectedValue(lost());
+    await act(() => recordStat(game.id, 'ast'));
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    expect(result.current.value?.map((e) => e.type)).toEqual(['stl']);
+    expect(result.current.error).toBeInstanceOf(DOMException);
+    expect(console.error).toHaveBeenCalledTimes(1);
+
+    reads.mockRestore();
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await waitFor(() => expect(result.current.failed).toBe(false));
+    expect(result.current.value?.map((e) => e.type)).toEqual(['stl', 'ast']);
+    expect(result.current.error).toBeUndefined();
+  });
+
+  it('read again on their own, sooner at first, and keep following changes after', async () => {
+    const game = await newGame();
+    const { result } = renderHook(() => useSteadyGame(game.id));
+    await waitFor(() => expect(result.current.value?.id).toBe(game.id));
+
+    const reads = vi.spyOn(repo, 'getGame').mockRejectedValue(lost());
+    await act(() => recordStat(game.id, 'ast'));
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    await waitFor(() => expect(reads).toHaveBeenCalledTimes(2), {
+      timeout: (READ_RETRY_DELAYS_MS[0] ?? 0) + 1000,
+    });
+    reads.mockRestore();
+    await waitFor(() => expect(result.current.failed).toBe(false), {
+      timeout: (READ_RETRY_DELAYS_MS[1] ?? 0) + 1000,
+    });
+    await act(() => endGame(game.id));
+    await waitFor(() => expect(result.current.value?.status).toBe('final'));
+  });
+
+  it('read again when a read never answers (as Dexie does with an aborted one)', async () => {
+    const game = await newGame();
+    const { result } = renderHook(() => useSteadyGame(game.id));
+    await waitFor(() => expect(result.current.value?.status).toBe('live'));
+
+    // Reading the game again after it ends is aborted: Dexie gives neither a result nor
+    // an error, so nothing says the game on screen is out of date.
+    const reads = vi
+      .spyOn(repo, 'getGame')
+      .mockRejectedValueOnce(new DOMException('The transaction was aborted.', 'AbortError'));
+    await act(() => endGame(game.id));
+    await waitFor(() => expect(reads).toHaveBeenCalledTimes(1));
+    expect(result.current).toMatchObject({ failed: false, value: { status: 'live' } });
+
+    // It's read again a moment later.
+    await waitFor(() => expect(result.current.value?.status).toBe('final'), {
+      timeout: READ_WATCHDOG_MS + 2000,
+    });
+    expect(result.current.failed).toBe(false);
+    expect(reads).toHaveBeenCalledTimes(2);
+  });
+
+  it('say "loading" (and not the other game) after switching games, and "not found" as null', async () => {
+    const first = await newGame({ opponent: 'First' });
+    const { result, rerender } = renderHook(({ id }) => useSteadyGame(id), {
+      initialProps: { id: first.id },
+    });
+    await waitFor(() => expect(result.current.value?.opponent).toBe('First'));
+    rerender({ id: 'nope' });
+    expect(result.current).toEqual({ value: undefined, failed: false, error: undefined });
+    await waitFor(() => expect(result.current.value).toBeNull());
   });
 });

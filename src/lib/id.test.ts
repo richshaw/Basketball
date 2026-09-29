@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { newId } from './id';
+import { compareIds, newId } from './id';
 
 const UUID_V4 = /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/;
 
@@ -31,5 +31,12 @@ describe('newId', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('compareIds', () => {
+  it('orders by code unit, like the default sort, whatever the locale', () => {
+    expect(['b', 'B', 'a1', 'a', 'A'].sort(compareIds)).toEqual(['A', 'B', 'a', 'a1', 'b']);
+    expect(compareIds('game-2', 'game-2')).toBe(0);
   });
 });
