@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useReloadSafe } from '@/data/hooks';
+import { reloadIfSafe } from '@/pwa/reload';
 import { useServiceWorkerUpdate } from '@/pwa/serviceWorkerContext';
 import { paths } from '@/routes';
 import styles from './ErrorScreen.module.css';
@@ -70,7 +71,7 @@ export function ErrorScreen() {
                     size="lg"
                     block
                     variant={offerUpdate || !onGames ? 'ghost' : 'primary'}
-                    onClick={() => window.location.reload()}
+                    onClick={() => reloadIfSafe()}
                   >
                     Reload
                   </Button>

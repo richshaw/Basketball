@@ -1,7 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { screenHeading } from './support/app';
-import { DEMO_LIVE_GAME_ID, seedDemoData } from './support/data';
+import { DEMO_LIVE_GAME_ID, exportAll, seedDemoData } from './support/data';
+import { failNextSaves, tapStats } from './support/tracking';
 import { startVersionedServer, type VersionedServer } from './support/versionedServer';
 
 let server: VersionedServer;
@@ -92,6 +93,65 @@ test('updating never reloads a live game open in another window', async ({ conte
   await game.getByRole('link', { name: 'Games', exact: true }).tap();
   await updateBanner(game).getByRole('button', { name: 'Update' }).tap();
   await expect(runningBuild(game)).toHaveAttribute('content', 'b', { timeout: 15_000 });
+});
+
+test('the update waits while a reload would lose a tap, and is offered once it would not', async ({
+  page,
+}) => {
+  await page.goto(server.url);
+  await waitForServiceWorkerControl(page);
+  await page.goto(`${server.url}#${paths.newGame}`);
+  await page.getByLabel('Opponent').fill('Westfield');
+  await page.getByRole('button', { name: 'Start game' }).tap();
+  await expect(screenHeading(page, 'vs Westfield')).toBeVisible();
+
+  // The phone's storage is full and saves fail: a Steal lives only in memory.
+  await page.evaluate(() => {
+    const state = window as unknown as { storageFull?: boolean };
+    state.storageFull = true;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound by call() below
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (this: Storage, key: string, value: string) {
+      if (state.storageFull && key.startsWith('hoop-stats.pending')) {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      }
+      setItem.call(this, key, value);
+    };
+  });
+  await failNextSaves(page, 1000);
+  await tapStats(page, ['Steal']);
+  await expect(page.getByRole('alert')).toContainText("It's not kept on this phone.");
+
+  // On to Games, where a new version arrives: updating now would lose the Steal.
+  await page.getByRole('link', { name: 'Games', exact: true }).tap();
+  await expect(screenHeading(page, 'Games')).toBeVisible();
+  server.deploy('b');
+  await checkForUpdate(page);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async () =>
+          Boolean((await navigator.serviceWorker.getRegistration())?.waiting),
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  await page.waitForTimeout(1000);
+  await expect(updateBanner(page)).toHaveCount(0);
+
+  // Saving works again, and the app-wide retry saves the Steal as the app comes back
+  // into view: now the update is offered, and loses nothing.
+  await failNextSaves(page, 0);
+  await page.evaluate(() => {
+    (window as unknown as { storageFull?: boolean }).storageFull = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  const update = updateBanner(page).getByRole('button', { name: 'Update' });
+  await expect(update).toBeVisible({ timeout: 15_000 });
+  await update.tap();
+  await expect(runningBuild(page)).toHaveAttribute('content', 'b', { timeout: 15_000 });
+  const data = await exportAll(page);
+  expect(data.events.map((event) => event.type)).toEqual(['stl']);
 });
 
 test('toasts rise above the update banner while it shows', async ({ page }) => {
