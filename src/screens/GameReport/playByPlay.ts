@@ -94,10 +94,3 @@ export function periodSummary(group: PeriodPlays): string {
   if (group.total !== group.points) parts.push(`${group.total} total`);
   return parts.join(' · ');
 }
-
-/** Local time on a 12-hour clock without AM/PM, e.g. '6:05' or '12:30'. */
-export function formatClockTime(epochMs: number): string {
-  const date = new Date(epochMs);
-  const hours = date.getHours() % 12 || 12;
-  return `${hours}:${String(date.getMinutes()).padStart(2, '0')}`;
-}

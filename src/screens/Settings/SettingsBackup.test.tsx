@@ -200,6 +200,46 @@ describe('Settings: save a backup file', () => {
     });
   });
 
+  it('before erasing, asks for a backup file only while the last one lacks something', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    captureDownloads();
+    const { user } = await renderSettings();
+    const save = await enabledButton(/Save a backup file/);
+    const today = formatDayWithYear(Date.now());
+    const erased =
+      "All 10 games and their stats, the player's name and number, and your settings will be deleted from this phone. This can't be undone.";
+    const askToErase = async () => {
+      await user.click(screen.getByRole('button', { name: 'Erase all data' }));
+      return screen.findByRole('alertdialog', { name: 'Erase all data?' });
+    };
+    const cancel = async (dialog: HTMLElement) => {
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+      });
+    };
+
+    await user.click(save);
+    await waitFor(() => {
+      expect(save).toHaveTextContent(`Last saved: ${today}`);
+    });
+    let dialog = await askToErase();
+    expect(dialog).toHaveAccessibleDescription(
+      `${erased} The backup file you saved on ${today} has all of it.`,
+    );
+    await cancel(dialog);
+
+    // A change since: that file no longer has everything.
+    await createGame({ opponent: 'Hillcrest', date: '2026-09-28', periodFormat: 'quarters' });
+    await waitFor(() => {
+      expect(save).toHaveTextContent(`Changes since your last backup file on ${today}`);
+    });
+    dialog = await askToErase();
+    expect(dialog).toHaveAccessibleDescription(
+      `${erased.replace('10', '11')} If you might want them back, save a backup file first.`,
+    );
+  });
+
   it('has nothing to save on an empty phone', async () => {
     await renderSettings();
     const save = within(backupList()).getByRole('button', { name: /Save a backup file/ });
@@ -357,6 +397,23 @@ describe('Settings: restore from a backup file', () => {
       'Lincoln',
     ]);
     expect(games.find((game) => game.id === phoneGame.id)).toBeDefined();
+  });
+
+  it('keeps her own player when the sample games were tried first', async () => {
+    // A new phone: she tries the sample games first. Their player's date (Sep 27) is
+    // after she set up Maya (Sep 1)...
+    await seedDemoData({ today: '2026-12-01' });
+    const { user } = await renderSettings();
+
+    // ...then adds her backup to what's on the phone.
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+
+    await expectToast('Restored 2 games');
+    const player = await getPlayer();
+    expect(player).toMatchObject({ name: 'Maya', jerseyNumber: '7' });
+    expect((await listGames()).every((game) => game.playerId === player?.id)).toBe(true);
   });
 
   it('says how many games were restored and how many the phone already had', async () => {
@@ -529,6 +586,17 @@ describe('Settings: restore from a backup file', () => {
     const damaged = { ...(JSON.parse(fixtureJson) as object), games: [{ id: 'half a game' }] };
 
     await chooseBackupFile(user, pickedFile(JSON.stringify(damaged)));
+
+    const sheet = await screen.findByRole('dialog', { name: "Can't restore this file" });
+    expect(sheet).toHaveAccessibleDescription("This backup is damaged, so it can't be restored.");
+    expect(sheet).not.toHaveTextContent('Choose a backup saved from Hoop Stats');
+  });
+
+  it('calls a backup file that was cut off damaged, not some other file', async () => {
+    const { user } = await renderSettings();
+    const whole = JSON.stringify(JSON.parse(fixtureJson), null, 2);
+
+    await chooseBackupFile(user, pickedFile(whole.slice(0, 500)));
 
     const sheet = await screen.findByRole('dialog', { name: "Can't restore this file" });
     expect(sheet).toHaveAccessibleDescription("This backup is damaged, so it can't be restored.");

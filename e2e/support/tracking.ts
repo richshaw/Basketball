@@ -11,6 +11,15 @@ export const lineButton = (page: Page, name = 'Undo') =>
   page.getByRole('button', { name, exact: true });
 export const notSaved = (page: Page) => page.getByRole('alert');
 
+/** Whether the last-action line shows its whole message: nothing on it is cut off. */
+export function lastActionFits(page: Page): Promise<boolean> {
+  return lastAction(page).evaluate((status) =>
+    Array.from(status.querySelectorAll('*')).every(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  );
+}
+
 /** Waits until the stat strip says each text (what a screen reader hears), e.g. 'Points: 9'. */
 export async function expectStats(page: Page, ...texts: string[]) {
   for (const text of texts) {

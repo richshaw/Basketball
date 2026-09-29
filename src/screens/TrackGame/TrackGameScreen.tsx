@@ -18,6 +18,7 @@ import {
   type StatType,
 } from '@/data/types';
 import { cx } from '@/lib/cx';
+import { formatClockTime } from '@/lib/format';
 import { gameTitle } from '@/lib/gameTitle';
 import { paths } from '@/routes';
 import { EndGameSheet } from './EndGameSheet';
@@ -36,7 +37,6 @@ import {
   createTapGuard,
   FOUL_TROUBLE_AT,
   FOULED_OUT_AT,
-  formatClockTime,
   spotNote,
   statKind,
   statLabel,
@@ -52,9 +52,13 @@ type ShowAction = (action: Omit<LastAction, 'key'>) => void;
 
 type OpenSheet = 'period' | 'log' | 'end' | 'notSaved' | null;
 
-/** ' · 4 fouls' once she's in foul trouble, so the line says it right at the tap. */
+/**
+ * ' · 4 fouls' once she's in foul trouble and ' · fouled out' from the fifth, so the
+ * line says it right at the tap. Short, so the whole line fits an iPhone SE: the strip
+ * shows the count.
+ */
 function foulNote(fouls: number): string {
-  if (fouls >= FOULED_OUT_AT) return ` · ${fouls} fouls, fouled out`;
+  if (fouls >= FOULED_OUT_AT) return ' · fouled out';
   return fouls >= FOUL_TROUBLE_AT ? ` · ${fouls} fouls` : '';
 }
 
@@ -259,7 +263,7 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
       const what = `${statLabel(event.type)} (${periodLabel(event.period, periodFormat)})`;
       const confirmed = await confirm({
         title: `Delete ${what}?`,
-        message: `Recorded at ${formatClockTime(event.createdAt)}.`,
+        message: `Recorded at ${formatClockTime(event.createdAt, { seconds: true })}.`,
         confirmLabel: 'Delete',
         destructive: true,
       });

@@ -3,7 +3,6 @@ import type { StatType } from '@/data/types';
 import {
   countByType,
   createTapGuard,
-  formatClockTime,
   foulStatus,
   notSavedMessage,
   notSavedTitle,
@@ -64,8 +63,8 @@ describe('withTaps', () => {
 
 describe('not saved yet', () => {
   it('says plainly what happens to the stats', () => {
-    expect(notSavedTitle(1)).toBe("1 stat isn't saved yet");
-    expect(notSavedTitle(3)).toBe("3 stats aren't saved yet");
+    expect(notSavedTitle({ count: 1, spots: 0 })).toBe("1 stat isn't saved yet");
+    expect(notSavedTitle({ count: 3, spots: 0 })).toBe("3 stats aren't saved yet");
     expect(unsavedNote(1, true)).toBe("It's kept on this phone and will be saved automatically.");
     expect(unsavedNote(1, false)).toBe(
       "It's not kept on this phone. Keep the app open until it's saved.",
@@ -73,11 +72,26 @@ describe('not saved yet', () => {
     expect(unsavedNote(2, false)).toBe(
       "They're not kept on this phone. Keep the app open until they're saved.",
     );
-    expect(notSavedMessage(1, true)).toBe(
+    expect(notSavedMessage({ count: 1, spots: 0, kept: true })).toBe(
       "1 stat isn't saved yet. It's kept on this phone and will be saved automatically.",
     );
-    expect(notSavedMessage(2, true)).toBe(
+    expect(notSavedMessage({ count: 2, spots: 0, kept: true })).toBe(
       "2 stats aren't saved yet. They're kept on this phone and will be saved automatically.",
+    );
+  });
+
+  it("says when only a shot's spot isn't saved: the stat itself is", () => {
+    expect(notSavedTitle({ count: 1, spots: 1 })).toBe("1 shot's spot isn't saved yet");
+    expect(notSavedTitle({ count: 2, spots: 2 })).toBe("2 shots' spots aren't saved yet");
+    expect(notSavedTitle({ count: 2, spots: 1 })).toBe("1 stat and 1 shot's spot aren't saved yet");
+    expect(notSavedTitle({ count: 5, spots: 2 })).toBe(
+      "3 stats and 2 shots' spots aren't saved yet",
+    );
+    expect(notSavedMessage({ count: 1, spots: 1, kept: true })).toBe(
+      "1 shot's spot isn't saved yet. It's kept on this phone and will be saved automatically.",
+    );
+    expect(notSavedMessage({ count: 1, spots: 1, kept: false })).toBe(
+      "1 shot's spot isn't saved yet. It's not kept on this phone. Keep the app open until it's saved.",
     );
   });
 });
@@ -134,15 +148,6 @@ describe('createTapGuard', () => {
       false,
       true,
     ]);
-  });
-});
-
-describe('formatClockTime', () => {
-  it('shows local 12-hour time with seconds and no AM/PM', () => {
-    expect(formatClockTime(new Date(2026, 8, 27, 19, 4, 5).getTime())).toBe('7:04:05');
-    expect(formatClockTime(new Date(2026, 8, 27, 0, 30, 0).getTime())).toBe('12:30:00');
-    expect(formatClockTime(new Date(2026, 8, 27, 12, 0, 59).getTime())).toBe('12:00:59');
-    expect(formatClockTime(new Date(2026, 8, 27, 9, 59, 9).getTime())).toBe('9:59:09');
   });
 });
 

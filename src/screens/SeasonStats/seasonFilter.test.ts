@@ -3,6 +3,7 @@ import {
   ALL_SEASONS,
   clearSessionValues,
   defaultSeasonKey,
+  fitsSegments,
   inSeason,
   readRememberedSeason,
   readSessionValue,
@@ -20,6 +21,23 @@ beforeEach(() => {
 
 afterEach(() => {
   clearSessionValues();
+});
+
+describe('fitsSegments', () => {
+  it("fits the app's own season names as segments, two of them beside All", () => {
+    // exampleSeason's names: the longest are 11 characters.
+    expect(fitsSegments(['All', 'Fall 2026'])).toBe(true);
+    expect(fitsSegments(['All', 'Fall 2026', 'Summer 2026'])).toBe(true);
+    expect(fitsSegments(['All', 'Winter 2027', 'Spring 2027'])).toBe(true);
+    expect(fitsSegments(['All', 'Summer 2027', 'Summer 2026'])).toBe(true);
+  });
+
+  it('leaves longer names, and more seasons, to the sheet', () => {
+    expect(fitsSegments(['All', 'Varsity Summer League', 'JV Fall'])).toBe(false);
+    expect(fitsSegments(['All', 'Westside Warriors 12U Spring 2026'])).toBe(false);
+    expect(fitsSegments(['All', 'Fall', 'Summer', 'Spring'])).toBe(false);
+    expect(fitsSegments(['All'])).toBe(false);
+  });
 });
 
 describe('season keys', () => {

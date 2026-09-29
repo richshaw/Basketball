@@ -102,15 +102,13 @@ test('restores the games on a new phone from the backup code', async ({
   const code = await enableCloudBackup(page);
   await expect.poll(() => server.uploads.length).toBe(1);
 
-  // A new phone, on the same server: the first-run card leads to the restore.
+  // A new phone, on the same server: the first-run screen leads to the restore.
   const phone = await newPhone(browser, baseURL);
   await routeFakeBackupServer(phone, server);
   await phone.goto('./');
   await expect(screenHeading(phone, 'Games')).toBeVisible();
-  await phone
-    .getByRole('region', { name: 'Who are you tracking?' })
-    .getByRole('link', { name: 'Restore from a backup' })
-    .tap();
+  await expect(phone.getByRole('region', { name: 'Who are you tracking?' })).toBeVisible();
+  await phone.getByRole('link', { name: 'Restore from a backup' }).tap();
   await expectRoute(phone, paths.restoreBackup('games'));
   await expect(screenHeading(phone, 'Restore from backup')).toBeVisible();
 

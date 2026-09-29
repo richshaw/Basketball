@@ -39,8 +39,17 @@ export function createSpreadsheetFile(csv: string, now: Date): File {
 const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 
 /**
+ * Named like a backup file this app saves (see backupFileName), also once the Files app
+ * or a download has added to the name ('hoop-stats-backup-2026-09-28 (1).json').
+ */
+export function isBackupFileName(name: string): boolean {
+  return /^hoop-stats-backup/i.test(name.trim());
+}
+
+/**
  * Reads and checks a file the parent picked. Rejects with an ExportFileError whose
- * message is written for the parent.
+ * message is written for the parent. A file named like our backups that can't be read
+ * at all (cut off, say) is a damaged backup, not some other file.
  */
 export async function readBackupFile(file: Blob): Promise<ExportFile> {
   if (file.size > MAX_BACKUP_BYTES) {
@@ -56,7 +65,7 @@ export async function readBackupFile(file: Blob): Promise<ExportFile> {
       String(error),
     ]);
   }
-  return parseExportFile(text);
+  return parseExportFile(text, { ours: file instanceof File && isBackupFileName(file.name) });
 }
 
 /** '10 games', '1 game' or 'No games'. */
@@ -159,9 +168,21 @@ export function rememberBackupFile(file: LastBackupFile): void {
 }
 
 /**
+ * Whether the last backup file saved on this phone holds all of its data: nothing has
+ * changed since (a new game, a restore, erasing everything). `lastChangeAt` is the
+ * data's `meta.lastChangeAt` now.
+ */
+export function backupFileIsCurrent(
+  lastSaved: LastBackupFile | undefined,
+  lastChangeAt: number | undefined,
+): lastSaved is LastBackupFile {
+  return lastSaved !== undefined && lastSaved.lastChangeAt === lastChangeAt;
+}
+
+/**
  * The "Save a backup file" row's subtitle. "Last saved" only while the data is still
- * what that file holds: after any change (a new game, a restore, erasing everything)
- * it says there are changes since, so it never vouches for data no file has.
+ * what that file holds (backupFileIsCurrent): after any change it says there are
+ * changes since, so it never vouches for data no file has.
  */
 export function backupFileStatus(
   lastSaved: LastBackupFile | undefined,
@@ -170,7 +191,7 @@ export function backupFileStatus(
   if (!data.hasData) return 'Nothing to back up yet';
   if (!lastSaved) return 'Not saved on this phone yet';
   const day = formatDayWithYear(lastSaved.savedAt);
-  return lastSaved.lastChangeAt === data.lastChangeAt
+  return backupFileIsCurrent(lastSaved, data.lastChangeAt)
     ? `Last saved: ${day}`
     : `Changes since your last backup file on ${day}`;
 }

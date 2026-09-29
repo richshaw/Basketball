@@ -11,11 +11,7 @@ import {
 } from '@/data/stats';
 import type { Game, Player } from '@/data/types';
 import { formatGameDate, formatMadeAttempted } from '@/lib/format';
-
-/** 'vs Central', or '@ Central' for an away game (home, neutral and unset use 'vs'). */
-export function matchupLabel(game: Pick<Game, 'opponent' | 'homeAway'>): string {
-  return `${game.homeAway === 'away' ? '@' : 'vs'} ${game.opponent}`;
-}
+import { gameTitle } from '@/lib/gameTitle';
 
 export interface GameOutcome {
   result: GameResult;
@@ -61,7 +57,7 @@ type RecapGame = Pick<
 /** 'Ava vs Central', or just 'vs Central' before the player has a name. */
 export function recapTitle(player: RecapPlayer, game: RecapGame): string {
   const name = player?.name.trim();
-  const matchup = matchupLabel(game);
+  const matchup = gameTitle(game);
   return name ? `${name} ${matchup}` : matchup;
 }
 

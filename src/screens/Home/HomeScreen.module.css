@@ -26,10 +26,29 @@
   gap: var(--space-3);
 }
 
+/* New game, and the quiet links under it, in the "No games yet" placeholder. */
+.emptyActions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .hurry {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
   text-align: center;
+}
+
+/* As short as an iPhone SE in Safari, under the install banner: New game still fits. */
+@media (max-height: 599px) {
+  .body {
+    gap: var(--space-4);
+  }
+
+  .hurry {
+    display: none;
+  }
 }
 
 .plus {

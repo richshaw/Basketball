@@ -20,10 +20,18 @@
   top: calc(var(--safe-top) + var(--header-bar-height) + var(--space-2));
 }
 
-/* Inside an open sheet: hangs from the outlet under the sheet's header (Sheet.module.css). */
-.overSheet {
-  position: absolute;
-  top: var(--space-2);
+/*
+ * Inside an open sheet: part of the sheet's layout, in the outlet under its header
+ * (Sheet.module.css), so it takes room of its own there and never covers the sheet's
+ * content or buttons.
+ */
+.inSheet {
+  position: static;
+  padding-inline: var(--space-4);
+}
+
+.inSheet .toast {
+  margin-bottom: var(--space-3);
 }
 
 .toast {

@@ -6,11 +6,11 @@ import { useToast } from '@/components/Toast/toastContext';
 import { deleteStat } from '@/data/repo';
 import type { Game, StatEvent } from '@/data/types';
 import { cx } from '@/lib/cx';
+import { formatClockTime } from '@/lib/format';
 import { paths } from '@/routes';
 import {
   countPlays,
   EXPAND_ALL_UP_TO,
-  formatClockTime,
   periodSummary,
   playByPlay,
   type PeriodPlays,

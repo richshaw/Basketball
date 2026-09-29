@@ -1,0 +1,7 @@
+/* Why the tiles can add up to more shots than the shot map shows. */
+.footnote {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+  text-align: center;
+}

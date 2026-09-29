@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { useTopSheetOutlet } from '@/components/Sheet/sheetStack';
+import { useOpenSheets } from '@/components/Sheet/sheetStack';
 import { cx } from '@/lib/cx';
 import { ToastContext, type Toaster, type ToastOptions } from './toastContext';
 import styles from './Toast.module.css';
@@ -39,7 +39,8 @@ interface State {
 type Action =
   | { type: 'show'; toast: ActiveToast }
   | { type: 'hide'; id?: number }
-  | { type: 'remove'; id: number };
+  | { type: 'remove'; id: number }
+  | { type: 'clear' };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -59,6 +60,9 @@ function reducer(state: State, action: Action): State {
       return state.current?.id === action.id
         ? { current: state.next, leaving: false, next: null }
         : state;
+    // Gone at once, with no exit: a sheet opening on top has covered it.
+    case 'clear':
+      return state.current || state.next ? initialState : state;
   }
 }
 
@@ -71,7 +75,10 @@ const initialState: State = { current: null, leaving: false, next: null };
  *
  * The live region is created once and moved, never re-created: into the top open
  * sheet (a modal makes the rest of the page inert), and back to the page when it
- * closes. So screen readers always announce new toasts.
+ * closes. So screen readers always announce new toasts. In a sheet a toast takes room
+ * of its own under the header instead of floating, so it never covers the sheet's
+ * content or buttons; and a sheet or dialog that opens clears the toast shown before
+ * it (about the screen it now covers), with any waiting to follow it.
  */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -120,10 +127,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [current, leaving]);
 
+  const sheets = useOpenSheets();
+  const sheetOutlet = sheets.at(-1) ?? null;
+  // A sheet that just opened on top (not one uncovered by another closing) clears the
+  // toast, before it can show there.
+  const knownSheets = useRef(sheets);
+  useLayoutEffect(() => {
+    const top = sheets.at(-1);
+    const opened = top !== undefined && !knownSheets.current.includes(top);
+    knownSheets.current = sheets;
+    if (opened) dispatch({ type: 'clear' });
+  }, [sheets]);
+
   // One live region for the app's lifetime, moved to wherever toasts must show.
   const [region] = useState(() => document.createElement('div'));
   const pageSlot = useRef<HTMLDivElement>(null);
-  const sheetOutlet = useTopSheetOutlet();
   useLayoutEffect(() => {
     const parent = sheetOutlet ?? pageSlot.current;
     if (parent && region.parentNode !== parent) parent.appendChild(region);
@@ -144,7 +162,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       role="status"
       aria-live="polite"
       aria-label="Notifications"
-      className={cx(styles.viewport, sheetOutlet ? styles.overSheet : styles[placement])}
+      className={cx(styles.viewport, sheetOutlet ? styles.inSheet : styles[placement])}
     >
       {current ? (
         <div

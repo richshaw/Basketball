@@ -1,4 +1,11 @@
-import { useRef, type CSSProperties, type KeyboardEvent } from 'react';
+import {
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from 'react';
 import { cx } from '@/lib/cx';
 import styles from './SegmentedControl.module.css';
 
@@ -21,6 +28,21 @@ export type SegmentedControlProps<T extends string> = GroupLabel & {
   onChange: (value: T) => void;
   /** `md` is 44px tall (forms, filters); `lg` is 56px for a screen's main choice. */
   size?: 'md' | 'lg';
+  /**
+   * Segments share the width equally while every label fits, and a label that needs
+   * more room takes it from the others (in bold, as when it's selected), instead of
+   * being cut. The thumb then fades in under the selected segment rather than sliding.
+   * For labels that fit together: check their length first (see SeasonPicker). If they
+   * need more room than the control has even so (a narrow screen), it measures that,
+   * goes back to equal segments that cut the labels, never widening the page, and calls
+   * `onOverflow`.
+   */
+  fitLabels?: boolean;
+  /**
+   * fitLabels only: the labels turned out to need more room than the control has, so
+   * they're cut. E.g. to offer the choices another way, as SeasonPicker does (a sheet).
+   */
+  onOverflow?: () => void;
   className?: string;
 };
 
@@ -52,11 +74,36 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   size = 'md',
+  fitLabels = false,
+  onOverflow,
   className,
   ...groupLabel
 }: SegmentedControlProps<T>) {
+  const control = useRef<HTMLDivElement>(null);
   const segments = useRef<(HTMLButtonElement | null)[]>([]);
   const selectedIndex = options.findIndex((option) => option.value === value);
+
+  // fitLabels, until these labels turn out not to fit: measured as they show (before
+  // they're painted) and whenever the control resizes (rotation, split view).
+  const labels = options.map((option) => option.label).join('\n');
+  const [overflowed, setOverflowed] = useState<string | null>(null);
+  const fit = fitLabels && overflowed !== labels;
+  const overflow = useEffectEvent(() => {
+    setOverflowed(labels);
+    onOverflow?.();
+  });
+  useLayoutEffect(() => {
+    const element = control.current;
+    if (!fit || !element) return;
+    const measure = () => {
+      if (element.scrollWidth > element.clientWidth) overflow();
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [fit, labels]);
 
   const select = (index: number) => {
     const option = options[index];
@@ -82,13 +129,22 @@ export function SegmentedControl<T extends string>({
 
   return (
     <div
+      ref={control}
       role="radiogroup"
       {...groupLabel}
-      className={cx(styles.control, styles[size], className)}
+      className={cx(styles.control, styles[size], fit && styles.fitLabels, className)}
       style={thumbPosition}
       onKeyDown={handleKeyDown}
     >
-      {selectedIndex === -1 ? null : <span className={styles.thumb} aria-hidden="true" />}
+      {selectedIndex === -1 ? null : (
+        <span
+          // In its own cell, a new thumb for each selection: it fades in there.
+          key={fit ? selectedIndex : undefined}
+          className={cx(styles.thumb, fit ? styles.inCell : styles.sliding)}
+          style={fit ? { gridColumn: selectedIndex + 1 } : undefined}
+          aria-hidden="true"
+        />
+      )}
       {options.map((option, index) => {
         const selected = index === selectedIndex;
         // Roving focus: only one segment is in the tab order (the selected one, else the first).
@@ -104,6 +160,9 @@ export function SegmentedControl<T extends string>({
             aria-checked={selected}
             tabIndex={tabbable ? 0 : -1}
             className={cx(styles.segment, selected && styles.selected)}
+            // With fitLabels: its own column, and its label kept for the width it takes in bold.
+            style={fit ? { gridColumn: index + 1 } : undefined}
+            data-label={fit ? option.label : undefined}
             onClick={() => select(index)}
           >
             {option.label}

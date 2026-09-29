@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   formatAvg,
+  formatClockTime,
   formatGameDate,
   formatMadeAttempted,
   formatPct,
@@ -105,6 +106,29 @@ describe('number formatting', () => {
   it('formats makes and attempts', () => {
     expect(formatMadeAttempted(5, 9)).toBe('5/9');
     expect(formatMadeAttempted(0, 0)).toBe('0/0');
+  });
+});
+
+describe('formatClockTime', () => {
+  it('shows local time on a 12-hour clock without AM/PM', () => {
+    expect(formatClockTime(new Date(2026, 8, 27, 18, 5).getTime())).toBe('6:05');
+    expect(formatClockTime(new Date(2026, 8, 27, 9, 41).getTime())).toBe('9:41');
+    expect(formatClockTime(new Date(2026, 8, 27, 0, 30).getTime())).toBe('12:30');
+    expect(formatClockTime(new Date(2026, 8, 27, 12, 0).getTime())).toBe('12:00');
+    expect(formatClockTime(new Date(2026, 8, 27, 23, 59).getTime())).toBe('11:59');
+  });
+
+  it('can add the seconds (the live game log)', () => {
+    const time = new Date(2026, 8, 27, 18, 5, 9).getTime();
+    expect(formatClockTime(time, { seconds: true })).toBe('6:05:09');
+    expect(formatClockTime(time, { seconds: false })).toBe('6:05');
+    const withSeconds = (...hms: [number, number, number]) =>
+      formatClockTime(new Date(2026, 8, 27, ...hms).getTime(), { seconds: true });
+    expect(withSeconds(0, 0, 0)).toBe('12:00:00');
+    expect(withSeconds(19, 4, 5)).toBe('7:04:05');
+    expect(withSeconds(0, 30, 0)).toBe('12:30:00');
+    expect(withSeconds(12, 0, 59)).toBe('12:00:59');
+    expect(withSeconds(9, 59, 9)).toBe('9:59:09');
   });
 });
 

@@ -9,6 +9,7 @@ import { importAll, type ExportFile, type ImportMode, type ImportSummary } from 
 import { cx } from '@/lib/cx';
 import { ActionRow } from './ActionRow';
 import { backupSummary, nothingNewMessage, restoredMessage } from './backupFiles';
+import { useStillHere } from './useStillHere';
 import styles from './RestoreSheet.module.css';
 
 /**
@@ -102,13 +103,7 @@ export function RestoreSheet({
   );
   // A restore that finishes after the sheet (or its screen) has gone says nothing: the
   // parent may be on the live game screen by then.
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const stillHere = useStillHere();
   const openRef = useRef(open);
   useEffect(() => {
     openRef.current = open;
@@ -162,7 +157,7 @@ export function RestoreSheet({
     } catch (error) {
       console.error('Restoring a backup failed', error);
       setRestoring(false);
-      if (mounted.current) toast.show({ message: RESTORE_FAILED });
+      if (stillHere()) toast.show({ message: RESTORE_FAILED });
       return;
     }
     let note: string | undefined;
@@ -173,7 +168,7 @@ export function RestoreSheet({
       console.error('After restoring a backup', error);
     }
     setRestoring(false);
-    if (!mounted.current) return;
+    if (!stillHere()) return;
     if (mode === 'merge' && taken.games === 0 && backup.games.length > 0 && !phoneIsEmpty) {
       // Nothing to add: say so next to Replace, the way to get the backup's versions.
       setNothingNew({ request, note });

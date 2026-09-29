@@ -9,7 +9,7 @@ import {
   type EngineHarness,
 } from '@/test/backupHarness';
 import { resetDatabase } from '@/test/db';
-import { isDemoGameId, seedDemoData } from '../demo';
+import { buildDemoData, isDemoGameId, seedDemoData } from '../demo';
 import * as repo from '../repo';
 import {
   createGame,
@@ -25,8 +25,15 @@ import {
 import { clearAllData, exportAll, importAll } from '../transfer';
 import { createBackupApi } from './api';
 import { generateBackupCode, parseBackupCode } from './code';
-import { BackupEngine, observeDatabase, readObservation, type BackupObservation } from './engine';
+import {
+  BackupEngine,
+  observeDatabase,
+  readObservation,
+  readRealData,
+  type BackupObservation,
+} from './engine';
 import { deriveBackupKeys } from './keys';
+import { realData } from './policy';
 import { decryptSnapshot, encryptSnapshot } from './snapshot';
 import { loadBackupState, turnOnBackupState } from './state';
 import type { BackupRuntime } from './status';
@@ -647,6 +654,132 @@ describe('shrink guard', () => {
     const keys = await deriveBackupKeys(parseBackupCode(code));
     const latest = await decryptSnapshot(h.server.uploads.at(-1)!.bytes, keys);
     expect(latest.games.some((game) => isDemoGameId(game.id))).toBe(false);
+  });
+});
+
+describe('shrink guard: the status says so at once', () => {
+  it('reads the same games of her own on the phone as the upload finds in its export', async () => {
+    // Her games and the sample games side by side: the sample games never count.
+    await seedReal({ liveGame: true });
+    await importAll(buildDemoData({ today: '2026-09-27', liveGame: true }), 'merge');
+    const onPhone = await readRealData();
+    const inExport = realData(await exportAll());
+    expect(onPhone.gameIds.toSorted()).toEqual(inExport.gameIds.toSorted());
+    expect(onPhone.gameIds).toHaveLength(11);
+    expect(onPhone.events).toBe(inExport.events);
+  });
+
+  it('shows the pause as soon as the data calls for it, before an upload is held back', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+
+    await clearAllData();
+    await h.notify();
+    // The next upload waits 20 s after a change; the status needn't.
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'paused-shrink',
+      pendingChanges: true,
+      shrink: { backedUpGames: 10, missingGames: 10 },
+    });
+    expect(await loadBackupState()).not.toHaveProperty('paused');
+
+    // The rules are the same: that upload is held back and stores the pause.
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(1);
+    expect(await loadBackupState()).toMatchObject({ paused: 'shrink' });
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'paused-shrink',
+      shrink: { backedUpGames: 10, missingGames: 10 },
+    });
+  });
+
+  it('shows the new counts as soon as more games go missing', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    for (const n of [1, 2, 3, 4, 5]) await deleteGame(realGameId(n));
+    await h.notify();
+    await h.advance(MINUTE);
+    expect(await loadBackupState()).toMatchObject({ shrink: { missingGames: 5 } });
+
+    await deleteGame(realGameId(6));
+    await h.notify();
+    expect(await h.engine.getStatus()).toMatchObject({
+      state: 'paused-shrink',
+      shrink: { backedUpGames: 10, missingGames: 6 },
+    });
+  });
+
+  it('shows it gone as soon as the games are back, before the upload that clears it', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    await clearAllData();
+    await h.notify();
+    await h.advance(MINUTE);
+    expect(await loadBackupState()).toMatchObject({ paused: 'shrink' });
+
+    await seedReal();
+    await h.notify();
+    const status = await h.engine.getStatus();
+    expect(status).toMatchObject({ state: 'idle', pendingChanges: true });
+    expect(status).not.toHaveProperty('shrink');
+    expect(status).not.toHaveProperty('lastError');
+
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(2);
+    expect(await loadBackupState()).not.toHaveProperty('paused');
+  });
+
+  it('never shows a pause for another reason as a shrink', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    await uploadFromAnotherPhone(h, code);
+    await change(h);
+    await h.advance(MINUTE);
+    expect((await h.engine.getStatus()).state).toBe('paused-other-device');
+
+    // Automatic uploads don't run while paused for another phone, so the guard isn't reached.
+    await clearAllData();
+    await h.notify();
+    expect(await h.engine.getStatus()).toMatchObject({ state: 'paused-other-device' });
+    expect(await h.engine.getStatus()).not.toHaveProperty('shrink');
+  });
+
+  it('"Back up anyway" overrides a pause shown before an upload found it', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    await clearAllData();
+    await h.notify();
+    expect((await h.engine.getStatus()).state).toBe('paused-shrink');
+
+    expect(await h.engine.backUpNow({ force: true })).toMatchObject({
+      ok: true,
+      value: { games: 0 },
+    });
+    expect(h.server.putCount).toBe(2);
+    expect(await h.engine.getStatus()).toMatchObject({ state: 'idle', pendingChanges: false });
+  });
+
+  it('keeps a pause shown early on screen while an automatic upload checks it', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    await clearAllData();
+    await h.notify();
+
+    const states: string[] = [];
+    const unsubscribe = h.engine.subscribe(() => {
+      void h.engine.getStatus().then((status) => states.push(status.state));
+    });
+    await h.advance(MINUTE);
+    unsubscribe();
+    await flush();
+    expect(states.length).toBeGreaterThan(0);
+    expect(new Set(states)).toEqual(new Set(['paused-shrink']));
   });
 });
 

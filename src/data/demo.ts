@@ -12,24 +12,29 @@ import {
 } from '@/lib/court';
 import { parseLocalDate, todayLocalISO, toLocalISODate } from '@/lib/format';
 import { db } from './db';
+import {
+  DEMO_LIVE_GAME_ID,
+  DEMO_PLAYER_ID,
+  DEMO_PLAYER_NAME,
+  DEMO_PLAYER_NUMBER,
+  demoGameId,
+  isDemoGameId,
+  isDemoPlayer,
+} from './demoIds';
+import { forgetPendingStats } from './pendingStats';
+import { deleteGame, getPlayer, savePlayer } from './repo';
 import { isFieldGoalType } from './stats';
 import { EXPORT_APP, EXPORT_SCHEMA_VERSION, importAll, type ExportFile } from './transfer';
 import type { CourtPoint, Game, HomeAway, Player, StatEvent, StatType } from './types';
 
-export const DEMO_PLAYER_ID = 'demo-player';
+export {
+  DEMO_LIVE_GAME_ID,
+  DEMO_PLAYER_ID,
+  demoGameId,
+  isDemoGameId,
+  isDemoPlayer,
+} from './demoIds';
 export const DEMO_SEASON = 'Fall 2026';
-/** The optional live game's id (see `DemoOptions.liveGame`). */
-export const DEMO_LIVE_GAME_ID = 'demo-live';
-
-/** Id of the nth demo game, 1 (oldest) to 10 (newest), e.g. 'demo-game-10'. */
-export function demoGameId(n: number): string {
-  return `demo-game-${String(n).padStart(2, '0')}`;
-}
-
-/** Whether a game is demo data (e.g. to remove the sample games and nothing else). */
-export function isDemoGameId(id: string): boolean {
-  return id === DEMO_LIVE_GAME_ID || /^demo-game-\d{2}$/.test(id);
-}
 
 export interface DemoOptions {
   /** The local date ('YYYY-MM-DD') the games count back from. Defaults to today. */
@@ -43,6 +48,13 @@ export interface DemoOptions {
   force?: boolean;
   /** seedDemoData only: keep this device's settings instead of the demo's. */
   keepSettings?: boolean;
+  /**
+   * seedDemoData only: keep a player the parent set up (with a name or a number), and
+   * make the sample games hers instead of the sample player's. A player with neither is
+   * replaced by the sample player, as without it. Players never count as the device's
+   * own data then: only its games do.
+   */
+  keepPlayer?: boolean;
 }
 
 interface DemoGamePlan {
@@ -302,8 +314,8 @@ export function buildDemoData(options: DemoOptions = {}): ExportFile {
   const playerCreatedAt = localTime(daysBefore(firstDate, 7), 20);
   const player: Player = {
     id: DEMO_PLAYER_ID,
-    name: 'Ava',
-    jerseyNumber: '12',
+    name: DEMO_PLAYER_NAME,
+    jerseyNumber: DEMO_PLAYER_NUMBER,
     createdAt: playerCreatedAt,
     updatedAt: playerCreatedAt,
   };
@@ -371,29 +383,79 @@ export function buildDemoData(options: DemoOptions = {}): ExportFile {
   };
 }
 
-/** Whether the device holds a player or game that isn't demo data. */
-async function hasOwnData(): Promise<boolean> {
-  const [playerIds, gameIds] = await Promise.all([
-    db.players.toCollection().primaryKeys(),
-    db.games.toCollection().primaryKeys(),
-  ]);
-  return playerIds.some((id) => id !== DEMO_PLAYER_ID) || gameIds.some((id) => !isDemoGameId(id));
+/** Whether the device holds a game (or, unless `keepPlayer`, a player) that isn't demo data. */
+async function hasOwnData({ keepPlayer = false }: DemoOptions = {}): Promise<boolean> {
+  const gameIds = await db.games.toCollection().primaryKeys();
+  if (gameIds.some((id) => !isDemoGameId(id))) return true;
+  if (keepPlayer) return false;
+  const playerIds = await db.players.toCollection().primaryKeys();
+  return playerIds.some((id) => id !== DEMO_PLAYER_ID);
+}
+
+/** The device's player, if the parent set her up: she has a name or a number. */
+async function setUpPlayer(): Promise<Player | undefined> {
+  const player = await getPlayer();
+  return player && (player.name.trim() || player.jerseyNumber) ? player : undefined;
 }
 
 /**
  * Replaces everything on this device with the demo data: player "Ava" #12 and ten
- * final "Fall 2026" games (ids `demoGameId(1)`…`demoGameId(10)`, newest last).
- * It's on `window.hoopStats` in every build, so it refuses to touch real data
- * (anything but earlier demo data) unless called with `{ force: true }`.
+ * final "Fall 2026" games (ids `demoGameId(1)`…`demoGameId(10)`, newest last), or the
+ * games alone, for a player the parent set up, with `keepPlayer`. It's on
+ * `window.hoopStats` in every build, so it refuses to touch real data (anything but
+ * earlier demo data) unless called with `{ force: true }`.
  */
 export async function seedDemoData(options: DemoOptions = {}): Promise<void> {
-  if (!options.force && (await hasOwnData())) {
+  if (!options.force && (await hasOwnData(options))) {
     throw new Error(
       'This device has its own data, so the demo data was not loaded. ' +
         'Use seedDemoData({ force: true }) to replace it.',
     );
   }
-  const { settings, ...data } = buildDemoData(options);
+  const { settings, ...demo } = buildDemoData(options);
+  const player = options.keepPlayer ? await setUpPlayer() : undefined;
+  const games = player ? demo.games.map((game) => ({ ...game, playerId: player.id })) : demo.games;
+  const data = player ? { ...demo, players: [player], games } : demo;
   // A backup without settings leaves the device's own settings alone.
   await importAll(options.keepSettings ? data : { ...data, settings }, 'replace');
+}
+
+/**
+ * "Try it with sample data": the sample games, keeping this phone's settings and a
+ * player the parent set up (the games are hers then; otherwise they come with the
+ * sample player, "Ava" #12). Resolves to false, adding nothing, when the phone has
+ * games of its own.
+ */
+export async function addSampleData(): Promise<boolean> {
+  if (await hasOwnData({ keepPlayer: true })) return false;
+  await seedDemoData({ keepPlayer: true, keepSettings: true });
+  return true;
+}
+
+/**
+ * "Remove sample games": deletes the sample games and their stats and, while the player
+ * is still the sample player (isDemoPlayer), her name and number. Her record stays, so
+ * games of the parent's own stay attached to it, and the app asks who's being tracked
+ * again. A player the parent named or renamed, her games and the settings stay as they
+ * are. All or nothing, in one transaction, and so are the sample games' taps and spots
+ * not saved yet: all forgotten just before it, all kept again if it fails (as importAll
+ * does). Resolves to how many games it removed.
+ */
+export async function removeDemoData(): Promise<number> {
+  const sampleIds = (await db.games.toCollection().primaryKeys()).filter(isDemoGameId);
+  // Right before the write: then no retry can save one of their taps into a sample game
+  // added again later (it would have the same id). (deleteGame, below, then has none left
+  // to forget, and none to put back if the write fails: that's done here, for all of them.)
+  const keepAgain = sampleIds.map((id) => forgetPendingStats(id));
+  try {
+    return await db.transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
+      for (const id of sampleIds) await deleteGame(id);
+      const player = await getPlayer();
+      if (player && isDemoPlayer(player)) await savePlayer({ name: '', jerseyNumber: null });
+      return sampleIds.length;
+    });
+  } catch (error) {
+    for (const again of keepAgain) again();
+    throw error;
+  }
 }

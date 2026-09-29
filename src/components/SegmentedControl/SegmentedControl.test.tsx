@@ -137,4 +137,93 @@ describe('SegmentedControl', () => {
     expect(screen.getByRole('radiogroup', { name: 'Periods' })).toHaveClass('lg');
     expect(segment('Halves')).toBeChecked();
   });
+
+  it('can let a long label take the room it needs, keeping its bold width', async () => {
+    const user = userEvent.setup();
+    function SeasonPicker() {
+      const [value, setValue] = useState('fall');
+      return (
+        <SegmentedControl
+          aria-label="Season"
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'fall', label: 'Fall 2026' },
+            { value: 'summer', label: 'Summer 2026' },
+          ]}
+          value={value}
+          onChange={setValue}
+          fitLabels
+        />
+      );
+    }
+    const { container } = render(<SeasonPicker />);
+    expect(screen.getByRole('radiogroup', { name: 'Season' })).toHaveClass('fitLabels');
+    // Each segment has its own column, and its label for the width it takes in bold.
+    ['All', 'Fall 2026', 'Summer 2026'].forEach((label, index) => {
+      expect(segment(label)).toHaveAttribute('data-label', label);
+      expect(segment(label).style.gridColumn).toBe(`${index + 1}`);
+    });
+    // The thumb sits in the selected segment's column, and moves with the selection.
+    const thumb = () => container.querySelector<HTMLElement>('.thumb');
+    expect(thumb()).toHaveClass('inCell');
+    expect(thumb()?.style.gridColumn).toBe('2');
+
+    await user.click(segment('Summer 2026'));
+    expect(segment('Summer 2026')).toBeChecked();
+    expect(thumb()?.style.gridColumn).toBe('3');
+  });
+
+  it('cuts the labels after all when they need more room than it has, and says so', () => {
+    // jsdom does no layout: say the labels need 361 points, and the control has 320.
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(361);
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(320);
+    const onOverflow = vi.fn();
+    const { container } = render(
+      <SegmentedControl
+        aria-label="Season"
+        options={[
+          { value: 'all', label: 'All' },
+          { value: 'summer27', label: 'Summer 2027' },
+          { value: 'summer26', label: 'Summer 2026' },
+        ]}
+        value="summer27"
+        onChange={() => {}}
+        fitLabels
+        onOverflow={onOverflow}
+      />,
+    );
+    expect(onOverflow).toHaveBeenCalledTimes(1);
+    // Equal segments again, under a sliding thumb, so the page never widens.
+    expect(screen.getByRole('radiogroup', { name: 'Season' })).not.toHaveClass('fitLabels');
+    expect(container.querySelector('.thumb')).toHaveClass('sliding');
+    expect(segment('Summer 2027')).not.toHaveAttribute('data-label');
+    expect(segment('Summer 2027')).toBeChecked();
+  });
+
+  it('keeps fitting the labels while they have the room', () => {
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(320);
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(320);
+    const onOverflow = vi.fn();
+    render(
+      <SegmentedControl
+        aria-label="Season"
+        options={[
+          { value: 'all', label: 'All' },
+          { value: 'fall', label: 'Fall 2026' },
+        ]}
+        value="fall"
+        onChange={() => {}}
+        fitLabels
+        onOverflow={onOverflow}
+      />,
+    );
+    expect(onOverflow).not.toHaveBeenCalled();
+    expect(screen.getByRole('radiogroup', { name: 'Season' })).toHaveClass('fitLabels');
+  });
+
+  it('slides one thumb under equal segments by default', () => {
+    const { container } = render(<VenuePicker initial="away" />);
+    expect(container.querySelector('.thumb')).toHaveClass('sliding');
+    expect(segment('Away')).not.toHaveAttribute('data-label');
+  });
 });

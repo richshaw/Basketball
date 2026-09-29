@@ -9,8 +9,8 @@ import {
   createBackupFile,
   createSpreadsheetFile,
   readBackupFile,
-  readLastBackupFile,
   rememberBackupFile,
+  type LastBackupFile,
 } from './backupFiles';
 import { buildGamesCsv } from './gamesCsv';
 import { RestoreSheet, type RestoreRequest } from './RestoreSheet';
@@ -33,6 +33,10 @@ export interface BackupSectionProps {
    * `behind` (paused, stopped or not backed up yet, so the latest stats are only here).
    */
   onlineBackup?: OnlineBackupNote;
+  /** The last backup file saved on this phone (see readLastBackupFile), if known. */
+  lastSaved: LastBackupFile | undefined;
+  /** A backup file was saved just now (already remembered on the phone). */
+  onSaved: (saved: LastBackupFile) => void;
 }
 
 export type OnlineBackupNote = 'keeping-up' | 'behind';
@@ -56,9 +60,10 @@ export function BackupSection({
   fresh,
   currentSnapshot,
   onlineBackup,
+  lastSaved,
+  onSaved,
 }: BackupSectionProps) {
   const toast = useToast();
-  const [lastSaved, setLastSaved] = useState(readLastBackupFile);
   const [sharing, setSharing] = useState(false);
   const sharingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -92,7 +97,7 @@ export function BackupSection({
     if (result === 'shared' || result === 'downloaded') {
       const saved = { savedAt: now.getTime(), lastChangeAt: current.lastChangeAt };
       rememberBackupFile(saved);
-      setLastSaved(saved);
+      onSaved(saved);
       toast.show({ message: result === 'shared' ? 'Backup file saved' : 'Backup file downloaded' });
     } else if (result === 'failed') {
       toast.show({ message: SAVE_FAILED });

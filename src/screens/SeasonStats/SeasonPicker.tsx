@@ -7,16 +7,8 @@ import {
   type SegmentedOption,
 } from '@/components/SegmentedControl/SegmentedControl';
 import { Sheet } from '@/components/Sheet/Sheet';
-import { ALL_SEASONS, seasonKey, type SeasonKey } from './seasonFilter';
+import { ALL_SEASONS, fitsSegments, seasonKey, type SeasonKey } from './seasonFilter';
 import styles from './SeasonPicker.module.css';
-
-/** Longest label (characters) that still fits one segment, by number of segments. */
-const SEGMENT_MAX_CHARS: Record<number, number> = { 2: 18, 3: 11 };
-
-function fitsSegments(options: readonly SegmentedOption<SeasonKey>[]): boolean {
-  const maxChars = SEGMENT_MAX_CHARS[options.length];
-  return maxChars !== undefined && options.every((option) => option.label.length <= maxChars);
-}
 
 export interface SeasonPickerProps {
   /** Season labels, most recent first. */
@@ -27,18 +19,33 @@ export interface SeasonPickerProps {
 
 /**
  * Picks which games the stats cover: all of them, or one season. A segmented
- * control while the choices fit on one line; otherwise a row that opens a sheet.
+ * control while the choices fit on one line; otherwise a row that opens a sheet. They
+ * fit by their length (fitsSegments), unless the screen turns out to be narrower
+ * than that allows for (Display Zoom on an iPhone SE is 320 points wide): the control
+ * measures its labels, and the sheet takes over rather than cutting them (while the
+ * screen is open).
  */
 export function SeasonPicker({ seasons, value, onChange }: SeasonPickerProps) {
   const [open, setOpen] = useState(false);
+  // Labels that didn't fit this screen after all (SegmentedControl's onOverflow).
+  const [overflowed, setOverflowed] = useState<string | null>(null);
   const options: SegmentedOption<SeasonKey>[] = [
     { value: ALL_SEASONS, label: 'All' },
     ...seasons.map((season) => ({ value: seasonKey(season), label: season })),
   ];
+  const labels = options.map((option) => option.label);
+  const labelsKey = labels.join('\n');
 
-  if (fitsSegments(options)) {
+  if (fitsSegments(labels) && overflowed !== labelsKey) {
     return (
-      <SegmentedControl aria-label="Season" options={options} value={value} onChange={onChange} />
+      <SegmentedControl
+        aria-label="Season"
+        options={options}
+        value={value}
+        onChange={onChange}
+        fitLabels
+        onOverflow={() => setOverflowed(labelsKey)}
+      />
     );
   }
 
