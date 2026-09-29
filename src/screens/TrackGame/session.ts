@@ -24,8 +24,10 @@
  *   pending-removals journal (src/data/pendingRemovals.ts), so a reload still removes its
  *   stat, and it's tried again with the taps. (Kept even while a save of it is under way:
  *   IndexedDB runs that earlier save before any later delete, so the stat can't come
- *   back after it.) A new session starts with its game's kept removals, not counting
- *   their stats.
+ *   back after it.) A saved stat taken back (the log's delete, or Undo) is kept there
+ *   too until it's gone, and forgotten if it stays. A saved stat's removal is waited for
+ *   no longer than REMOVE_WAIT_MS: one that doesn't answer stays kept, and still happens.
+ *   A new session starts with its game's kept removals, not counting their stats.
  * - The period moves on screen at once and is then saved; the saved period takes
  *   over again once no move is being saved (or a move couldn't be saved, or didn't
  *   answer within MOVE_WAIT_MS).
@@ -75,6 +77,13 @@ export const SAVE_ALL_WAIT_MS = 3000;
  * good.
  */
 export const MOVE_WAIT_MS = 5000;
+
+/**
+ * How long taking back a saved stat waits for its removal (the grid's Undo is busy
+ * meanwhile) before saying it hasn't gone yet ('unanswered'): a delete that never
+ * answers must not leave it waiting for good. The removal is kept, and still happens.
+ */
+export const REMOVE_WAIT_MS = 5000;
 
 /** How long after a 2PT/3PT tap a tap on the court marks where it was taken. */
 export const SPOT_WINDOW_MS = 10_000;
@@ -204,7 +213,12 @@ export type Removal =
   /** It was gone already (e.g. deleted on another screen): nothing was removed. */
   | 'gone'
   /** It couldn't be removed: it still counts. */
-  | 'failed';
+  | 'failed'
+  /**
+   * Removing it hasn't answered within REMOVE_WAIT_MS: it's still being removed, and
+   * doesn't count; its removal is kept, so it's done later (here, or after a reload).
+   */
+  | 'unanswered';
 
 /** A stat that Undo (or the log) is taking back. */
 export interface TakingBack {
@@ -216,7 +230,11 @@ export interface TakingBack {
    * confirmed saved. False for a saved stat, which only goes once `removal` says so.
    */
   readonly immediate: boolean;
-  /** Settles once its stat is dealt with; 'failed' if it counts again. */
+  /**
+   * Settles once its stat is dealt with; 'failed' if it counts again. For a saved stat,
+   * at the latest after the wait undo() was given: 'unanswered' if its removal hasn't
+   * answered by then (it's kept, still under way, and the stat doesn't count).
+   */
   readonly removal: Promise<Removal>;
 }
 
@@ -277,6 +295,17 @@ function attempt<T>(write: () => Promise<T>): Promise<T> {
   }
 }
 
+/** How `removal` went, or 'unanswered' if it hasn't settled within `waitMs`. */
+function answeredWithin(removal: Promise<Removal>, waitMs: number): Promise<Removal> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve('unanswered'), waitMs);
+    void removal.then((result) => {
+      clearTimeout(timer);
+      resolve(result);
+    });
+  });
+}
+
 function tapOf({ stat }: TapRecord): Tap {
   const tap = { id: stat.id, type: stat.type, period: stat.period, at: stat.at };
   return stat.location ? { ...tap, location: stat.location } : tap;
@@ -315,6 +344,11 @@ export class TrackingSession implements UnsavedTapHolder {
   private readonly removing = new Set<string>();
   /** The removals under way, by stat id. */
   private readonly removals = new Map<string, Promise<Removal>>();
+  /**
+   * Saved stats (not this session's taps) whose removal is under way, and kept in the
+   * pending-removals journal meanwhile (see removeSavedStat).
+   */
+  private readonly keptStatRemovals = new Set<string>();
   /** The latest tap time given out or seen, so the next tap sorts after it. */
   private lastAt: number | undefined;
   private readonly listeners = new Set<() => void>();
@@ -661,18 +695,19 @@ export class TrackingSession implements UnsavedTapHolder {
    * Whether reloading the page now would lose nothing it holds: every tap that isn't
    * confirmed saved is kept in the journal (which outlives the page), with the spot
    * marked for it, and every spot not on its stat yet in the spots journal; every tap
-   * taken back has its removal kept in the removals journal (after a reload, that still
-   * removes a stat whose tap's save landed after all; the line has said it's removed),
-   * from the Undo on; no saved stat is being removed (it has stopped counting); and no
-   * period move is still being saved (the next taps would land in the old period), which
-   * a move that doesn't answer stops being after MOVE_WAIT_MS.
+   * taken back, and every saved stat being removed (it has stopped counting), has its
+   * removal kept in the removals journal, from the Undo (or the log's delete) on: after
+   * a reload, that still removes the stat, even one whose tap's save landed after all;
+   * and no period move is still being saved (the next taps would land in the old
+   * period), which a move that doesn't answer stops being after MOVE_WAIT_MS.
    */
   reloadSafe(): boolean {
-    const keptRemovals = new Set(
-      this.taps
+    const keptRemovals = new Set([
+      ...this.taps
         .filter((record) => record.undone && record.removalKept)
         .map((record) => record.stat.id),
-    );
+      ...this.keptStatRemovals,
+    ]);
     return (
       [...this.removals.keys()].every((id) => keptRemovals.has(id)) &&
       this.movesInFlight === 0 &&
@@ -861,13 +896,14 @@ export class TrackingSession implements UnsavedTapHolder {
   }
 
   /** Takes back a tap: at once if it isn't confirmed saved, else by removing its stat. */
-  private takeBack(record: TapRecord): TakingBack {
+  private takeBack(record: TapRecord, waitMs: number): TakingBack {
     const { type, id } = record.stat;
     if (record.undone) {
       // Taken back already: the same outcome (and another go at removing its stat, if
-      // that failed).
+      // that failed), waited for no longer than the first time (it may still hang).
       if (record.orphan) record.removal = this.removeOrphan(record);
-      return { id, type, immediate: false, removal: record.removal ?? Promise.resolve('removed') };
+      const removal = record.removal ?? Promise.resolve<Removal>('removed');
+      return { id, type, immediate: false, removal: answeredWithin(removal, waitMs) };
     }
     const confirmed = record.status === 'saved';
     record.undone = true;
@@ -881,7 +917,14 @@ export class TrackingSession implements UnsavedTapHolder {
     const forgets = this.forgets;
     this.emit();
     record.removal = record.settled.then(() => this.finishTakingBack(record, spot, forgets));
-    return { id, type, immediate: !confirmed, removal: record.removal };
+    return {
+      id,
+      type,
+      immediate: !confirmed,
+      // A saved one goes once its removal says so, waited for no longer than `waitMs`:
+      // one that doesn't answer is kept, and still happens.
+      removal: confirmed ? answeredWithin(record.removal, waitMs) : record.removal,
+    };
   }
 
   private finishTakingBack(
@@ -920,13 +963,53 @@ export class TrackingSession implements UnsavedTapHolder {
   /**
    * Takes back one stat, by id: a tap from this session (the line's Undo) or a saved
    * stat (the log, or the line's Undo after a relaunch). Taking one back twice gives
-   * the same outcome.
+   * the same outcome. A saved stat's removal is waited for no longer than `waitMs`.
    */
-  undo(stat: Pick<Tap, 'id' | 'type'>): TakingBack {
+  undo(stat: Pick<Tap, 'id' | 'type'>, waitMs = REMOVE_WAIT_MS): TakingBack {
     this.closeSpot();
     const record = this.taps.find((each) => each.stat.id === stat.id);
-    if (record) return this.takeBack(record);
-    return { id: stat.id, type: stat.type, immediate: false, removal: this.removeStat(stat.id) };
+    if (record) return this.takeBack(record, waitMs);
+    return {
+      id: stat.id,
+      type: stat.type,
+      immediate: false,
+      removal: answeredWithin(this.removeSavedStat(stat.id), waitMs),
+    };
+  }
+
+  /**
+   * Removes a saved stat that isn't one of this session's taps (the log's delete, or an
+   * Undo once the screen shows it saved). It stops counting at once, so its removal is
+   * kept in the pending-removals journal until it's done, like a tap's: a reload still
+   * removes it, and replayPendingStats finishes one this page can't. If it fails, the
+   * stat stays (and counts again), and its removal is forgotten.
+   */
+  private removeSavedStat(id: string): Promise<Removal> {
+    const saved = this.savedEvents.find((event) => event.id === id);
+    const kept =
+      saved !== undefined &&
+      addPendingRemoval({
+        id,
+        gameId: this.gameId,
+        type: saved.type,
+        period: saved.period,
+        at: saved.createdAt,
+      });
+    const keptBefore = this.keptStatRemovals.has(id);
+    // (Counted as kept before its removal starts: Reload never flickers off.)
+    if (kept) this.keptStatRemovals.add(id);
+    const removal = this.removeStat(id);
+    if (kept && !keptBefore) {
+      void removal.then(() => {
+        // Done, either way: gone (deleteStat forgets it too), or it stays.
+        removePendingRemoval(id);
+        this.keptStatRemovals.delete(id);
+        this.emit();
+      });
+      // (A removal already under way, as when Try again keeps it: Reload may show now.)
+      this.emit();
+    }
+    return removal;
   }
 
   /** The most recent stat tapped before `before`: a tap that counts, or a saved stat. */
@@ -956,24 +1039,30 @@ export class TrackingSession implements UnsavedTapHolder {
    * The grid's Undo: takes back the most recent stat by tap time, a tap or a saved
    * stat. A saved stat that turns out to be gone already is skipped for the one
    * before it. A tap not confirmed saved is taken back at once; otherwise it's 'busy'
-   * until the removal is done, so a double tap can't take away two stats.
+   * until the removal is done, so a double tap can't take away two stats: no longer
+   * than `waitMs` (then 'unanswered': its removal is kept, and still happens).
    */
-  undoLatest(): Promise<TakingBack | 'nothing'> | 'busy' {
+  undoLatest(waitMs = REMOVE_WAIT_MS): Promise<TakingBack | 'nothing'> | 'busy' {
     if (this.undoInFlight) return 'busy';
     this.closeSpot();
     const first = this.latest(Infinity);
     if (!first) return Promise.resolve('nothing');
     if (isTapRecord(first) && first.status !== 'saved') {
       // Taken back at once: the next Undo can go on to the stat before it.
-      return Promise.resolve(this.takeBack(first));
+      return Promise.resolve(this.takeBack(first, waitMs));
     }
     this.undoInFlight = true;
     const undo = async (): Promise<TakingBack | 'nothing'> => {
       let item: TapRecord | StatEvent | undefined = first;
       while (item) {
         const taking = isTapRecord(item)
-          ? this.takeBack(item)
-          : { id: item.id, type: item.type, immediate: false, removal: this.removeStat(item.id) };
+          ? this.takeBack(item, waitMs)
+          : {
+              id: item.id,
+              type: item.type,
+              immediate: false,
+              removal: answeredWithin(this.removeSavedStat(item.id), waitMs),
+            };
         if (taking.immediate) return taking;
         const removal = await taking.removal;
         if (removal !== 'gone') return { ...taking, removal: Promise.resolve(removal) };

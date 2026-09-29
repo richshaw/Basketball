@@ -1,7 +1,8 @@
 /**
- * The pending-removals journal: taps the live game screen took back (Undo, or the log)
- * whose stat may be saved and isn't confirmed removed yet, kept in localStorage so that
- * a reload still removes it.
+ * The pending-removals journal: taps and saved stats the live game screen took back
+ * (Undo, or the log's delete) whose stat may be saved and isn't confirmed removed yet,
+ * kept in localStorage so that a reload still removes it. (A saved stat's is kept from
+ * its delete on, until it's gone, and forgotten if the delete fails: it stays.)
  *
  * Taking back a tap forgets its pending-stats entry at once (pendingStats.ts), so nothing
  * saves it again. But a save of it may have landed (even one that seemed to fail), so its

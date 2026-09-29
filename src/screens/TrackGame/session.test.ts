@@ -17,7 +17,14 @@ import {
   type PendingStat,
 } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
-import { createGame, deleteGame, deleteStat, getGameEvents, setCurrentPeriod } from '@/data/repo';
+import {
+  createGame,
+  deleteGame,
+  deleteStat,
+  getGameEvents,
+  recordStat,
+  setCurrentPeriod,
+} from '@/data/repo';
 import { clearAllData, exportAll, importAll } from '@/data/transfer';
 import type { CourtPoint, Game, StatEvent, StatType } from '@/data/types';
 import {
@@ -999,17 +1006,77 @@ describe('TrackingSession', () => {
       expect(await getGameEvents(game.id)).toEqual([]);
     });
 
-    it("doesn't hold while a saved stat is being removed", async () => {
-      const { session, store, sync, holdDeletes, releaseDeletes } = setUp();
+    it('holds while a saved stat is being removed: its removal is kept until it is done', async () => {
+      const { session, store, sync, holdDeletes, releaseDeletes, storedTypes } = setUp();
       const reloadSafe = () => session.getSnapshot().reloadSafe;
       store(event('steal', 'stl', 10));
       sync();
       holdDeletes();
       const removal = session.undoLatest();
-      expect(reloadSafe()).toBe(false);
+      // It has stopped counting: a reload would still remove it.
+      expect(keptRemovalIds()).toEqual(['steal']);
+      expect(reloadSafe()).toBe(true);
       releaseDeletes();
       expect(await outcome(removal)).toEqual(['stl', 'removed']);
+      expect(storedTypes()).toEqual([]);
+      expect(keptRemovalIds()).toEqual([]);
       expect(reloadSafe()).toBe(true);
+    });
+
+    it('forgets the kept removal of a saved stat that could not be removed: it stays', async () => {
+      const { session, store, sync, failDeletes, storedTypes, screenCount } = setUp();
+      store(event('steal', 'stl', 10));
+      sync();
+      failDeletes(true);
+      expect(await outcome(session.undoLatest())).toEqual(['stl', 'failed']);
+      // It counts again, and nothing would remove it after a reload.
+      expect(storedTypes()).toEqual(['stl']);
+      expect(screenCount('stl')).toBe(1);
+      expect(keptRemovalIds()).toEqual([]);
+      expect(session.getSnapshot().reloadSafe).toBe(true);
+    });
+
+    it("stops waiting for a saved stat's removal that never answers, and keeps it", async () => {
+      const { session, store, sync, holdDeletes, releaseDeletes, storedTypes, screenCount } =
+        setUp();
+      store(event('steal', 'stl', 10), event('block', 'blk', 20));
+      sync();
+      // Deleting never answers (for now).
+      holdDeletes();
+      const undo = session.undoLatest(50);
+      expect(session.undoLatest(50)).toBe('busy');
+      // No longer than the wait: it isn't done, but it's kept, so it still happens.
+      expect(await outcome(undo)).toEqual(['blk', 'unanswered']);
+      expect(keptRemovalIds()).toEqual(['block']);
+      expect(session.getSnapshot().reloadSafe).toBe(true);
+      // Still taken back: it doesn't count, as it's still being removed.
+      expect(screenCount('blk')).toBe(0);
+      // The Undo isn't busy any more: it goes on to the stat before it.
+      expect(await outcome(session.undoLatest(50))).toEqual(['stl', 'unanswered']);
+      // Try again (the log, or the line): waited for as long again.
+      expect(await session.undo({ id: 'block', type: 'blk' }, 50).removal).toBe('unanswered');
+
+      // It answers after all: both are gone, and nothing is left to remove.
+      releaseDeletes();
+      await flush();
+      expect(storedTypes()).toEqual([]);
+      expect(keptRemovalIds()).toEqual([]);
+    });
+
+    it("stops waiting for a confirmed tap's removal that never answers, and keeps it", async () => {
+      const { session, save, holdDeletes, releaseDeletes, storedTypes, screenCount } = setUp();
+      const steal = session.record('stl');
+      save(0);
+      await flush();
+      holdDeletes();
+      expect(await outcome(session.undoLatest(50))).toEqual(['stl', 'unanswered']);
+      expect(keptRemovalIds()).toEqual([steal.id]);
+      expect(session.getSnapshot().reloadSafe).toBe(true);
+      expect(screenCount('stl')).toBe(0);
+      releaseDeletes();
+      await flush();
+      expect(storedTypes()).toEqual([]);
+      expect(keptRemovalIds()).toEqual([]);
     });
 
     it("doesn't hold while a period move is being saved, until it counts as not saved", async () => {
@@ -2192,6 +2259,28 @@ describe('TrackingSession spots (the shot chart)', () => {
       expect(session.hasUnsaved()).toBe(false);
       expect(hasPendingStats()).toBe(false);
       expect(isReloadSafe()).toBe(true);
+    });
+
+    it("has the replay finish a saved stat's removal that never answered on this page", async () => {
+      const game = await newGame();
+      const steal = await recordStat(game.id, 'stl');
+      const session = newSession(game.id, 1);
+      session.syncSavedEvents(await getGameEvents(game.id));
+      // Deleting it never answers on this page.
+      vi.spyOn(repo, 'deleteStat').mockReturnValueOnce(new Promise(() => {}));
+      expect(await outcome(session.undoLatest(50))).toEqual(['stl', 'unanswered']);
+      expect(keptRemovalIds()).toEqual([steal.id]);
+
+      // After a reload, the next page starts with it taken back (it doesn't count)...
+      const next = newSession(game.id, 1);
+      expect(next.getSnapshot().takenBack).toEqual([steal.id]);
+      // ...and the replay (at app start, and with each try of the app-wide retry) removes it.
+      expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
+      expect(await getGameEvents(game.id)).toEqual([]);
+      expect(keptRemovalIds()).toEqual([]);
+      // Nothing is left to remove, or to bring back.
+      await retryPendingStats();
+      expect(await getGameEvents(game.id)).toEqual([]);
     });
 
     it('never removes a stat that stays once deleting its game failed while its Undo failed', async () => {

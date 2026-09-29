@@ -140,15 +140,16 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
 
   /**
    * Says a stat is gone: at once for a tap not saved yet (it no longer counts), else
-   * once its removal is done. Speaks up if it couldn't be removed (it counts again), with
-   * Try again for exactly that stat: short enough to fit the line on the smallest iPhone.
+   * once its removal is done. Speaks up if it couldn't be removed (it counts again), or
+   * hasn't been in time (it's still being removed, and doesn't count), with Try again
+   * for exactly that stat: short enough to fit the line on the smallest iPhone.
    */
   const takeBack = useMemo(() => {
     const follow = ({ id, type, immediate, removal }: TakingBack): void => {
       const label = statLabel(type);
       if (immediate) show({ message: `Removed ${label}`, tone: 'muted' });
       void removal.then((result) => {
-        if (result === 'failed') {
+        if (result === 'failed' || result === 'unanswered') {
           show({
             message: "Couldn't undo",
             tone: 'error',

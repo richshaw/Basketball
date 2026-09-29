@@ -26,7 +26,7 @@ import { clearAllData } from '@/data/transfer';
 import { MAX_PERIOD, type CourtPoint, type Game, type StatType } from '@/data/types';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
-import { AUTO_RETRY_MS, disposeTrackingSessions, MOVE_WAIT_MS } from './session';
+import { AUTO_RETRY_MS, disposeTrackingSessions, MOVE_WAIT_MS, REMOVE_WAIT_MS } from './session';
 import { COURT_DEPTH } from './ShotCourt';
 import { DOUBLE_TAP_MS } from './tracking';
 
@@ -1389,6 +1389,42 @@ describe('TrackGameScreen', () => {
         expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
         expect(screen.queryByText('Keep the app open until your taps are saved.')).toBeNull();
       });
+
+      it('keeps Reload through removing a saved stat that never answers, and frees the Undo', async () => {
+        const game = await newGame();
+        await recordStat(game.id, 'blk');
+        await recordStat(game.id, 'stl');
+        await renderTracking(game);
+        await expectStrip('Steals: 1', 'Blocks: 1');
+        // IndexedDB stops answering deletes, and reads fail (the note shows).
+        vi.spyOn(repo, 'deleteStat').mockReturnValue(new Promise(() => {}));
+        vi.spyOn(repo, 'getGameEvents').mockRejectedValue(lost());
+        act(() => {
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+        expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+
+        // Undo takes back the saved Steal: it stops counting, and its removal is kept at
+        // once, so Reload stays (a reload would still remove it).
+        fireEvent.click(statButton('Undo last stat'));
+        await expectStrip('Steals: 0');
+        expect(listPendingRemovals().map((removal) => removal.type)).toEqual(['stl']);
+        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+        // It never answers: after a while the line says so, with Try again. The Steal
+        // still doesn't count (its removal is kept, and still happens), and the grid's
+        // Undo works again.
+        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't undo$/), {
+          timeout: REMOVE_WAIT_MS + 2000,
+        });
+        expect(lineButton('Try again')).toBeInTheDocument();
+        await expectStrip('Steals: 0', 'Blocks: 1');
+        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+        await afterDoubleTapWindow();
+        fireEvent.click(statButton('Undo last stat'));
+        await expectStrip('Steals: 0', 'Blocks: 0');
+        expect(listPendingRemovals().map((removal) => removal.type)).toEqual(['blk', 'stl']);
+      }, 15_000);
 
       it('gives Reload back once a period move that never answers counts as not saved', async () => {
         const game = await newGame();
