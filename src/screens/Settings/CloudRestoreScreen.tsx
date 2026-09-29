@@ -10,6 +10,7 @@ import { useToast } from '@/components/Toast/toastContext';
 import {
   enableCloudBackupWithCode,
   fetchCloudBackup,
+  getCloudBackupStatus,
   isCloudBackupAvailable,
   listCloudVersions,
   type BackupVersion,
@@ -18,7 +19,6 @@ import {
   type CloudResult,
 } from '@/data/backup/cloudBackup';
 import { normalizeBackupCode } from '@/data/backup/code';
-import { useCloudBackupStatus } from '@/data/backup/hooks';
 import { useGames } from '@/data/hooks';
 import { paths } from '@/routes';
 import { ActionRow } from './ActionRow';
@@ -61,6 +61,14 @@ interface Found {
 const NOW_BACKS_UP = 'This phone now backs up with this code.';
 const KEEPS_BACKING_UP = 'This phone keeps backing up with this code.';
 
+/** Whether cloud backup is on now (false if that can't be read). */
+function isBackupOn(): Promise<boolean> {
+  return getCloudBackupStatus().then(
+    (status) => status.enabled,
+    () => false,
+  );
+}
+
 /** Whether two typed or stored codes are the same code (however they're written). */
 function sameCode(a: string, b: string): boolean {
   try {
@@ -87,7 +95,6 @@ export function CloudRestoreScreen() {
   const toast = useToast();
   const games = useGames();
   const phoneCode = useBackupCode();
-  const cloudBackup = useCloudBackupStatus();
   const available = isCloudBackupAvailable();
   const inputRef = useRef<HTMLInputElement>(null);
   // Nothing happens here once the parent has left the screen (for the live game, say).
@@ -130,10 +137,11 @@ export function CloudRestoreScreen() {
     setVersions(null);
   };
 
-  const preview = (next: Found) => {
+  /** Opens the restore sheet for a backup found; `backupOn`: cloud backup was on as it was found. */
+  const preview = (next: Found, backupOn: boolean) => {
     // Checked as the sheet opens, so what it says stays put while it slides away.
     if (phoneCode && !sameCode(next.code, phoneCode)) next.switchingFrom = phoneCode;
-    else if (phoneCode && cloudBackup?.enabled) next.alreadyBackingUp = true;
+    else if (phoneCode && backupOn) next.alreadyBackingUp = true;
     setFound(next);
     setRequest({
       kind: 'preview',
@@ -155,12 +163,12 @@ export function CloudRestoreScreen() {
     setOlderFor(null);
     setVersions(null);
     // A mistyped code is caught here, before anything is sent.
-    const result = await fetchCloudBackup(code);
+    const [result, backupOn] = await Promise.all([fetchCloudBackup(code), isBackupOn()]);
     if (current !== attempt.current) return;
     setFinding(false);
     if (result.ok) {
       setOlderFor(code);
-      preview({ code, backup: result.value, newestVersion: result.value.version });
+      preview({ code, backup: result.value, newestVersion: result.value.version }, backupOn);
       return;
     }
     const { kind, message } = result.error;
@@ -191,18 +199,24 @@ export function CloudRestoreScreen() {
     const current = attempt.current;
     setLoading(version.version);
     setProblem(undefined);
-    const result = await fetchCloudBackup(olderFor, { version: version.version });
+    const [result, backupOn] = await Promise.all([
+      fetchCloudBackup(olderFor, { version: version.version }),
+      isBackupOn(),
+    ]);
     setLoading(null);
     if (current !== attempt.current) return;
     if (!result.ok) {
       setProblem(result.error.message);
       return;
     }
-    preview({
-      code: olderFor,
-      backup: result.value,
-      newestVersion: versions?.[0]?.version ?? result.value.version,
-    });
+    preview(
+      {
+        code: olderFor,
+        backup: result.value,
+        newestVersion: versions?.[0]?.version ?? result.value.version,
+      },
+      backupOn,
+    );
   };
 
   /**
