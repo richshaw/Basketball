@@ -1890,6 +1890,30 @@ describe('TrackingSession spots (the shot chart)', () => {
       expect(reloadSafe()).toBe(true);
     });
 
+    it("says a tap isn't kept while its spot is only in memory, on screen and before the game ends", async () => {
+      const { session, fail, saves } = setUp();
+      session.record('fg2_made');
+      fail(0);
+      await flush();
+      expect(session.getSnapshot().unsavedKept).toBe(true);
+
+      const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      });
+      expect(session.markSpot(ELBOW)).toBe(true);
+      // Its entry is kept, but without the spot: closing the app would lose that.
+      expect(session.getSnapshot().unsavedKept).toBe(false);
+      // (It's tried again, and doesn't answer in time.)
+      expect(await session.saveAll(10)).toEqual({ count: 1, spots: 0, kept: false });
+      expect(saves).toHaveLength(2);
+
+      // Room again: the save that fails keeps it with its spot.
+      full.mockRestore();
+      fail(1);
+      await flush();
+      expect(session.getSnapshot().unsavedKept).toBe(true);
+    });
+
     it("says a reload would lose the spot of a shot not saved yet while its tap's entry can't take it", async () => {
       const { session, fail, save, saves, stored } = setUp();
       const reloadSafe = () => session.getSnapshot().reloadSafe;

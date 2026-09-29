@@ -229,7 +229,10 @@ export interface NotSaved {
   readonly count: number;
   /** How many of them are spots: their shots are saved, but not where they were taken. */
   readonly spots: number;
-  /** All of them are kept in the journals, so they'll be saved later even if the app closes. */
+  /**
+   * All of them are kept in the journals (a tap with the spot marked for it), so they'll
+   * be saved later even if the app closes.
+   */
   readonly kept: boolean;
 }
 
@@ -243,7 +246,10 @@ export interface SessionSnapshot {
   readonly pending: readonly Tap[];
   /** The ones that couldn't be saved yet, in tap order. */
   readonly unsaved: readonly Tap[];
-  /** Every one of those is kept in the journal (on this phone, even across a relaunch). */
+  /**
+   * Every one of those is kept in the journal (on this phone, even across a relaunch),
+   * with the spot marked for it.
+   */
   readonly unsavedKept: boolean;
   /**
    * Reloading the page now would lose nothing the session holds (see reloadSafe()):
@@ -411,7 +417,8 @@ export class TrackingSession implements UnsavedTapHolder {
   private nextSnapshot(): SessionSnapshot {
     const pending = this.taps.filter((record) => !record.undone);
     const unsaved = pending.filter((record) => record.hasFailed && record.status !== 'saved');
-    const unsavedKept = unsaved.every((record) => record.kept);
+    // (A spot marked for it that the journal couldn't take lives only in memory.)
+    const unsavedKept = unsaved.every((record) => record.kept && record.spotKept);
     const reloadSafe = this.reloadSafe();
     const retrying = unsaved.some((record) => record.status === 'saving' && !record.quiet);
     const takenBack = [
@@ -775,16 +782,16 @@ export class TrackingSession implements UnsavedTapHolder {
     if (saving.length > 0) await waitAtMost(Promise.all(saving), waitMs);
     // Spots still waiting to be put on their stats: kept like taps, and counted too.
     const spots = [...this.spotSaves.values()];
-    const notSaved = [
-      ...this.taps.filter((record) => !record.undone && record.status !== 'saved'),
-      ...spots,
-    ];
+    const taps = this.taps.filter((record) => !record.undone && record.status !== 'saved');
     // Left for later (e.g. "End anyway"): the app-wide retry keeps trying them.
-    if (notSaved.length > 0) notifyPendingStats();
+    if (taps.length + spots.length > 0) notifyPendingStats();
     return {
-      count: notSaved.length,
+      count: taps.length + spots.length,
       spots: spots.length,
-      kept: notSaved.every((item) => item.kept),
+      // (A tap's spot the journal couldn't take lives only in memory.)
+      kept:
+        taps.every((record) => record.kept && record.spotKept) &&
+        spots.every((spotSave) => spotSave.kept),
     };
   }
 
