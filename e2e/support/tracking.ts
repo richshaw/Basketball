@@ -87,6 +87,21 @@ export function keptTapSpots(page: Page): Promise<{ type: string; location?: Cou
   );
 }
 
+/** The spots kept on the phone for saved shots until they're on them (src/data/pendingSpots.ts). */
+export function keptSpots(page: Page): Promise<{ id: string; location: CourtSpot }[]> {
+  return page.evaluate(() =>
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith('hoop-stats.pendingSpot.'))
+      .map((key) => {
+        const { id, location } = JSON.parse(localStorage.getItem(key) ?? '{}') as {
+          id: string;
+          location: { x: number; y: number };
+        };
+        return { id, location };
+      }),
+  );
+}
+
 /** The shot chart's court on the live game screen (with the Shot chart setting on). */
 export const shotCourt = (page: Page) => page.getByRole('img', { name: /^Shot spot/ });
 
@@ -148,4 +163,26 @@ export async function failNextSaves(page: Page, count: number) {
     }
     state.saveFailuresLeft = failures;
   }, count);
+}
+
+/**
+ * Makes saving a spot onto a saved shot fail in IndexedDB while `on`, as a write can
+ * when iOS brings the app back from the background: the stat's `put` (setStatLocation)
+ * throws inside its transaction. New stats are saved with `add`, so they still save.
+ */
+export async function failSpotSaves(page: Page, on: boolean) {
+  await page.evaluate((failing) => {
+    const state = window as unknown as { failSpotSaves?: boolean };
+    if (state.failSpotSaves === undefined) {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound by apply() below
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args) {
+        if (this.name === 'events' && state.failSpotSaves) {
+          throw new DOMException('Simulated write failure', 'UnknownError');
+        }
+        return put.apply(this, args);
+      };
+    }
+    state.failSpotSaves = failing;
+  }, on);
 }

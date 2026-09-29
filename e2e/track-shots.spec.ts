@@ -4,6 +4,8 @@ import { appUrl, emulateIPhoneSafeArea, expectRoute, IPHONE_SAFE_BOTTOM } from '
 import { DEMO_LIVE_GAME_ID, demoGameId, exportAll, seedDemoData } from './support/data';
 import {
   failNextSaves,
+  failSpotSaves,
+  keptSpots,
   keptTaps,
   keptTapSpots,
   lastAction,
@@ -106,23 +108,72 @@ test.describe('marking spots', () => {
     await expect(lastAction(page)).toContainText('Spot marked');
   });
 
-  test('taps on the court never zoom or scroll, and one with no shot to mark says so', async ({
+  test('the court takes every touch as a tap (touch-action: none), and a tap with no shot to mark says so', async ({
     page,
   }) => {
     const gameId = await startGame(page);
+    // So on an iPhone a finger that drifts still taps, and never scrolls or zooms.
+    // (Chromium's emulation scrolls and zooms neither way, so only the CSS is checked.)
     await expect(shotCourt(page)).toHaveCSS('touch-action', 'none');
     await tapCourt(page, ELBOW);
     await expect(page.getByText('Tap 2PT or 3PT first')).toBeVisible();
     await tapStats(page, ['FT Made']);
     await tapCourt(page, ELBOW);
     await expect(page.getByText('Tap 2PT or 3PT first')).toBeVisible();
-    // Quick taps: the page stays put, and the free throw has no spot.
+    // However often the court is tapped, the free throw has no spot.
     for (let tap = 0; tap < 3; tap++) await tapCourt(page, CORNER);
-    expect(await page.evaluate(() => [window.scrollY, window.visualViewport?.scale])).toEqual([
-      0, 1,
-    ]);
     await expect.poll(async () => (await gameEvents(page, gameId)).length).toBe(1);
     expect((await gameEvents(page, gameId))[0]?.location).toBeUndefined();
+  });
+
+  test("a shot deleted on the game report stays deleted after a relaunch, though its spot wasn't saved", async ({
+    page,
+  }) => {
+    const gameId = await startGame(page);
+    await tapStats(page, ['2PT Made', 'Def Reb', '3PT Miss']);
+    await expect.poll(async () => (await gameEvents(page, gameId)).length).toBe(3);
+
+    // The 3PT Miss is saved, but its spot can't be (nor on the automatic retry): the
+    // spot is kept on the phone, on its own (its tap isn't kept: the shot is saved).
+    await failSpotSaves(page, true);
+    await tapCourt(page, CORNER);
+    await expect(lastAction(page)).toContainText('Spot marked');
+    const [kept, ...more] = await keptSpots(page);
+    expect(more).toEqual([]);
+    expectNear(kept?.location, CORNER);
+    expect(await keptTaps(page)).toEqual([]);
+
+    // End game: the spot still can't be saved, so the sheet says so. End anyway.
+    await page.getByRole('button', { name: 'End game' }).tap();
+    const sheet = page.getByRole('dialog', { name: 'Final score' });
+    await sheet.getByRole('button', { name: 'End game' }).tap();
+    await expect(sheet.getByRole('alert')).toContainText("1 stat isn't saved yet");
+    await sheet.getByRole('button', { name: 'End anyway' }).tap();
+    await expectRoute(page, paths.gameReport(gameId));
+
+    // Writes work again, and the parent deletes the 3PT Miss on the report: its kept
+    // spot goes with it.
+    await failSpotSaves(page, false);
+    await page
+      .getByRole('list', { name: '1st quarter plays' })
+      .getByRole('button', { name: /3PT Miss/ })
+      .tap();
+    await page
+      .getByRole('alertdialog', { name: 'Delete this stat?' })
+      .getByRole('button', { name: 'Delete stat' })
+      .tap();
+    const left = ['fg2_made', 'dreb'];
+    await expect
+      .poll(async () => (await gameEvents(page, gameId)).map((event) => event.type))
+      .toEqual(left);
+    expect(await keptSpots(page)).toEqual([]);
+
+    // The app is relaunched, and replays what it kept: the shot stays deleted.
+    await page.reload();
+    await expect(page.getByRole('region', { name: 'Shot chart' })).toBeVisible();
+    await page.waitForTimeout(1000);
+    expect((await gameEvents(page, gameId)).map((event) => event.type)).toEqual(left);
+    expect(await keptSpots(page)).toEqual([]);
   });
 });
 
