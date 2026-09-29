@@ -449,16 +449,6 @@ test('an Undo while the connection is lost keeps Reload, and the reload loses no
   expect(await gameEventTypes(page, gameId)).toEqual(['stl']);
 });
 
-/** Whether the last-action line shows all of its message and its button: nothing cut off. */
-function lineShowsAll(page: Page): Promise<boolean> {
-  return lastAction(page).evaluate((status) => {
-    const line = status.parentElement ?? status;
-    return [line, ...Array.from(line.querySelectorAll('*'))].every(
-      (element) => element.scrollWidth <= element.clientWidth,
-    );
-  });
-}
-
 for (const [name, viewport] of [
   ['iPhone SE', { width: 375, height: 667 - 20 }],
   ['iPhone', { width: 390, height: 844 - 47 }],
@@ -481,7 +471,7 @@ for (const [name, viewport] of [
         await page.getByRole('button', { name: 'Undo last stat' }).tap();
         await expect(lastAction(page)).toHaveText("Couldn't undo");
         await expect(lineButton(page, 'Try again')).toBeInViewport({ ratio: 1 });
-        expect(await lineShowsAll(page)).toBe(true);
+        expect(await lastActionFits(page)).toBe(true);
         // It still counts.
         await expect(
           statGrid(page).getByRole('button', { name: 'Charge Taken', exact: true }),
@@ -495,7 +485,7 @@ for (const [name, viewport] of [
         expect(await gameEventTypes(page, gameId)).toEqual(['deflection']);
       });
 
-      test('failed period changes and saves, and a stat gone from the log, fit the line whole', async ({
+      test('deep in overtime, failed moves and saves, a stat gone from the log and fouled out fit the line whole', async ({
         page,
       }) => {
         if (!court) await setShotChart(page, false);
@@ -513,7 +503,7 @@ for (const [name, viewport] of [
         await page.getByRole('button', { name: 'Next period' }).tap();
         await expect(lastAction(page)).toHaveText("Couldn't go to 10OT");
         await expect(lineButton(page, 'Try again')).toBeInViewport({ ratio: 1 });
-        expect(await lineShowsAll(page)).toBe(true);
+        expect(await lastActionFits(page)).toBe(true);
         await expect(page.getByRole('button', { name: 'Period 9OT' })).toBeVisible();
         await failGameSaves(page, false);
         await lineButton(page, 'Try again').tap();
@@ -527,20 +517,23 @@ for (const [name, viewport] of [
         await expect(lineButton(page, 'Undo')).toBeEnabled();
         await lineButton(page, 'Undo').tap();
         await expect(lastAction(page)).toHaveText("Couldn't go to 9OT");
-        expect(await lineShowsAll(page)).toBe(true);
+        await expect(lineButton(page, 'Try again')).toBeInViewport({ ratio: 1 });
+        expect(await lastActionFits(page)).toBe(true);
         await failGameSaves(page, false);
 
         // Saves that fail: the longest stat name, and a shot with its spot marked.
         await failNextSaves(page, 1000);
         await tapStats(page, ['Charge Taken']);
         await expect(lastAction(page)).toHaveText('Charge Taken not saved');
-        expect(await lineShowsAll(page)).toBe(true);
+        await expect(lineButton(page)).toBeInViewport({ ratio: 1 });
+        expect(await lastActionFits(page)).toBe(true);
         if (court) {
           await tapStats(page, ['3PT Miss']);
           await tapCourt(page, { x: 6, y: 15 });
           await expect(lastAction(page)).toContainText('3PT Miss not saved');
           await expect(lastAction(page)).toContainText('Spot marked · inside the arc');
-          expect(await lineShowsAll(page)).toBe(true);
+          await expect(lineButton(page)).toBeInViewport({ ratio: 1 });
+          expect(await lastActionFits(page)).toBe(true);
         }
         await failNextSaves(page, 0);
         await showPageAgain(page);
@@ -560,7 +553,15 @@ for (const [name, viewport] of [
           .tap();
         await log.getByRole('button', { name: 'Close' }).tap();
         await expect(lastAction(page)).toHaveText('Charge Taken was already deleted');
-        expect(await lineShowsAll(page)).toBe(true);
+        expect(await lastActionFits(page)).toBe(true);
+
+        // A stat's longest line, this deep into overtime: fouled out, next to its Undo.
+        // (Once the log has slid away: it takes taps meanwhile.)
+        await expect(log).toBeHidden();
+        await tapStats(page, Array<string>(5).fill('Foul'));
+        await expect(lastAction(page)).toHaveText('Foul · 10OT · fouled out');
+        await expect(lineButton(page)).toBeInViewport({ ratio: 1 });
+        expect(await lastActionFits(page)).toBe(true);
       });
     });
   }
