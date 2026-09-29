@@ -18,7 +18,14 @@
  * still saved, just not kept across a reload.
  */
 import { isRealPoint } from '@/lib/court';
-import { removeJournalEntries, type RemovedEntries } from './journal';
+import {
+  listJournalEntries,
+  parseJournalEntry,
+  removeJournalEntries,
+  removeJournalEntry,
+  writeJournalEntry,
+  type RemovedEntries,
+} from './journal';
 import type { CourtPoint } from './types';
 
 /** A spot to put on a saved stat. */
@@ -34,34 +41,19 @@ const KEY_PREFIX = 'hoop-stats.pendingSpot.';
 
 /** Keeps a stat's spot until it's saved (replacing a spot kept for it before). */
 export function addPendingSpot(spot: PendingSpot): boolean {
-  try {
-    localStorage.setItem(KEY_PREFIX + spot.id, JSON.stringify(spot));
-    return true;
-  } catch {
-    return false;
-  }
+  return writeJournalEntry(KEY_PREFIX + spot.id, spot);
 }
 
 /** Forgets a stat's kept spot: it's saved, or the stat is gone. */
 export function removePendingSpot(id: string): void {
-  try {
-    localStorage.removeItem(KEY_PREFIX + id);
-  } catch {
-    // Blocked storage: nothing could have been kept there.
-  }
+  removeJournalEntry(KEY_PREFIX + id);
 }
 
 /** One entry, or undefined if it isn't a spot this version can save. */
 function parseEntry(key: string, text: string | null): PendingSpot | undefined {
-  if (text === null) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (typeof value !== 'object' || value === null) return undefined;
-  const { id, gameId, location } = value as Record<string, unknown>;
+  const value = parseJournalEntry(text);
+  if (!value) return undefined;
+  const { id, gameId, location } = value;
   if (typeof id !== 'string' || !id || key !== KEY_PREFIX + id) return undefined;
   if (typeof gameId !== 'string' || !gameId || !isRealPoint(location)) return undefined;
   return { id, gameId, location: { x: location.x, y: location.y } };
@@ -81,18 +73,7 @@ export function getPendingSpot(id: string): PendingSpot | undefined {
  * skipped but left alone.
  */
 export function listPendingSpots(gameId?: string): PendingSpot[] {
-  const spots: PendingSpot[] = [];
-  try {
-    for (let index = 0; index < localStorage.length; index++) {
-      const key = localStorage.key(index);
-      if (!key?.startsWith(KEY_PREFIX)) continue;
-      const spot = parseEntry(key, localStorage.getItem(key));
-      if (spot && (gameId === undefined || spot.gameId === gameId)) spots.push(spot);
-    }
-  } catch {
-    // Blocked storage: nothing could have been kept there.
-  }
-  return spots;
+  return listJournalEntries(KEY_PREFIX, parseEntry, gameId);
 }
 
 /**

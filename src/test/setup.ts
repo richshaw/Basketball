@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
+import { stopReopeningDatabase } from '@/data/reopen';
 import { disposeTrackingSessions } from '@/screens/TrackGame/session';
 import { resetDatabase } from './db';
 import { installDialogPolyfill } from './dialogPolyfill';
@@ -33,6 +34,9 @@ afterEach(() => {
   // session.ts) carry into the next test, where a late retry could keep a tap or save
   // one. Before the timers are real again, so fake ones are cleared too.
   disposeTrackingSessions();
+  // Nor may a try to open the database again (src/data/reopen.ts), after a test that
+  // closed it for good.
+  stopReopeningDatabase();
   // IndexedDB runs on real timers: never let one test's fake timers stall the next reset.
   vi.useRealTimers();
 });

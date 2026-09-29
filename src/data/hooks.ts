@@ -7,7 +7,9 @@
  */
 import { liveQuery } from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { isReloadSafe, watchReloadSafe } from './pendingStats';
+import { isDatabaseClosedError, watchDatabase } from './reopen';
 import {
   getAllEvents,
   getGame,
@@ -109,10 +111,22 @@ export const READ_RETRY_DELAYS_MS: readonly number[] = [1000, 3000, 10_000];
  * How long a read may go unanswered before it's read again (twice as long each time in
  * a row, up to READ_WATCHDOG_MAX_MS). Dexie's liveQuery drops some failures without a
  * word (an AbortError or a DatabaseClosedError: neither a result nor an error comes
- * back), which would otherwise leave the screen blank, or out of date, for good.
+ * back), which would otherwise leave the screen blank, or out of date, for good. Once
+ * there's a result on screen, a read that doesn't answer in time is a failed read too.
  */
 export const READ_WATCHDOG_MS = 3000;
 const READ_WATCHDOG_MAX_MS = 30_000;
+
+/**
+ * How long a first read (nothing on screen yet) waits for a database closed for good to
+ * open again (reopen.ts tries after 1 s and 3 s) before it counts as a failed read.
+ */
+export const READ_CLOSED_WAIT_MS = 10_000;
+
+/** The error of a read that didn't answer in time (see READ_WATCHDOG_MS). */
+function unansweredRead(): DOMException {
+  return new DOMException('Reading saved data did not answer in time.', 'TimeoutError');
+}
 
 interface SteadyState<K, T> {
   key: K;
@@ -128,9 +142,14 @@ interface SteadyState<K, T> {
  * throws (useLiveQuery rethrows it while rendering, so the route's error screen would
  * replace the screen, e.g. once WebKit loses its IndexedDB connection in the
  * background). The last good result stays, with `failed` set, and the read is tried
- * again when the app comes back into view and on a timer (Dexie reopens a lost
- * connection on the next query), never by reloading the page. A read that doesn't
- * answer at all is read again too (READ_WATCHDOG_MS).
+ * again on a timer, never by reloading the page. It's read again at once, failing or
+ * not, when the app comes back into view (WebKit may have lost its connection in the
+ * background) and when the database closes for good or opens again (reopen.ts). A read
+ * that doesn't answer at all is read again too (READ_WATCHDOG_MS), and counts as a
+ * failed read once there's a result on screen; so does a DatabaseClosedError, which
+ * liveQuery itself drops without a word. A first read has nothing to keep yet: one that
+ * finds the database closed waits for it to open again (then it's read again, and fills
+ * the screen), and counts as failed only if it's still closed READ_CLOSED_WAIT_MS later.
  */
 function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): SteadyRead<T> {
   // Moves on to read again after a failure, or a read that never answered (a new live
@@ -143,13 +162,49 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
   }));
   // Reads in a row that never answered: how far the watchdog has backed off.
   const unanswered = useRef(0);
+  // The key whose result is on screen, once there is one.
+  const shown = useRef<{ key: K } | undefined>(undefined);
+  // Since when a first read has found the database closed (for this key).
+  const closedSince = useRef<{ key: K; at: number } | undefined>(undefined);
 
   useEffect(() => {
+    let active = true;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
+    let closedWait: ReturnType<typeof setTimeout> | undefined;
     const answered = () => {
       clearTimeout(watchdog);
       watchdog = undefined;
       unanswered.current = 0;
+    };
+    const failed = (error: unknown) => {
+      if (!active) return;
+      answered();
+      setState((current) =>
+        Object.is(current.key, key)
+          ? { ...current, error, failures: current.failures + 1 }
+          : { key, hasValue: false, error, failures: 1 },
+      );
+    };
+    // The database is closed (reopen.ts is opening it again): liveQuery drops this read
+    // without a word. With a result on screen, it's a failed read like any other. A
+    // first read has nothing to keep: it's read again once the database is open (below),
+    // or by the watchdog, and fails only if the database stays closed too long.
+    const closed = (error: unknown) => {
+      if (!active) return;
+      if (shown.current && Object.is(shown.current.key, key)) {
+        failed(error);
+        return;
+      }
+      if (!closedSince.current || !Object.is(closedSince.current.key, key)) {
+        closedSince.current = { key, at: Date.now() };
+      }
+      const left = closedSince.current.at + READ_CLOSED_WAIT_MS - Date.now();
+      if (left <= 0) {
+        failed(error);
+        return;
+      }
+      clearTimeout(closedWait);
+      closedWait = setTimeout(() => setAttempt((count) => count + 1), left);
     };
     const subscription = liveQuery(() => {
       // Each run (the first, and again whenever its data changes) must answer in time,
@@ -158,25 +213,41 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
       const wait = Math.min(READ_WATCHDOG_MS * 2 ** unanswered.current, READ_WATCHDOG_MAX_MS);
       watchdog = setTimeout(() => {
         unanswered.current += 1;
+        // A failed read, once there's something on screen to keep (a first read that
+        // never answers is simply read again: there's nothing to show yet).
+        setState((current) =>
+          Object.is(current.key, key) && current.hasValue
+            ? { ...current, error: unansweredRead(), failures: current.failures + 1 }
+            : current,
+        );
         setAttempt((count) => count + 1);
       }, wait);
-      return query(key);
+      // (Not query(key).catch(): inside liveQuery's zone that would turn the error into
+      // one of Dexie's.)
+      const read = query(key);
+      return (async () => {
+        try {
+          return await read;
+        } catch (error) {
+          if (isDatabaseClosedError(error)) closed(error);
+          throw error;
+        }
+      })();
     }).subscribe({
       next: (value) => {
+        if (!active) return;
         answered();
+        clearTimeout(closedWait);
+        shown.current = { key };
+        closedSince.current = undefined;
         setState({ key, hasValue: true, value, failures: 0 });
       },
-      error: (error: unknown) => {
-        answered();
-        setState((current) =>
-          Object.is(current.key, key)
-            ? { ...current, error, failures: current.failures + 1 }
-            : { key, hasValue: false, error, failures: 1 },
-        );
-      },
+      error: failed,
     });
     return () => {
+      active = false;
       clearTimeout(watchdog);
+      clearTimeout(closedWait);
       subscription.unsubscribe();
     };
   }, [key, query, attempt]);
@@ -191,18 +262,23 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
 
   useEffect(() => {
     if (failures === 0) return;
-    const readAgain = () => setAttempt((count) => count + 1);
     const delay = READ_RETRY_DELAYS_MS[Math.min(failures, READ_RETRY_DELAYS_MS.length) - 1];
-    const timer = setTimeout(readAgain, delay);
+    const timer = setTimeout(() => setAttempt((count) => count + 1), delay);
+    return () => clearTimeout(timer);
+  }, [failures]);
+
+  useEffect(() => {
+    const readAgain = () => setAttempt((count) => count + 1);
     const readAgainWhenShown = () => {
       if (document.visibilityState === 'visible') readAgain();
     };
     document.addEventListener('visibilitychange', readAgainWhenShown);
+    const unwatch = watchDatabase(readAgain);
     return () => {
-      clearTimeout(timer);
       document.removeEventListener('visibilitychange', readAgainWhenShown);
+      unwatch();
     };
-  }, [failures]);
+  }, []);
 
   return {
     value: current?.hasValue ? current.value : undefined,
@@ -228,4 +304,13 @@ function settingsOrDefaults(): Promise<Settings> {
 /** useSettings that survives a failed read (see SteadyRead), for the live game screen. */
 export function useSteadySettings(): SteadyRead<Settings> {
   return useSteadyLiveQuery('settings', settingsOrDefaults);
+}
+
+/**
+ * Whether reloading the page now would lose nothing (isReloadSafe in pendingStats.ts),
+ * kept up to date as the tracking sessions' taps change. For a Reload button: offer it
+ * only while this is true, else ask to keep the app open.
+ */
+export function useReloadSafe(): boolean {
+  return useSyncExternalStore(watchReloadSafe, isReloadSafe);
 }

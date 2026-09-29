@@ -51,6 +51,18 @@ describe('applyUpdate', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  it("doesn't even activate the waiting version while this window couldn't reload", async () => {
+    // Its activation deletes the old version's cached files, which this window runs on.
+    const container = fakeContainer({ waiting: true });
+    const reload = vi.fn();
+    const activateWaitingWorker = vi.fn(() => Promise.resolve());
+    await applyUpdate({ container, activateWaitingWorker, reload, mayReload: () => false });
+
+    expect(activateWaitingWorker).not.toHaveBeenCalled();
+    container.dispatchEvent(new Event('controllerchange'));
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   it('just reloads when the new version already took over elsewhere', async () => {
     const { reload, activateWaitingWorker, run } = setup(fakeContainer({ waiting: false }));
 

@@ -1,6 +1,12 @@
-/* While the banner shows, floating UI (toasts) stacks above it instead of covering it. */
+/*
+ * While the banner shows, floating UI (toasts) stacks above it instead of covering it:
+ * by its real height, which it keeps on the root (its text can take three lines on the
+ * smallest iPhone), else by the height it has at the least.
+ */
 :global(:root):has(.banner) {
-  --overlay-raise-banner: calc(var(--update-banner-height) + var(--space-3));
+  --overlay-raise-banner: calc(
+    var(--update-banner-shown-height, var(--update-banner-height)) + var(--space-3)
+  );
 }
 
 /* Sticks just above the tab bar; at the end of long content it takes its own space. */
@@ -12,7 +18,7 @@
   align-items: center;
   gap: var(--space-3);
   width: calc(100% - 2 * var(--space-3));
-  /* A known height, so toasts know how far to rise above it. */
+  /* At least this tall; toasts rise above its real height (see above). */
   min-height: var(--update-banner-height);
   max-width: var(--content-max-width);
   margin: var(--space-3) auto;
@@ -29,6 +35,13 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-tight);
+}
+
+/* Why there's no Update yet (a reload would lose a tap): a second line, quieter. */
+.detail {
+  display: block;
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-regular);
 }
 
 .actions {

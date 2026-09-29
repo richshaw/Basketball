@@ -6,8 +6,7 @@ import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useToast } from '@/components/Toast/toastContext';
-import { useSteadyGame, useSteadyGameEvents, useSteadySettings } from '@/data/hooks';
-import { isReloadSafe } from '@/data/pendingStats';
+import { useReloadSafe, useSteadyGame, useSteadyGameEvents, useSteadySettings } from '@/data/hooks';
 import { endGame, type FinalScore } from '@/data/repo';
 import { shotsFromEvents } from '@/data/shots';
 import { computeStatLine, periodLabel } from '@/data/stats';
@@ -28,7 +27,7 @@ import { LogSheet } from './LogSheet';
 import { NotSavedSheet } from './NotSavedSheet';
 import { PeriodSheet } from './PeriodSheet';
 import { ReadFailedNote } from './ReadFailedNote';
-import type { NotSaved, TakingBack, Tap } from './session';
+import type { NotSaved, Removal, TakingBack, Tap } from './session';
 import { ShotCourt } from './ShotCourt';
 import { StatGrid } from './StatGrid';
 import { StatStrip } from './StatStrip';
@@ -108,10 +107,11 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
   // Done on a finished game: the stats that weren't saved, and whether it's busy.
   const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [
-    session,
-    { period, pending, unsaved, unsavedKept, reloadSafe, retrying, takenBack, spotShot },
-  ] = useTrackingSession(game.id, game.currentPeriod, events);
+  const [session, { period, pending, unsaved, unsavedKept, retrying, takenBack, spotShot }] =
+    useTrackingSession(game.id, game.currentPeriod, events);
+  // Whether a reload would lose nothing: not this game's taps, spots, Undos or period
+  // moves, nor another game's that only this page holds.
+  const reloadSafe = useReloadSafe();
   // A double tap on the grid's Undo or on Next acts once.
   const [undoGuard] = useState(() => createTapGuard());
   const [nextGuard] = useState(() => createTapGuard());
@@ -140,24 +140,47 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
 
   /**
    * Says a stat is gone: at once for a tap not saved yet (it no longer counts), else
-   * once its removal is done. Speaks up if it couldn't be removed.
+   * once its removal is done. Speaks up if it couldn't be removed (it counts again), with
+   * Try again for exactly that stat, and if it hasn't been in time (it's still being
+   * removed, and doesn't count): then the line says how it went once it's done, unless
+   * it has moved on. Short enough to fit the line on the smallest iPhone.
    */
-  const takeBack = useCallback(
-    ({ type, immediate, removal }: TakingBack) => {
+  const takeBack = useMemo(() => {
+    const follow = ({ id, type, immediate, removal, outcome }: TakingBack): void => {
       const label = statLabel(type);
+      const said = (result: Removal): Omit<LastAction, 'key'> | null => {
+        if (result === 'failed') {
+          return {
+            message: "Couldn't undo",
+            tone: 'error',
+            actionLabel: 'Try again',
+            onAction: () => follow(session.undo({ id, type })),
+          };
+        }
+        if (immediate) return null;
+        const message = result === 'removed' ? `Removed ${label}` : `${label} was already removed`;
+        return { message, tone: 'muted' };
+      };
       if (immediate) show({ message: `Removed ${label}`, tone: 'muted' });
       void removal.then((result) => {
-        if (result === 'failed') {
-          show({ message: `Couldn't remove ${label}. Try again.`, tone: 'error' });
-        } else if (!immediate) {
-          const message =
-            result === 'removed' ? `Removed ${label}` : `${label} was already removed`;
-          show({ message, tone: 'muted' });
+        if (result !== 'unanswered') {
+          const action = said(result);
+          if (action) show(action);
+          return;
         }
+        show({ message: 'Undo not saved yet', tone: 'muted', removalId: id });
+        void outcome.then((late) => {
+          const action = said(late);
+          if (!action) return;
+          // In place of 'Undo not saved yet', if the line still says it.
+          setLastAction((previous) =>
+            previous?.removalId === id ? { ...action, key: previous.key + 1 } : previous,
+          );
+        });
       });
-    },
-    [show],
-  );
+    };
+    return follow;
+  }, [session, show]);
 
   /** The line for one stat, e.g. '3PT Made · Q2', with an Undo for exactly that stat. */
   const statAction = useCallback(
@@ -204,30 +227,38 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
     return true;
   }, [session, show, takeBack, undoGuard]);
 
-  /** Moves to another period at once (stats tapped next land there), with an Undo. */
-  const moveTo = useCallback(
-    (to: number) => {
+  /**
+   * Moves to another period at once (stats tapped next land there), with an Undo. The
+   * period she chose stays on screen until it's saved, however long that takes; a move
+   * (or its Undo) that couldn't be saved puts the saved period back, and the line says
+   * so with Try again for that move: short enough to fit beside its button on the
+   * smallest iPhone, even for a double-digit overtime.
+   */
+  const moveTo = useMemo(() => {
+    const move = (to: number): void => {
       const from = session.getSnapshot().period;
       if (to === from) return;
-      const toText = periodLabel(to, periodFormat);
-      const fromText = periodLabel(from, periodFormat);
-      const sayIfFailed = (message: string) => (moved: boolean) => {
-        if (!moved) show({ message, tone: 'error' });
+      const sayIfFailed = (target: number) => (moved: boolean) => {
+        if (moved) return;
+        show({
+          message: `Couldn't go to ${periodLabel(target, periodFormat)}`,
+          tone: 'error',
+          actionLabel: 'Try again',
+          onAction: () => move(target),
+        });
       };
-      void session.movePeriod(to).then(sayIfFailed(`Couldn't move to ${toText}. Try again.`));
+      void session.movePeriod(to).then(sayIfFailed(to));
       show({
-        message: `Now in ${toText}`,
+        message: `Now in ${periodLabel(to, periodFormat)}`,
         actionLabel: 'Undo',
         onAction: () => {
-          show({ message: `Back in ${fromText}`, tone: 'muted' });
-          void session
-            .movePeriod(from)
-            .then(sayIfFailed(`Couldn't go back to ${fromText}. Try again.`));
+          show({ message: `Back in ${periodLabel(from, periodFormat)}`, tone: 'muted' });
+          void session.movePeriod(from).then(sayIfFailed(from));
         },
       });
-    },
-    [session, show, periodFormat],
-  );
+    };
+    return move;
+  }, [session, show, periodFormat]);
 
   const nextPeriod = useCallback(() => {
     if (!nextGuard()) return;
@@ -256,10 +287,21 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
       });
       if (!confirmed) return;
       // The log shows it's gone; the line says so once the log is closed.
-      const result = await session.undo(event).removal;
+      const { removal, outcome } = session.undo(event);
+      const result = await removal;
+      const failed = () => toast.show({ message: `Couldn't delete ${what}. Try again.` });
       if (result === 'removed') show({ message: `Deleted ${what}`, tone: 'muted' });
-      else if (result === 'gone') show({ message: `${what} was already deleted`, tone: 'muted' });
-      else toast.show({ message: `Couldn't delete ${what}. Try again.` });
+      // (Without its period, to fit the line whole on the smallest iPhone.)
+      else if (result === 'gone') {
+        show({ message: `${statLabel(event.type)} was already deleted`, tone: 'muted' });
+      } else if (result === 'failed') failed();
+      else {
+        // Still under way (it's gone from the log): if it fails in the end, it's back.
+        toast.show({ message: `Deleting ${what} isn't saved yet.` });
+        void outcome.then((late) => {
+          if (late === 'failed') failed();
+        });
+      }
     },
     [confirm, toast, show, session, periodFormat],
   );
@@ -361,9 +403,8 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
           <StatStrip line={line} compact={withCourt} />
           {/* A tap not saved and not kept keeps its own row: it asks to keep the app open. */}
           {readFailed && (unsaved.length === 0 || unsavedKept) ? (
-            // Reload only while it would lose nothing: not this game's taps, spots, Undos
-            // or period moves, nor another game's that only this page holds.
-            <ReadFailedNote canReload={reloadSafe && isReloadSafe()} compact={withCourt} />
+            // Reload only while it would lose nothing.
+            <ReadFailedNote canReload={reloadSafe} compact={withCourt} />
           ) : (
             <UnsavedStats
               unsaved={unsaved}
@@ -472,7 +513,8 @@ export function TrackGameScreen() {
   if (game.value === null) return <GameNotFound />;
   if (game.value === undefined || events.value === undefined || settings.value === undefined) {
     // Nothing on screen to keep yet: a first read that failed gets the route's error
-    // screen (with Reload), like any other screen.
+    // screen (with Reload), like any other screen. (One that finds the database closed
+    // first waits a while for it to open again: then the screen simply shows.)
     if (game.failed) throw game.error;
     if (events.failed) throw events.error;
     if (settings.failed) throw settings.error;
