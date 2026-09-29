@@ -1545,6 +1545,49 @@ describe('TrackGameScreen shot chart', () => {
     expect(listPendingSpots()).toEqual([]);
   });
 
+  describe("when only a shot's spot could not be saved (the shot itself is)", () => {
+    /** Records a shot, which is saved, and marks its spot, which can't be put on it. */
+    async function shotWithoutItsSpot(game: Game, shot: string, spot: CourtPoint) {
+      vi.spyOn(repo, 'setStatLocation').mockRejectedValue(new Error('Connection lost'));
+      fireEvent.click(statButton(shot));
+      await waitFor(async () => expect(await eventSpots(game.id)).toHaveLength(1));
+      tapCourt(spot);
+      expect(lineNote()).toHaveTextContent('Spot marked');
+    }
+
+    it('End game says the spot, not a stat, is not saved yet', async () => {
+      const game = await newGame();
+      const { user, router } = await renderTracking(game);
+      await shotWithoutItsSpot(game, '3PT Miss', CORNER);
+
+      await user.click(screen.getByRole('button', { name: 'End game' }));
+      const sheet = screen.getByRole('dialog', { name: 'Final score' });
+      await user.click(within(sheet).getByRole('button', { name: 'End game' }));
+      expect(await within(sheet).findByRole('alert')).toHaveTextContent(
+        "1 shot's spot isn't saved yet. It's kept on this phone and will be saved automatically.",
+      );
+      expect((await getGame(game.id))?.status).toBe('live');
+
+      await user.click(within(sheet).getByRole('button', { name: 'End anyway' }));
+      await waitFor(() => expect(router.state.location.pathname).toBe(paths.gameReport(game.id)));
+      expect(listPendingSpots().map((kept) => kept.location)).toEqual([CORNER]);
+    });
+
+    it('Done says so too', async () => {
+      const game = await newGame();
+      await endGame(game.id);
+      const { user, router } = await renderTracking(game);
+      await shotWithoutItsSpot(game, '2PT Made', ELBOW);
+
+      await user.click(screen.getByRole('button', { name: 'Done' }));
+      const sheet = await screen.findByRole('dialog', { name: "1 shot's spot isn't saved yet" });
+      expect(sheet).toHaveAccessibleDescription(
+        "It's kept on this phone and will be saved automatically.",
+      );
+      expect(router.state.location.pathname).toBe(paths.trackGame(game.id));
+    });
+  });
+
   it('keeps the court while the screen is open, even if the setting changes meanwhile', async () => {
     const game = await newGame();
     await renderTracking(game);

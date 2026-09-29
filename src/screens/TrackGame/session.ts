@@ -192,7 +192,10 @@ export interface TakingBack {
  * whose spot isn't on them yet.
  */
 export interface NotSaved {
+  /** How many: taps, plus spots of saved shots. */
   readonly count: number;
+  /** How many of them are spots: their shots are saved, but not where they were taken. */
+  readonly spots: number;
   /** All of them are kept in the journals, so they'll be saved later even if the app closes. */
   readonly kept: boolean;
 }
@@ -673,14 +676,19 @@ export class TrackingSession implements UnsavedTapHolder {
         .map((spotSave) => spotSave.settled),
     ];
     if (saving.length > 0) await waitAtMost(Promise.all(saving), waitMs);
+    // Spots still waiting to be put on their stats: kept like taps, and counted too.
+    const spots = [...this.spotSaves.values()];
     const notSaved = [
       ...this.taps.filter((record) => !record.undone && record.status !== 'saved'),
-      // Spots still waiting to be put on their stats: kept like taps, and counted too.
-      ...this.spotSaves.values(),
+      ...spots,
     ];
     // Left for later (e.g. "End anyway"): the app-wide retry keeps trying them.
     if (notSaved.length > 0) notifyPendingStats();
-    return { count: notSaved.length, kept: notSaved.every((item) => item.kept) };
+    return {
+      count: notSaved.length,
+      spots: spots.length,
+      kept: notSaved.every((item) => item.kept),
+    };
   }
 
   /**

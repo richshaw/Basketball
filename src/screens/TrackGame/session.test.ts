@@ -1168,17 +1168,17 @@ describe('TrackingSession', () => {
       expect(saves.map(({ stat }) => stat.type)).toEqual(['stl', 'stl', 'ast']);
       fail(1);
       save(2);
-      expect(await result).toEqual({ count: 1, kept: true });
+      expect(await result).toEqual({ count: 1, spots: 0, kept: true });
 
       const again = session.saveAll();
       save(3);
-      expect(await again).toEqual({ count: 0, kept: true });
+      expect(await again).toEqual({ count: 0, spots: 0, kept: true });
     });
 
     it("doesn't wait forever for a save that never answers", async () => {
       const { session } = setUp();
       session.record('stl');
-      expect(await session.saveAll(20)).toEqual({ count: 1, kept: true });
+      expect(await session.saveAll(20)).toEqual({ count: 1, spots: 0, kept: true });
     });
 
     it('leaves out a tap that was undone', async () => {
@@ -1187,7 +1187,7 @@ describe('TrackingSession', () => {
       fail(0);
       await flush();
       await session.undo(steal).removal;
-      expect(await session.saveAll()).toEqual({ count: 0, kept: true });
+      expect(await session.saveAll()).toEqual({ count: 0, spots: 0, kept: true });
     });
   });
 
@@ -1630,14 +1630,15 @@ describe('TrackingSession spots (the shot chart)', () => {
     await flush();
     sync();
     session.markSpot(CORNER);
-    // End game waits for the spot's write too: it fails.
+    // End game waits for the spot's write too: it fails. The stat is saved: only its
+    // spot isn't.
     const ending = session.saveAll();
     failSpot(0);
-    expect(await ending).toEqual({ count: 1, kept: true });
+    expect(await ending).toEqual({ count: 1, spots: 1, kept: true });
     // Trying again retries it: saved.
     const again = session.saveAll();
     saveSpot(1);
-    expect(await again).toEqual({ count: 0, kept: true });
+    expect(await again).toEqual({ count: 0, spots: 0, kept: true });
   });
 
   it('starts with the spots an earlier page kept, and puts them on their stats, never as taps', async () => {
@@ -1834,7 +1835,7 @@ describe('TrackingSession spots (the shot chart)', () => {
       after.retry();
       await vi.waitFor(() => expect(keptSpots()).toEqual([]));
       expect(await getGameEvents(game.id)).toEqual([]);
-      expect(await after.saveAll()).toEqual({ count: 0, kept: true });
+      expect(await after.saveAll()).toEqual({ count: 0, spots: 0, kept: true });
     });
 
     it('saves a tap kept with its spot when the game screen opens again, once', async () => {

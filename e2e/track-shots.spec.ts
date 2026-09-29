@@ -145,11 +145,14 @@ test.describe('marking spots', () => {
     expectNear(kept?.location, CORNER);
     expect(await keptTaps(page)).toEqual([]);
 
-    // End game: the spot still can't be saved, so the sheet says so. End anyway.
+    // End game: the spot still can't be saved, so the sheet says so (the shot itself is
+    // saved). End anyway.
     await page.getByRole('button', { name: 'End game' }).tap();
     const sheet = page.getByRole('dialog', { name: 'Final score' });
     await sheet.getByRole('button', { name: 'End game' }).tap();
-    await expect(sheet.getByRole('alert')).toContainText("1 stat isn't saved yet");
+    await expect(sheet.getByRole('alert')).toHaveText(
+      "1 shot's spot isn't saved yet. It's kept on this phone and will be saved automatically.",
+    );
     await sheet.getByRole('button', { name: 'End anyway' }).tap();
     await expectRoute(page, paths.gameReport(gameId));
 
