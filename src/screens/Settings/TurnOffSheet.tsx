@@ -8,6 +8,7 @@ import { useToast } from '@/components/Toast/toastContext';
 import { disableCloudBackup } from '@/data/backup/cloudBackup';
 import { ActionRow } from './ActionRow';
 import { deleteOnlineBackupQuestion } from './cloudBackupText';
+import { useStillHere } from './useStillHere';
 import styles from './TurnOffSheet.module.css';
 
 export interface TurnOffSheetProps {
@@ -42,13 +43,7 @@ export function TurnOffSheet({ open, onClose, onTurnedOff, onlyOnlineGames }: Tu
   useEffect(() => {
     openRef.current = open;
   }, [open]);
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const stillHere = useStillHere();
 
   const turnOff = async (deleteCloudCopy: boolean) => {
     if (working) return;
@@ -59,7 +54,7 @@ export function TurnOffSheet({ open, onClose, onTurnedOff, onlyOnlineGames }: Tu
     setProblem(undefined);
     try {
       const result = await disableCloudBackup({ deleteCloudCopy });
-      if (!mounted.current) return;
+      if (!stillHere()) return;
       if (result.ok) onTurnedOff(deleteCloudCopy);
       else if (openRef.current) setProblem(result.error.message);
       else toast.show({ message: result.error.message, duration: MESSAGE_TOAST_MS });

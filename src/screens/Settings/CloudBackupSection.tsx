@@ -26,6 +26,7 @@ import {
 } from './cloudBackupText';
 import { TurnOffSheet } from './TurnOffSheet';
 import { useNow } from './useNow';
+import { useStillHere } from './useStillHere';
 import styles from './CloudBackupSection.module.css';
 
 /** The engine's messages can run to two sentences: give them time to be read. */
@@ -102,15 +103,9 @@ export function CloudBackupSection({ status, code, focusRequest }: CloudBackupSe
   const { state } = status;
   // An answer that comes after the parent left Settings (for the live game, say) isn't
   // shown: the status row says how it went next time she looks.
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const stillHere = useStillHere();
   const say = (options: ToastOptions) => {
-    if (mounted.current) toast.show(options);
+    if (stillHere()) toast.show(options);
   };
 
   useEffect(() => {

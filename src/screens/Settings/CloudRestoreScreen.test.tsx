@@ -551,6 +551,30 @@ describe('Restore from a backup code: after the restore', () => {
     expect(view.router.state.location.pathname).toBe(paths.trackGame(REAL_LIVE_GAME_ID));
   });
 
+  it('never takes her to Games once she has left, even before the next screen is up', async () => {
+    const { code } = await backUpThenNewPhone({ liveGame: true });
+    const view = await renderRestore(paths.restoreBackup('games'));
+    await find(view, code);
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    let finish = () => {};
+    vi.mocked(enableCloudBackupWithCode).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ ok: true, value: undefined });
+        }),
+    );
+    await view.user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+    await expectToast('Restored 11 games. This phone now backs up with this code.');
+
+    // She heads for the live game, and backup is on the very next moment: before React
+    // has put the live game screen up (the router renders it in a transition), while
+    // this screen is still there.
+    await view.router.navigate(paths.trackGame(REAL_LIVE_GAME_ID));
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(view.router.state.location.pathname).toBe(paths.trackGame(REAL_LIVE_GAME_ID));
+  });
+
   it('says so when backup then fails to turn on', async () => {
     const { code } = await backUpThenNewPhone();
     const view = await renderRestore(paths.restoreBackup('games'));

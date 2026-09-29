@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Button } from '@/components/Button/Button';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
@@ -26,6 +26,7 @@ import { cloudBackupSummary, codeFromTyped, formatBackupTime } from './cloudBack
 import { RestoreCodeNote } from './RestoreCodeNote';
 import { RestoreSheet, type RestoreRequest } from './RestoreSheet';
 import { useBackupCode } from './useBackupCode';
+import { useStillHere } from './useStillHere';
 import styles from './CloudRestoreScreen.module.css';
 
 /** Failures that mean the code itself is wrong (or has nothing saved): shown on the field. */
@@ -97,14 +98,9 @@ export function CloudRestoreScreen() {
   const phoneCode = useBackupCode();
   const available = isCloudBackupAvailable();
   const inputRef = useRef<HTMLInputElement>(null);
-  // Nothing happens here once the parent has left the screen (for the live game, say).
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  // Nothing happens here once the parent has left the screen (for the live game, say),
+  // even just a moment before: see useStillHere.
+  const stillHere = useStillHere();
   // Turning backup on after the last restore, which Games waits for (see `restored`).
   const turningOn = useRef<Promise<CloudResult<void>> | null>(null);
 
@@ -236,7 +232,7 @@ export function CloudRestoreScreen() {
     );
     turningOn.current = turning;
     void turning.then((result) => {
-      if (result.ok || !mounted.current) return;
+      if (result.ok || !stillHere()) return;
       setSheetOpen(false);
       toast.show({
         message: `Cloud backup couldn't be turned on. ${result.error.message}`,
@@ -249,7 +245,7 @@ export function CloudRestoreScreen() {
   /** The restore is done and its sheet closed: on to Games, if the parent is still here. */
   const restored = async () => {
     await turningOn.current;
-    if (mounted.current) void navigate(paths.home, { replace: true });
+    if (stillHere()) void navigate(paths.home, { replace: true });
   };
 
   const olderBackups = versions?.slice(1) ?? [];
