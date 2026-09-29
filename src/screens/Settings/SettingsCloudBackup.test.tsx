@@ -27,7 +27,9 @@ import {
   turnOnCloudBackup,
 } from '@/test/cloudBackupApp';
 import { renderRoute } from '@/test/render';
+import { formatDayWithYear } from './backupFiles';
 import { formatWhen } from './cloudBackupText';
+import { captureDownloads } from './testUtils';
 
 const cloud = setUpFakeCloudBackup();
 
@@ -359,7 +361,8 @@ describe('Settings: cloud backup paused or stopped', () => {
     const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
     await user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
 
-    await expectToast('Restored 10 games. This phone now backs up with this code.');
+    // It backed up with this code already: nothing new about that.
+    await expectToast('Restored 10 games. This phone keeps backing up with this code.');
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(paths.home);
     });
@@ -475,7 +478,7 @@ describe('Settings: cloud backup paused or stopped', () => {
     await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
 
     await expectToast(
-      'Restored 1 game · 10 already up to date. This phone now backs up with this code.',
+      'Restored 1 game · 10 already up to date. This phone keeps backing up with this code.',
     );
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(paths.home);
@@ -707,6 +710,26 @@ describe('Settings: erasing all data with cloud backup', () => {
       screen.getByRole('link', { name: 'Cloud backup is paused. Tap to fix' }),
     ).toBeInTheDocument();
     expect(cloud.server.uploads).toHaveLength(1);
+  });
+
+  it('says a backup file saved since has all of it too, instead of asking for one', async () => {
+    await seedOwnGames();
+    await turnOnCloudBackup();
+    captureDownloads();
+    const { user } = await renderSettings();
+    const save = screen.getByRole('button', { name: /Save a backup file/ });
+    await waitFor(() => {
+      expect(save).toBeEnabled();
+    });
+    await user.click(save);
+    const today = formatDayWithYear(Date.now());
+    await waitFor(() => {
+      expect(save).toHaveTextContent(`Last saved: ${today}`);
+    });
+
+    expect(await eraseQuestion(user)).toHaveAccessibleDescription(
+      `${ERASED} Your online backup has all of it and stays: this phone keeps its code and won't replace the backup with an empty phone. To delete it too, first use Turn off and delete online backup in Cloud backup. The backup file you saved on ${today} has all of it too.`,
+    );
   });
 
   it("says what isn't backed up yet while changes wait for signal", async () => {

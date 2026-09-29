@@ -7,6 +7,7 @@ import { useCloudBackupStatus } from '@/data/backup/hooks';
 import { useGames, usePlayer, useSettings } from '@/data/hooks';
 import type { SettingsSection } from '@/routes';
 import { AboutSection } from './AboutSection';
+import { backupFileIsCurrent, readLastBackupFile } from './backupFiles';
 import { BackupSection, type OnlineBackupNote } from './BackupSection';
 import { backupCoverage, backupKeepsUp, type BackupCoverage } from './cloudBackupText';
 import { CloudBackupSection } from './CloudBackupSection';
@@ -44,6 +45,8 @@ export function SettingsScreen() {
   const cloudBackup = useCloudBackupStatus();
   const backupCode = useBackupCode();
   const { snapshot, fresh, currentSnapshot } = useBackupSnapshot();
+  // The last backup file saved here (a per-phone reminder, see readLastBackupFile).
+  const [lastSaved, setLastSaved] = useState(readLastBackupFile);
   const [searchParams] = useSearchParams();
   // Each visit to the section's link (a tap on the backup banner) is a new location.
   const { key: locationKey } = useLocation();
@@ -58,6 +61,9 @@ export function SettingsScreen() {
     cloudBackup !== undefined &&
     backupCode !== undefined;
   const coverage = loaded ? backupCoverage(cloudBackup, backupCode) : undefined;
+  // Only while the data read is the latest: a change just made may not be in the file.
+  const currentBackupFile =
+    fresh && backupFileIsCurrent(lastSaved, snapshot?.lastChangeAt) ? lastSaved : undefined;
 
   return (
     <main>
@@ -82,10 +88,17 @@ export function SettingsScreen() {
               fresh={fresh}
               currentSnapshot={currentSnapshot}
               onlineBackup={onlineBackupNote(coverage)}
+              lastSaved={lastSaved}
+              onSaved={setLastSaved}
             />
             <StorageSection standalone={standalone} dataVersion={games} />
             {standalone ? null : <InstallSection />}
-            <AboutSection player={player} games={games} cloudCoverage={coverage} />
+            <AboutSection
+              player={player}
+              games={games}
+              cloudCoverage={coverage}
+              currentBackupFile={currentBackupFile}
+            />
           </div>
         ) : null}
       </ScreenBody>

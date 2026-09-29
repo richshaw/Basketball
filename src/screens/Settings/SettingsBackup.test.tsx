@@ -197,6 +197,46 @@ describe('Settings: save a backup file', () => {
     });
   });
 
+  it('before erasing, asks for a backup file only while the last one lacks something', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    captureDownloads();
+    const { user } = await renderSettings();
+    const save = await enabledButton(/Save a backup file/);
+    const today = formatDayWithYear(Date.now());
+    const erased =
+      "All 10 games and their stats, the player's name and number, and your settings will be deleted from this phone. This can't be undone.";
+    const askToErase = async () => {
+      await user.click(screen.getByRole('button', { name: 'Erase all data' }));
+      return screen.findByRole('alertdialog', { name: 'Erase all data?' });
+    };
+    const cancel = async (dialog: HTMLElement) => {
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+      });
+    };
+
+    await user.click(save);
+    await waitFor(() => {
+      expect(save).toHaveTextContent(`Last saved: ${today}`);
+    });
+    let dialog = await askToErase();
+    expect(dialog).toHaveAccessibleDescription(
+      `${erased} The backup file you saved on ${today} has all of it.`,
+    );
+    await cancel(dialog);
+
+    // A change since: that file no longer has everything.
+    await createGame({ opponent: 'Hillcrest', date: '2026-09-28', periodFormat: 'quarters' });
+    await waitFor(() => {
+      expect(save).toHaveTextContent(`Changes since your last backup file on ${today}`);
+    });
+    dialog = await askToErase();
+    expect(dialog).toHaveAccessibleDescription(
+      `${erased.replace('10', '11')} If you might want them back, save a backup file first.`,
+    );
+  });
+
   it('has nothing to save on an empty phone', async () => {
     await renderSettings();
     const save = within(backupList()).getByRole('button', { name: /Save a backup file/ });

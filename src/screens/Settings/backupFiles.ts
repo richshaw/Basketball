@@ -168,9 +168,21 @@ export function rememberBackupFile(file: LastBackupFile): void {
 }
 
 /**
+ * Whether the last backup file saved on this phone holds all of its data: nothing has
+ * changed since (a new game, a restore, erasing everything). `lastChangeAt` is the
+ * data's `meta.lastChangeAt` now.
+ */
+export function backupFileIsCurrent(
+  lastSaved: LastBackupFile | undefined,
+  lastChangeAt: number | undefined,
+): lastSaved is LastBackupFile {
+  return lastSaved !== undefined && lastSaved.lastChangeAt === lastChangeAt;
+}
+
+/**
  * The "Save a backup file" row's subtitle. "Last saved" only while the data is still
- * what that file holds: after any change (a new game, a restore, erasing everything)
- * it says there are changes since, so it never vouches for data no file has.
+ * what that file holds (backupFileIsCurrent): after any change it says there are
+ * changes since, so it never vouches for data no file has.
  */
 export function backupFileStatus(
   lastSaved: LastBackupFile | undefined,
@@ -179,7 +191,7 @@ export function backupFileStatus(
   if (!data.hasData) return 'Nothing to back up yet';
   if (!lastSaved) return 'Not saved on this phone yet';
   const day = formatDayWithYear(lastSaved.savedAt);
-  return lastSaved.lastChangeAt === data.lastChangeAt
+  return backupFileIsCurrent(lastSaved, data.lastChangeAt)
     ? `Last saved: ${day}`
     : `Changes since your last backup file on ${day}`;
 }

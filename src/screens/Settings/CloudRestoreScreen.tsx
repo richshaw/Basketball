@@ -18,6 +18,7 @@ import {
   type CloudResult,
 } from '@/data/backup/cloudBackup';
 import { normalizeBackupCode } from '@/data/backup/code';
+import { useCloudBackupStatus } from '@/data/backup/hooks';
 import { useGames } from '@/data/hooks';
 import { paths } from '@/routes';
 import { ActionRow } from './ActionRow';
@@ -47,6 +48,8 @@ interface Found {
   backup: CloudBackup;
   /** This phone's own code, when restoring switches it to `code` (see RestoreCodeNote). */
   switchingFrom?: string;
+  /** This phone backs up with `code` already: restoring changes nothing about that. */
+  alreadyBackingUp?: boolean;
   /**
    * The server's newest version as this screen saw it: `backup`'s own, or the first of
    * the older backups' list. Turning backup on with it needs no request (see
@@ -56,6 +59,7 @@ interface Found {
 }
 
 const NOW_BACKS_UP = 'This phone now backs up with this code.';
+const KEEPS_BACKING_UP = 'This phone keeps backing up with this code.';
 
 /** Whether two typed or stored codes are the same code (however they're written). */
 function sameCode(a: string, b: string): boolean {
@@ -83,6 +87,7 @@ export function CloudRestoreScreen() {
   const toast = useToast();
   const games = useGames();
   const phoneCode = useBackupCode();
+  const cloudBackup = useCloudBackupStatus();
   const available = isCloudBackupAvailable();
   const inputRef = useRef<HTMLInputElement>(null);
   // Nothing happens here once the parent has left the screen (for the live game, say).
@@ -128,6 +133,7 @@ export function CloudRestoreScreen() {
   const preview = (next: Found) => {
     // Checked as the sheet opens, so what it says stays put while it slides away.
     if (phoneCode && !sameCode(next.code, phoneCode)) next.switchingFrom = phoneCode;
+    else if (phoneCode && cloudBackup?.enabled) next.alreadyBackingUp = true;
     setFound(next);
     setRequest({
       kind: 'preview',
@@ -207,7 +213,7 @@ export function CloudRestoreScreen() {
    */
   const turnOnBackup = (): string | undefined => {
     if (!found) return undefined;
-    const { code, backup, newestVersion } = found;
+    const { code, backup, newestVersion, alreadyBackingUp } = found;
     const turning = enableCloudBackupWithCode(code, { backup, newestVersion }).catch(
       (error: unknown): CloudResult<void> => {
         console.error('Turning on cloud backup after a restore failed', error);
@@ -223,7 +229,7 @@ export function CloudRestoreScreen() {
         duration: MESSAGE_TOAST_MS,
       });
     });
-    return NOW_BACKS_UP;
+    return alreadyBackingUp ? KEEPS_BACKING_UP : NOW_BACKS_UP;
   };
 
   /** The restore is done and its sheet closed: on to Games, if the parent is still here. */

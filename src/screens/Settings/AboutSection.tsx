@@ -11,6 +11,7 @@ import { formatPlayerName } from '@/lib/format';
 import { paths } from '@/routes';
 import { ActionRow } from './ActionRow';
 import { APP_VERSION } from './appVersion';
+import { formatDayWithYear, type LastBackupFile } from './backupFiles';
 import { eraseCloudNote, type BackupCoverage } from './cloudBackupText';
 
 export interface AboutSectionProps {
@@ -18,13 +19,21 @@ export interface AboutSectionProps {
   games: readonly Game[];
   /** How much of this phone's data its online backup has (see backupCoverage). */
   cloudCoverage?: BackupCoverage;
+  /** The last backup file saved on this phone, while it has all of its data (see backupFileIsCurrent). */
+  currentBackupFile?: LastBackupFile;
 }
 
 /**
  * What "Erase all data" will delete, spelled out, what the online backup has of it (see
- * eraseCloudNote), and, with games to lose, saving a backup file first.
+ * eraseCloudNote), and, with games to lose, saving a backup file first, unless the last
+ * one saved here (`savedFile`) still has all of it: then it says so instead.
  */
-function eraseMessage(gameCount: number, coverage: BackupCoverage, now: number): string {
+function eraseMessage(
+  gameCount: number,
+  coverage: BackupCoverage,
+  now: number,
+  savedFile?: LastBackupFile,
+): string {
   const cloud = eraseCloudNote(coverage, now);
   const parts: string[] = [];
   if (gameCount === 0) {
@@ -41,11 +50,17 @@ function eraseMessage(gameCount: number, coverage: BackupCoverage, now: number):
       `${games}, the player's name and number, and your settings will be deleted from this phone. This can't be undone.`,
     );
     if (cloud) parts.push(cloud);
-    parts.push(
-      coverage.kind === 'complete'
-        ? 'For a copy of your own as well, save a backup file first.'
-        : 'If you might want them back, save a backup file first.',
-    );
+    if (savedFile) {
+      const day = formatDayWithYear(savedFile.savedAt);
+      const too = coverage.kind === 'complete' ? ' too' : '';
+      parts.push(`The backup file you saved on ${day} has all of it${too}.`);
+    } else {
+      parts.push(
+        coverage.kind === 'complete'
+          ? 'For a copy of your own as well, save a backup file first.'
+          : 'If you might want them back, save a backup file first.',
+      );
+    }
   }
   return parts.join(' ');
 }
@@ -82,6 +97,7 @@ export function AboutSection({
   player,
   games,
   cloudCoverage = { kind: 'none' },
+  currentBackupFile,
 }: AboutSectionProps) {
   const confirm = useConfirm();
   const toast = useToast();
@@ -134,7 +150,7 @@ export function AboutSection({
   const eraseAll = async () => {
     const confirmed = await confirm({
       title: 'Erase all data?',
-      message: eraseMessage(games.length, cloudCoverage, Date.now()),
+      message: eraseMessage(games.length, cloudCoverage, Date.now(), currentBackupFile),
       confirmLabel: 'Erase all data',
       destructive: true,
     });

@@ -15,7 +15,7 @@ import { BackupCodeError, generateBackupCode, parseBackupCode } from '@/data/bac
 import { cloudFailure, errorMessage } from '@/data/backup/errors';
 import { deriveBackupKeys } from '@/data/backup/keys';
 import type { DemoOptions } from '@/data/demo';
-import type { ExportFile } from '@/data/transfer';
+import { clearAllData, type ExportFile } from '@/data/transfer';
 import { createGame, deleteGame, getPlayer, listGames } from '@/data/repo';
 import { paths } from '@/routes';
 import { buildRealData, REAL_LIVE_GAME_ID, realGameId, TEST_API_URL } from '@/test/backupHarness';
@@ -257,6 +257,44 @@ describe('Restore from a backup code', () => {
     // Its own code: no switching, and no warning.
     expect(sheet).toHaveTextContent('After restoring, this phone backs up with this code.');
     expect(sheet).not.toHaveTextContent('This phone will switch backup codes');
+  });
+
+  it('says afterwards that this phone keeps backing up with its own code', async () => {
+    await seedOwnGames();
+    const code = await turnOnCloudBackup();
+    const view = await renderRestore();
+    await waitFor(() => {
+      expect(view.field).toHaveValue(code);
+    });
+
+    await view.user.click(screen.getByRole('button', { name: 'Find backup' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await view.user.click(within(sheet).getByRole('button', { name: /Replace everything/ }));
+    await view.user.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Replace everything' }),
+    );
+
+    await expectToast('Restored 10 games. This phone keeps backing up with this code.');
+    expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
+  });
+
+  it('says afterwards that this phone backs up with its own code again, once it was off', async () => {
+    await seedOwnGames();
+    const code = await turnOnCloudBackup();
+    await disableCloudBackup();
+    await clearAllData();
+    const view = await renderRestore();
+    // Off, the phone keeps its code: it's filled in.
+    await waitFor(() => {
+      expect(view.field).toHaveValue(code);
+    });
+
+    await view.user.click(screen.getByRole('button', { name: 'Find backup' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await view.user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+
+    await expectToast('Restored 10 games. This phone now backs up with this code.');
+    expect(await settledStatus()).toMatchObject({ enabled: true });
   });
 
   it('says before restoring that this phone will back up with the code', async () => {
