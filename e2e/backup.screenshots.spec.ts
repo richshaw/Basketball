@@ -35,6 +35,9 @@ interface Shot {
 
 const CLOUD_BACKUP = paths.settingsSection('cloud-backup');
 
+/** A backup code as the engine writes it. */
+const CODE = /^[0-9A-Z]{4}(-[0-9A-Z]{4}){6}$/;
+
 async function waitForState(page: Page, state: string) {
   await expect.poll(async () => (await getBackupStatus(page)).state).toBe(state);
 }
@@ -42,9 +45,34 @@ async function waitForState(page: Page, state: string) {
 /** The parent's own ten games, backed up. */
 const backedUp: Setup = async (page, server) => {
   await seedOwnGames(page);
+  const uploads = server.uploads.length;
   await enableCloudBackup(page);
-  await expect.poll(() => server.uploads.length).toBe(1);
+  await expect.poll(() => server.uploads.length).toBe(uploads + 1);
   await waitForState(page, 'idle');
+};
+
+/** Backed up, then paused: another phone backed up with the same code since. */
+const pausedForAnotherPhone: Setup = async (page, server) => {
+  await backedUp(page, server);
+  backUpFromAnotherPhone(server);
+  await backUpNow(page);
+  await waitForState(page, 'paused-other-device');
+};
+
+/** Backed up, then paused: the games were erased from this phone. */
+const pausedForMissingGames: Setup = async (page, server) => {
+  await backedUp(page, server);
+  await clearAllData(page);
+  await backUpNow(page);
+  await waitForState(page, 'paused-shrink');
+};
+
+/** Backed up, then stopped: the online backup was deleted (from another phone, say). */
+const stoppedForDeletedBackup: Setup = async (page, server) => {
+  await backedUp(page, server);
+  server.failNext({ status: 409, error: 'account_deleted', method: 'PUT' });
+  await backUpNow(page);
+  await waitForState(page, 'needs-attention');
 };
 
 /** Tap a button and wait for the dialog it opens. */
@@ -54,6 +82,8 @@ function openDialog(button: string | RegExp, role: 'dialog' | 'alertdialog', nam
     await expect(page.getByRole(role, { name })).toBeVisible();
   };
 }
+
+const eraseAllData = openDialog(/^Erase all data/, 'alertdialog', 'Erase all data?');
 
 const shots: Shot[] = [
   { name: 'backup-off', path: CLOUD_BACKUP },
@@ -99,53 +129,64 @@ const shots: Shot[] = [
       await waitForState(page, 'error');
     },
   },
+  { name: 'backup-paused-shrink', path: CLOUD_BACKUP, setup: pausedForMissingGames },
   {
-    name: 'backup-paused-shrink',
+    // Deleting the online backup would lose the games only it has: the choice says so.
+    name: 'backup-turn-off-sheet-missing-games',
     path: CLOUD_BACKUP,
-    setup: async (page, server) => {
-      await backedUp(page, server);
-      await clearAllData(page);
-      await backUpNow(page);
-      await waitForState(page, 'paused-shrink');
-    },
+    setup: pausedForMissingGames,
+    interact: openDialog('Turn off', 'dialog', 'Turn off cloud backup?'),
   },
+  { name: 'backup-paused-other-device', path: CLOUD_BACKUP, setup: pausedForAnotherPhone },
+  { name: 'backup-needs-attention', path: CLOUD_BACKUP, setup: stoppedForDeletedBackup },
+  // "Erase all data" says what the online backup has: all of it only while it keeps up.
+  { name: 'backup-erase-confirm', path: paths.settings, setup: backedUp, interact: eraseAllData },
   {
-    name: 'backup-paused-other-device',
-    path: CLOUD_BACKUP,
-    setup: async (page, server) => {
-      await backedUp(page, server);
-      backUpFromAnotherPhone(server);
-      await backUpNow(page);
-      await waitForState(page, 'paused-other-device');
-    },
-  },
-  {
-    name: 'backup-needs-attention',
-    path: CLOUD_BACKUP,
-    setup: async (page, server) => {
-      await backedUp(page, server);
-      server.failNext({ status: 409, error: 'account_deleted', method: 'PUT' });
-      await backUpNow(page);
-      await waitForState(page, 'needs-attention');
-    },
-  },
-  {
-    name: 'backup-erase-confirm',
+    name: 'backup-erase-confirm-paused',
     path: paths.settings,
-    setup: backedUp,
-    interact: openDialog(/^Erase all data/, 'alertdialog', 'Erase all data?'),
+    setup: pausedForAnotherPhone,
+    interact: eraseAllData,
+  },
+  {
+    name: 'backup-erase-confirm-off',
+    path: paths.settings,
+    setup: async (page, server) => {
+      await backedUp(page, server);
+      await disableCloudBackup(page);
+    },
+    interact: eraseAllData,
+  },
+  {
+    name: 'backup-erase-confirm-deleted',
+    path: paths.settings,
+    setup: stoppedForDeletedBackup,
+    interact: eraseAllData,
   },
   {
     name: 'backup-games-banner',
     path: paths.home,
-    setup: async (page, server) => {
-      await backedUp(page, server);
-      backUpFromAnotherPhone(server);
-      await backUpNow(page);
-      await waitForState(page, 'paused-other-device');
-    },
+    setup: pausedForAnotherPhone,
     interact: (page) =>
       expect(page.getByRole('link', { name: 'Cloud backup is paused. Tap to fix' })).toBeVisible(),
+  },
+  {
+    // Restoring on a phone with a code (and games) of its own: its code is filled in.
+    name: 'backup-restore-own-code',
+    path: paths.restoreBackup(),
+    setup: backedUp,
+    interact: (page) => expect(page.getByLabel('Backup code')).toHaveValue(CODE),
+  },
+  {
+    name: 'backup-restore-own-code-preview',
+    path: paths.restoreBackup(),
+    setup: backedUp,
+    interact: async (page) => {
+      await expect(page.getByLabel('Backup code')).toHaveValue(CODE);
+      await page.getByRole('button', { name: 'Find backup' }).tap();
+      await expect(page.getByRole('dialog', { name: 'Restore this backup?' })).toContainText(
+        'After restoring, this phone backs up with this code.',
+      );
+    },
   },
   {
     name: 'backup-restore-typo',
@@ -223,6 +264,27 @@ for (const colorScheme of ['light', 'dark'] as const) {
           await expect(
             newPhone.getByRole('dialog', { name: 'Restore this backup?' }),
           ).toContainText('10 games');
+        },
+      };
+      await capture(page, shot, server, `${shot.name}-${colorScheme}.png`);
+    });
+
+    // A phone with a code of its own restoring a partner's backup: it warns first.
+    test('backup-restore-switch-code', async ({ page, browser, baseURL }) => {
+      const server = await routeFakeBackupServer(page);
+      const partnersCode = await backUpOnAnotherPhone(browser, baseURL, server);
+      const shot: Shot = {
+        name: 'backup-restore-switch-code',
+        path: paths.restoreBackup(),
+        setup: backedUp,
+        interact: async (thisPhone) => {
+          const field = thisPhone.getByLabel('Backup code');
+          await expect(field).toHaveValue(CODE);
+          await field.fill(partnersCode);
+          await thisPhone.getByRole('button', { name: 'Find backup' }).tap();
+          const sheet = thisPhone.getByRole('dialog', { name: 'Restore this backup?' });
+          await expect(sheet).toContainText('This phone will switch backup codes');
+          await expect(sheet.getByRole('button', { name: /^Replace everything/ })).toBeInViewport();
         },
       };
       await capture(page, shot, server, `${shot.name}-${colorScheme}.png`);
