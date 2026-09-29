@@ -22,7 +22,7 @@ import {
   isDemoPlayer,
 } from './demoIds';
 import { forgetPendingStats } from './pendingStats';
-import { deleteGame, getPlayer, savePlayer } from './repo';
+import { deleteGameRecords, getPlayer, savePlayer } from './repo';
 import { isFieldGoalType } from './stats';
 import { EXPORT_APP, EXPORT_SCHEMA_VERSION, importAll, type ExportFile } from './transfer';
 import type { CourtPoint, Game, HomeAway, Player, StatEvent, StatType } from './types';
@@ -444,12 +444,13 @@ export async function addSampleData(): Promise<boolean> {
 export async function removeDemoData(): Promise<number> {
   const sampleIds = (await db.games.toCollection().primaryKeys()).filter(isDemoGameId);
   // Right before the write: then no retry can save one of their taps into a sample game
-  // added again later (it would have the same id). (deleteGame, below, then has none left
-  // to forget, and none to put back if the write fails: that's done here, for all of them.)
+  // added again later (it would have the same id). Once, here, for all of them, and all
+  // kept again if the write fails: deleteGameRecords, below, forgets nothing (a forget in
+  // its midst would stay in effect if the write failed after that part).
   const keepAgain = sampleIds.map((id) => forgetPendingStats(id));
   try {
     return await db.transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
-      for (const id of sampleIds) await deleteGame(id);
+      for (const id of sampleIds) await deleteGameRecords(id);
       const player = await getPlayer();
       if (player && isDemoPlayer(player)) await savePlayer({ name: '', jerseyNumber: null });
       return sampleIds.length;

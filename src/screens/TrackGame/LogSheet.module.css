@@ -4,6 +4,13 @@
   text-align: center;
 }
 
+/* A delete that isn't done or failed, as the end-game sheet says what isn't saved. */
+.note {
+  color: var(--color-danger-text);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-normal);
+}
+
 .dot {
   width: var(--space-3);
   height: var(--space-3);

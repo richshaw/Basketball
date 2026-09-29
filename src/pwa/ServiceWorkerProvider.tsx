@@ -1,5 +1,7 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
+import { isReloadSafe } from '@/data/pendingStats';
+import { reloadIfSafe } from './reload';
 import { ServiceWorkerContext, type ServiceWorkerUpdate } from './serviceWorkerContext';
 import { applyUpdate, watchForTakeover } from './updates';
 
@@ -21,7 +23,9 @@ const serviceWorkers = () => ('serviceWorker' in navigator ? navigator.serviceWo
  * Registers the service worker once for the whole app and shares its update
  * state. Only the tab-screen shell shows the prompt (UpdateBanner), and only the
  * window where the user taps Update reloads, so a new version never interrupts a
- * live game.
+ * live game. Not even that one updates while a reload would lose a tap only this page
+ * holds (isReloadSafe, checked before the new version is activated, and reloadIfSafe at
+ * the reload): the prompt then comes back once it wouldn't.
  */
 export function ServiceWorkerProvider({ children }: { children: ReactNode }) {
   const {
@@ -50,7 +54,11 @@ export function ServiceWorkerProvider({ children }: { children: ReactNode }) {
         applyUpdate({
           container: serviceWorkers(),
           activateWaitingWorker: () => updateServiceWorker(),
-          reload: () => window.location.reload(),
+          // Not even the new worker's activation while a reload would lose a tap.
+          mayReload: isReloadSafe,
+          reload: () => {
+            reloadIfSafe();
+          },
         }),
       dismiss: () => setNeedRefresh(false),
     }),

@@ -7,17 +7,26 @@ export interface ApplyUpdateOptions {
   /** Tells the waiting worker to take over (vite-plugin-pwa's `updateServiceWorker`). */
   activateWaitingWorker: () => Promise<void>;
   reload: () => void;
+  /**
+   * Whether this window may reload now, losing nothing (isReloadSafe): if not, the
+   * waiting worker isn't even told to take over. Yes, if left out.
+   */
+  mayReload?: () => boolean;
 }
 
 /**
  * Moves this window to the new version: activates the waiting service worker, then
  * reloads once it controls the page. Only the window that asked reloads; any other
  * window (a live game in another tab, say) keeps running until it reloads by itself.
+ * Nothing happens while this window couldn't reload (`mayReload`): the new worker's
+ * activation deletes the old version's cached files, which the window would then carry
+ * on without (they're what it runs on offline).
  */
 export async function applyUpdate({
   container,
   activateWaitingWorker,
   reload,
+  mayReload = () => true,
 }: ApplyUpdateOptions): Promise<void> {
   const registration = await container?.getRegistration();
   if (!container || !registration?.waiting) {
@@ -26,6 +35,9 @@ export async function applyUpdate({
     reload();
     return;
   }
+  // (Checked last thing before the worker is told: vite-plugin-pwa's updateServiceWorker
+  // only sends it SKIP_WAITING, and from then on the old version's files are going.)
+  if (!mayReload()) return;
 
   let reloaded = false;
   const reloadOnce = () => {

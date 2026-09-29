@@ -16,6 +16,11 @@ export interface LogSheetProps {
   /** The game's events, oldest first (as useGameEvents returns them). */
   events: readonly StatEvent[];
   periodFormat: PeriodFormat;
+  /**
+   * A delete from the log that isn't done or failed, said in full, e.g. "Couldn't delete
+   * Steal (Q2). Try again.": the last-action line, which says it too, is under the log.
+   */
+  note?: string;
   /** A row was tapped: offer to delete that stat. */
   onSelect: (event: StatEvent) => void;
   onClose: () => void;
@@ -66,12 +71,14 @@ function LogList({
 /**
  * Every stat recorded in this game, newest first, with its period and time (and a pin
  * on shots whose spot was marked). Tapping one offers to delete it (for mistakes found
- * later; Undo covers the last one).
+ * later; Undo covers the last one). Its note, pinned under the list so it's in view
+ * however far the list is scrolled, says when a delete isn't done or failed.
  */
 export const LogSheet = memo(function LogSheet({
   open,
   events,
   periodFormat,
+  note,
   onSelect,
   onClose,
 }: LogSheetProps) {
@@ -81,6 +88,13 @@ export const LogSheet = memo(function LogSheet({
       onClose={onClose}
       title="Stat log"
       description={events.length > 0 ? 'Newest first. Tap a stat to delete it.' : undefined}
+      footer={
+        note ? (
+          <p role="alert" className={styles.note}>
+            {note}
+          </p>
+        ) : undefined
+      }
     >
       {/* Only rendered while the sheet is showing: the Sheet renders nothing while closed. */}
       <LogList events={events} periodFormat={periodFormat} onSelect={onSelect} />

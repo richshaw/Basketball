@@ -75,6 +75,16 @@ export function keptTaps(page: Page): Promise<string[]> {
   );
 }
 
+/**
+ * The taps taken back whose stat is kept on the phone to be removed, until it's confirmed
+ * gone (see src/data/pendingRemovals.ts).
+ */
+export function keptRemovals(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    Object.keys(localStorage).filter((key) => key.startsWith('hoop-stats.pendingRemoval.')),
+  );
+}
+
 /** A spot on the court in feet: the basket at (0, 0), +y toward half court (src/lib/court.ts). */
 export interface CourtSpot {
   x: number;
@@ -175,6 +185,60 @@ export async function failStatReads(page: Page, fail = true) {
   }, fail);
 }
 
+/** What the page keeps for loseDatabaseConnection(), from before the app loads. */
+interface DatabaseConnections {
+  /** The IndexedDB connections the page opened. */
+  databaseConnections?: IDBDatabase[];
+  /** Opening a connection fails while set. */
+  databaseLost?: boolean;
+}
+
+/**
+ * Lets loseDatabaseConnection() cut the page off from IndexedDB: call it before the
+ * page loads (e.g. before startGame). From then on, every page this test loads keeps the
+ * connections it opens.
+ */
+export async function canLoseDatabaseConnection(page: Page) {
+  await page.addInitScript(() => {
+    const state = window as unknown as DatabaseConnections;
+    const connections: IDBDatabase[] = [];
+    state.databaseConnections = connections;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound by apply() below
+    const open = IDBFactory.prototype.open;
+    IDBFactory.prototype.open = function (this: IDBFactory, ...args) {
+      if (state.databaseLost) {
+        throw new DOMException(
+          'Connection to Indexed Database server lost. Refresh the page to try again',
+          'UnknownError',
+        );
+      }
+      const request = open.apply(this, args);
+      request.addEventListener('success', () => connections.push(request.result));
+      return request;
+    };
+  });
+}
+
+/**
+ * Makes the page lose its IndexedDB connection the way WebKit does in the background,
+ * until it's called again with `lost` false (see canLoseDatabaseConnection): each open
+ * connection is closed from the server's side (its `close` event), and opening one again
+ * fails. Dexie then closes the database, and gives up on it once the next read or write
+ * can't open it again: until the app opens it again itself (src/data/reopen.ts), every
+ * read and write fails, the page's exportAll() too.
+ */
+export async function loseDatabaseConnection(page: Page, lost = true) {
+  await page.evaluate((losing) => {
+    const state = window as unknown as DatabaseConnections;
+    if (!state.databaseConnections) throw new Error('Call canLoseDatabaseConnection() first');
+    state.databaseLost = losing;
+    if (!losing) return;
+    for (const connection of state.databaseConnections.splice(0)) {
+      connection.dispatchEvent(new Event('close'));
+    }
+  }, lost);
+}
+
 /** The note the live game screen shows while it can't read the saved stats. */
 export const readFailedNote = (page: Page) => page.getByText("Can't read saved stats right now.");
 
@@ -203,6 +267,84 @@ export async function failNextSaves(page: Page, count: number) {
     }
     state.saveFailuresLeft = failures;
   }, count);
+}
+
+/**
+ * Makes removing a stat fail in IndexedDB while `on` (an Undo, say), as a write can when
+ * iOS brings the app back from the background: the stat's `delete` throws inside its
+ * transaction.
+ */
+export async function failStatDeletes(page: Page, on: boolean) {
+  await page.evaluate((failing) => {
+    const state = window as unknown as { failStatDeletes?: boolean };
+    if (state.failStatDeletes === undefined) {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound by apply() below
+      const remove = IDBObjectStore.prototype.delete;
+      IDBObjectStore.prototype.delete = function (this: IDBObjectStore, ...args) {
+        if (this.name === 'events' && state.failStatDeletes) {
+          throw new DOMException('Simulated write failure', 'UnknownError');
+        }
+        return remove.apply(this, args);
+      };
+    }
+    state.failStatDeletes = failing;
+  }, on);
+}
+
+/**
+ * Holds up every write to the saved stats (and every read of them) until `release()`,
+ * as IndexedDB does while an earlier transaction on them hasn't finished: another
+ * connection keeps one going. A stat's removal meanwhile (an Undo, say) doesn't answer
+ * until then. Read nothing through the app (e.g. `exportAll`) before `release()`.
+ */
+export async function holdStatWrites(page: Page): Promise<{ release: () => Promise<void> }> {
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('hoop-stats');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('Could not open the database'));
+    });
+    const events = db.transaction('events', 'readwrite').objectStore('events');
+    let holding = true;
+    // One read after another keeps the transaction going; closing lets it finish.
+    const keepGoing = () => {
+      if (holding) events.count().onsuccess = keepGoing;
+      else db.close();
+    };
+    keepGoing();
+    (window as unknown as { releaseStatWrites?: () => void }).releaseStatWrites = () => {
+      holding = false;
+    };
+  });
+  return {
+    release: () =>
+      page.evaluate(() => {
+        (window as unknown as { releaseStatWrites?: () => void }).releaseStatWrites?.();
+      }),
+  };
+}
+
+/**
+ * Makes saving the game itself fail in IndexedDB while `on` (moving to another period,
+ * say), as a write can when iOS brings the app back from the background: the game's
+ * `put` throws inside its transaction. (A stat's save writes the game too, so taps fail
+ * meanwhile as well.)
+ */
+export async function failGameSaves(page: Page, on: boolean) {
+  await page.evaluate((failing) => {
+    const state = window as unknown as { failGameSaves?: boolean };
+    if (state.failGameSaves === undefined) {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound by apply() below
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args) {
+        if (this.name === 'games' && state.failGameSaves) {
+          throw new DOMException('Simulated write failure', 'UnknownError');
+        }
+        return put.apply(this, args);
+      };
+    }
+    state.failGameSaves = failing;
+  }, on);
 }
 
 /**

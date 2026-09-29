@@ -17,8 +17,10 @@
  * Only taps live here: an entry is a stat to save, and saving it again after its stat
  * was deleted would bring the stat back. A shot's spot (the shot chart) is kept with its
  * tap while the tap isn't saved; a spot for a stat that's saved already is kept in the
- * pending-spots journal (pendingSpots.ts), which never adds a stat. What's pending, and
- * what's forgotten when data is deleted or replaced, covers both journals.
+ * pending-spots journal (pendingSpots.ts), which never adds a stat; and a tap taken back
+ * whose stat may still have to be removed is kept in the pending-removals journal
+ * (pendingRemovals.ts). What's pending, and what's forgotten when data is deleted or
+ * replaced, covers all three journals.
  *
  * This module never touches the database (pendingSaves.ts saves the kept taps and
  * spots), so the repository can use it too.
@@ -26,7 +28,14 @@
 import { isRealPoint } from '@/lib/court';
 import { compareIds, newId } from '@/lib/id';
 import { nextTimestamp } from './db';
-import { removeJournalEntries } from './journal';
+import {
+  listJournalEntries,
+  parseJournalEntry,
+  removeJournalEntries,
+  removeJournalEntry,
+  writeJournalEntry,
+} from './journal';
+import { forgetPendingRemovals, listPendingRemovals } from './pendingRemovals';
 import { forgetPendingSpots, listPendingSpots } from './pendingSpots';
 import { isFieldGoalType } from './stats';
 import type { CourtPoint, StatEvent, StatType } from './types';
@@ -73,21 +82,12 @@ export function newPendingStat(
  * memory.
  */
 export function addPendingStat(stat: PendingStat): boolean {
-  try {
-    localStorage.setItem(KEY_PREFIX + stat.id, JSON.stringify(stat));
-    return true;
-  } catch {
-    return false;
-  }
+  return writeJournalEntry(KEY_PREFIX + stat.id, stat);
 }
 
 /** Forgets a tap: it's saved, or it was undone. */
 export function removePendingStat(id: string): void {
-  try {
-    localStorage.removeItem(KEY_PREFIX + id);
-  } catch {
-    // Blocked storage: nothing could have been kept there.
-  }
+  removeJournalEntry(KEY_PREFIX + id);
 }
 
 /**
@@ -104,15 +104,9 @@ export function isPendingStat(id: string): boolean | undefined {
 
 /** One entry, or undefined if it isn't a tap this version can save. */
 function parseEntry(key: string, text: string | null): PendingStat | undefined {
-  if (text === null) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (typeof value !== 'object' || value === null) return undefined;
-  const { id, gameId, type, period, at, location } = value as Record<string, unknown>;
+  const value = parseJournalEntry(text);
+  if (!value) return undefined;
+  const { id, gameId, type, period, at, location } = value;
   // The checks its stat gets when it's saved, so a kept tap can always be saved.
   const checked = statEventSchema.safeParse({ id, gameId, type, period, createdAt: at });
   if (!checked.success || key !== KEY_PREFIX + checked.data.id) return undefined;
@@ -135,18 +129,9 @@ function parseEntry(key: string, text: string | null): PendingStat | undefined {
  * can't read is skipped but left alone (a newer version of the app may have kept it).
  */
 export function listPendingStats(gameId?: string): PendingStat[] {
-  const stats: PendingStat[] = [];
-  try {
-    for (let index = 0; index < localStorage.length; index++) {
-      const key = localStorage.key(index);
-      if (!key?.startsWith(KEY_PREFIX)) continue;
-      const stat = parseEntry(key, localStorage.getItem(key));
-      if (stat && (gameId === undefined || stat.gameId === gameId)) stats.push(stat);
-    }
-  } catch {
-    // Blocked storage: nothing could have been kept there.
-  }
-  return stats.sort((a, b) => a.at - b.at || compareIds(a.id, b.id));
+  return listJournalEntries(KEY_PREFIX, parseEntry, gameId).sort(
+    (a, b) => a.at - b.at || compareIds(a.id, b.id),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -188,9 +173,22 @@ export interface UnsavedTapHolder {
    * for when that write fails.
    */
   forget(id?: string): () => void;
+  /**
+   * Calls `listener` whenever what it holds changes (so reloadSafe() may have), until
+   * the function it returns is called. For watchReloadSafe(); a holder whose
+   * reloadSafe() never changes can leave it out.
+   */
+  subscribe?(listener: () => void): () => void;
 }
 
 const holders = new Set<UnsavedTapHolder>();
+
+/** watchReloadSafe()'s listeners. */
+const reloadWatchers = new Set<() => void>();
+
+function tellReloadWatchers(): void {
+  for (const watcher of [...reloadWatchers]) watcher();
+}
 
 /**
  * Registers taps held in memory for the app-wide retry. Returns a function that
@@ -198,8 +196,15 @@ const holders = new Set<UnsavedTapHolder>();
  */
 export function holdUnsavedTaps(holder: UnsavedTapHolder): () => void {
   holders.add(holder);
+  const unsubscribe = holder.subscribe?.(tellReloadWatchers);
+  tellReloadWatchers();
+  let held = true;
   return () => {
+    if (!held) return;
+    held = false;
     holders.delete(holder);
+    unsubscribe?.();
+    tellReloadWatchers();
   };
 }
 
@@ -235,13 +240,26 @@ export function isReloadSafe(): boolean {
 }
 
 /**
- * Whether any tap (or spot) isn't saved yet: kept in a journal (by this page or an
- * earlier one), or held in memory.
+ * Calls `listener` whenever isReloadSafe() may have changed: a holder's taps changed, or
+ * one was registered or let go. Returns a function that stops it. (useReloadSafe in
+ * hooks.ts, for the Reload buttons.)
+ */
+export function watchReloadSafe(listener: () => void): () => void {
+  reloadWatchers.add(listener);
+  return () => {
+    reloadWatchers.delete(listener);
+  };
+}
+
+/**
+ * Whether any tap (or spot, or removal of a tap taken back) isn't saved yet: kept in a
+ * journal (by this page or an earlier one), or held in memory.
  */
 export function hasPendingStats(): boolean {
   return (
     listPendingStats().length > 0 ||
     listPendingSpots().length > 0 ||
+    listPendingRemovals().length > 0 ||
     [...holders].some((holder) => holder.hasUnsaved())
   );
 }
@@ -267,25 +285,28 @@ export function notifyPendingStats(): void {
 /**
  * Forgets the kept taps of one game, or of every game (then every entry, even one this
  * version can't read, so no game id or stat type is left behind), the spots kept for
- * their stats (pendingSpots.ts) too, and has the sessions holding such taps and spots in
- * memory forget theirs. For writes that delete or replace a game's data: no retry may
- * save one of its taps into it afterwards, or put one of its spots on a stat, say in a
- * game restored or made again under the same id. Call it just before that write, so a
- * save asked for earlier lands first and goes with it. Returns a function that keeps the
- * forgotten entries again and has the sessions hold theirs again, for when the write
- * fails.
+ * their stats (pendingSpots.ts) and the removals kept for taps taken back
+ * (pendingRemovals.ts) too, and has the sessions holding such taps and spots in memory
+ * forget theirs. For writes that delete or replace a game's data: no retry may save one
+ * of its taps into it afterwards, put one of its spots on a stat, or remove one of its
+ * stats, say in a game restored or made again under the same id. Call it just before
+ * that write, so a save asked for earlier lands first and goes with it. Returns a
+ * function that keeps the forgotten entries again and has the sessions hold theirs
+ * again, for when the write fails.
  */
 export function forgetPendingStats(gameId?: string): () => void {
   const taps = removeJournalEntries(KEY_PREFIX, gameId);
   const spots = forgetPendingSpots(gameId);
+  const removals = forgetPendingRemovals(gameId);
   const holdAgain: (() => void)[] = [];
   for (const holder of [...holders]) {
     if (gameId === undefined || holder.gameId === gameId) holdAgain.push(holder.forget());
   }
   return () => {
-    if (taps.count + spots.count === 0 && holdAgain.length === 0) return;
+    if (taps.count + spots.count + removals.count === 0 && holdAgain.length === 0) return;
     taps.putBack();
     spots.putBack();
+    removals.putBack();
     // After the entries: a session's kept taps and spots are back in the journals by then.
     for (const again of holdAgain) again();
     // The app-wide retry wakes up for them.

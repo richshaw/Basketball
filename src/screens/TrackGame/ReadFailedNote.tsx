@@ -1,4 +1,5 @@
 import { cx } from '@/lib/cx';
+import { reloadIfSafe } from '@/pwa/reload';
 import styles from './ReadFailedNote.module.css';
 
 export interface ReadFailedNoteProps {
@@ -31,7 +32,7 @@ export function ReadFailedNote({ canReload, compact = false }: ReadFailedNotePro
         </span>
       </p>
       {canReload ? (
-        <button type="button" className={styles.reload} onClick={() => window.location.reload()}>
+        <button type="button" className={styles.reload} onClick={() => reloadIfSafe()}>
           Reload
         </button>
       ) : null}

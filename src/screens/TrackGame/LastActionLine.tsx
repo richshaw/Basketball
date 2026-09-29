@@ -20,6 +20,12 @@ export interface LastAction {
   /** The tap this line confirms, if it's a stat (so the screen can say it wasn't saved). */
   tapId?: string;
   /**
+   * The stat whose removal this line says is still under way ('Undo not saved yet', or
+   * 'Delete not saved yet' for the log's), so the screen can say how it went there once
+   * it's done.
+   */
+  removalId?: string;
+  /**
    * A short note under the message, e.g. 'Tap the court to mark the spot'. It's about
    * the shot chart's court, which screen readers skip, so they don't hear it either.
    */

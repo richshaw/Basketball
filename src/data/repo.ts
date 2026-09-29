@@ -14,6 +14,7 @@ import { Dexie } from 'dexie';
 import { clampToHalfCourt, isRealPoint } from '@/lib/court';
 import { newId } from '@/lib/id';
 import { db, eventsOfGame, META_KEYS, nextTimestamp, touchLastChange } from './db';
+import { removePendingRemoval } from './pendingRemovals';
 import { removePendingSpot } from './pendingSpots';
 import { forgetPendingStat, forgetPendingStats } from './pendingStats';
 import { isFieldGoalType } from './stats';
@@ -298,18 +299,26 @@ export function deleteGame(gameId: string): Promise<void> {
   // First: then no retry can save one of its taps (or spots) once it's gone, e.g. into
   // the game restored from a backup later.
   const keepAgain = forgetPendingStats(gameId);
-  return db
-    .transaction('rw', [db.games, db.events, db.meta], async () => {
-      const game = await db.games.get(gameId);
-      const deletedEvents = await db.events.where('gameId').equals(gameId).delete();
-      if (!game && deletedEvents === 0) return;
-      await db.games.delete(gameId);
-      await touchLastChange(Date.now());
-    })
-    .catch((error: unknown) => {
-      keepAgain();
-      throw error;
-    });
+  return deleteGameRecords(gameId).catch((error: unknown) => {
+    keepAgain();
+    throw error;
+  });
+}
+
+/**
+ * Deletes a game and all of its stats like deleteGame, but forgets nothing kept for
+ * them: for a write that forgets them itself, once, and keeps them again if it fails
+ * (removeDemoData). Forgetting them again in its midst would leave them forgotten for
+ * good if the write failed after this part of it.
+ */
+export function deleteGameRecords(gameId: string): Promise<void> {
+  return db.transaction('rw', [db.games, db.events, db.meta], async () => {
+    const game = await db.games.get(gameId);
+    const deletedEvents = await db.events.where('gameId').equals(gameId).delete();
+    if (!game && deletedEvents === 0) return;
+    await db.games.delete(gameId);
+    await touchLastChange(Date.now());
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -502,8 +511,9 @@ export function undoLastStat(gameId: string): Promise<StatEvent | undefined> {
 
 /**
  * Removes one event (e.g. from the event log), and forgets its tap if one is still
- * kept, so it can't be saved again, and the spot kept for it (the shot chart). Resolves
- * to it, or undefined if missing.
+ * kept, so it can't be saved again, and the spot kept for it (the shot chart) and the
+ * removal kept for it (a tap taken back while the database couldn't be written).
+ * Resolves to it, or undefined if missing.
  */
 export async function deleteStat(eventId: string): Promise<StatEvent | undefined> {
   // First: then no retry can save it once it's gone.
@@ -514,8 +524,9 @@ export async function deleteStat(eventId: string): Promise<StatEvent | undefined
     return found;
   });
   // Its spot goes only once it's gone: a spot never brings back its stat, and a stat
-  // that stays (the delete failed) still gets it.
+  // that stays (the delete failed) still gets it. So does a kept removal: it's done.
   removePendingSpot(eventId);
+  removePendingRemoval(eventId);
   return event;
 }
 
