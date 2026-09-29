@@ -24,7 +24,7 @@ const DESCRIPTIONS: Partial<Record<BackupCodeReason, string>> = {
 };
 
 const KEEP_IT_SAFE =
-  "Write it down or save it somewhere safe. It's the only way to get your stats onto a new phone, and nobody (not even us) can recover it.";
+  "Write it down or save it somewhere safe. It's the only way to restore your online backup, and nobody (not even us) can recover it.";
 
 /**
  * The backup code, large and monospaced, grouped the way the engine writes it, with

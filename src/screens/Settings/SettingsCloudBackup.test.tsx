@@ -97,7 +97,7 @@ describe('Settings: cloud backup off', () => {
     );
     expect(shown.children).toHaveLength(2);
     expect(sheet).toHaveTextContent(
-      "Write it down or save it somewhere safe. It's the only way to get your stats onto a new phone, and nobody (not even us) can recover it.",
+      "Write it down or save it somewhere safe. It's the only way to restore your online backup, and nobody (not even us) can recover it.",
     );
     // Only "I've saved it" closes it.
     expect(within(sheet).queryByRole('button', { name: 'Close' })).toBeNull();
