@@ -2,6 +2,8 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, expectRoute, screenHeading } from './support/app';
 import {
+  backUpFromAnotherPhone,
+  backUpNow,
   enableCloudBackup,
   fetchCloudBackup,
   getBackupCode,
@@ -135,6 +137,35 @@ test('restores the games on a new phone from the backup code', async ({
     'Backed up just now',
   );
   await phone.context().close();
+});
+
+test('every tap on the backup banner goes to Cloud backup in Settings', async ({ page }) => {
+  const server = await routeFakeBackupServer(page);
+  await page.goto('./');
+  await seedOwnGames(page);
+  await enableCloudBackup(page);
+  await expect.poll(() => server.uploads.length).toBe(1);
+  // Another phone backed up with the same code: this one pauses.
+  backUpFromAnotherPhone(server);
+  await backUpNow(page);
+
+  await page.goto(appUrl(paths.home));
+  const banner = page.getByRole('link', { name: 'Cloud backup is paused. Tap to fix' });
+  const section = page.getByRole('region', { name: 'Cloud backup' });
+  await banner.tap();
+  await expectRoute(page, paths.settingsSection('cloud-backup'));
+  await expect(section).toBeFocused();
+  await expect(section).toBeInViewport();
+
+  // She reads on down Settings, then goes back up and taps the banner again.
+  const erase = page.getByRole('button', { name: 'Erase all data' });
+  await erase.scrollIntoViewIfNeeded();
+  await erase.focus();
+  await expect(section).not.toBeFocused();
+  await banner.scrollIntoViewIfNeeded();
+  await banner.tap();
+  await expect(section).toBeFocused();
+  await expect(section).toBeInViewport();
 });
 
 test('the whole backup code fits its field on a 375-point iPhone', async ({ page }) => {
