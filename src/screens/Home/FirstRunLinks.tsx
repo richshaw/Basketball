@@ -1,9 +1,11 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type RefObject } from 'react';
 import { Link } from 'react-router';
 import { useToast } from '@/components/Toast/toastContext';
 import { isCloudBackupAvailable } from '@/data/backup/cloudBackup';
 import { addSampleData } from '@/data/demo';
+import { savePlayer } from '@/data/repo';
 import { paths } from '@/routes';
+import type { PlayerSetupCardHandle } from './PlayerSetupCard';
 import styles from './FirstRunLinks.module.css';
 
 export interface FirstRunLinksProps {
@@ -11,15 +13,25 @@ export interface FirstRunLinksProps {
   restore?: boolean;
   /** "Just looking? Try it with sample data": while there are no games. */
   sampleData?: boolean;
+  /**
+   * The setup card, while it's on screen: a name or number typed on it but not saved
+   * yet is saved before the sample games are added, so they're hers and nothing she
+   * typed is lost.
+   */
+  setupCard?: RefObject<PlayerSetupCardHandle | null>;
 }
 
 /**
  * Quiet ways in, under New game on a phone that's just starting: small lines that never
  * compete with it (or with the setup card's Save). Restoring from a backup, and adding
- * the sample games to look around (for the player the parent set up, if she did; see
- * addSampleData).
+ * the sample games to look around (for the player the parent set up, if she did, even
+ * one only typed on the setup card; see addSampleData).
  */
-export function FirstRunLinks({ restore = false, sampleData = false }: FirstRunLinksProps) {
+export function FirstRunLinks({
+  restore = false,
+  sampleData = false,
+  setupCard,
+}: FirstRunLinksProps) {
   const toast = useToast();
   const [adding, setAdding] = useState(false);
   const addingRef = useRef(false);
@@ -29,6 +41,8 @@ export function FirstRunLinks({ restore = false, sampleData = false }: FirstRunL
     addingRef.current = true;
     setAdding(true);
     try {
+      const unsaved = setupCard?.current?.unsavedPlayer();
+      if (unsaved) await savePlayer(unsaved);
       const added = await addSampleData();
       toast.show({
         message: added

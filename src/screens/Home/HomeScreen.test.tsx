@@ -1,11 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
-import { removeDemoData, seedDemoData } from '@/data/demo';
+import { isDemoPlayer, removeDemoData, seedDemoData } from '@/data/demo';
 import {
   createGame,
   endGame,
   getPlayer,
+  listGames,
   recordStat,
   savePlayer,
   setCurrentPeriod,
@@ -173,6 +174,46 @@ describe('HomeScreen', () => {
       expect(await screen.findByText('Ava · #12')).toBeInTheDocument();
       expect(await screen.findByRole('link', { name: /vs Eastlake/ })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Try it with sample data' })).toBeNull();
+    });
+
+    it('saves a name and number typed but not saved first, and makes the sample games hers', async () => {
+      const { user } = renderRoute(paths.home);
+      const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
+      // She types her daughter's name and number, but doesn't tap Save...
+      await user.type(within(card).getByLabelText('Name'), 'Mia');
+      await user.type(within(card).getByLabelText('Number'), '7');
+      // ...and taps the link just below New game.
+      await user.click(screen.getByRole('button', { name: 'Try it with sample data' }));
+
+      await waitFor(() => {
+        expect(notifications()).toHaveTextContent(
+          'Sample games added. You can remove them in Settings.',
+        );
+      });
+      const player = await getPlayer();
+      expect(player).toMatchObject({ name: 'Mia', jerseyNumber: '7' });
+      expect(player && isDemoPlayer(player)).toBe(false);
+      const games = await listGames();
+      expect(games).toHaveLength(10);
+      expect(games.every((game) => game.playerId === player?.id)).toBe(true);
+      expect(await screen.findByText('Mia · #7')).toBeInTheDocument();
+      expect(await screen.findByRole('link', { name: /vs Eastlake/ })).toBeInTheDocument();
+      expect(setupCard()).not.toBeInTheDocument();
+    });
+
+    it('keeps a number typed on its own too, and still asks for her name', async () => {
+      const { user } = renderRoute(paths.home);
+      const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
+      await user.type(within(card).getByLabelText('Number'), '7');
+      await user.click(screen.getByRole('button', { name: 'Try it with sample data' }));
+
+      expect(await screen.findByRole('link', { name: /vs Eastlake/ })).toBeInTheDocument();
+      const player = await getPlayer();
+      expect(player).toMatchObject({ name: '', jerseyNumber: '7' });
+      expect((await listGames()).every((game) => game.playerId === player?.id)).toBe(true);
+      // The card still asks for the name, with her number in it.
+      expect(within(card).getByLabelText('Number')).toHaveValue('7');
+      expect(within(card).getByLabelText('Name')).toHaveValue('');
     });
 
     it('can start a game before the player is named', async () => {

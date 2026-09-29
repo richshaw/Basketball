@@ -14,7 +14,7 @@ import { paths } from '@/routes';
 import { FirstRunLinks } from './FirstRunLinks';
 import { GameList } from './GameList';
 import { LiveGameCard } from './LiveGameCard';
-import { PlayerSetupCard } from './PlayerSetupCard';
+import { PlayerSetupCard, type PlayerSetupCardHandle } from './PlayerSetupCard';
 import styles from './HomeScreen.module.css';
 
 /** "Ava · #12" (or just "Ava" with no number). */
@@ -55,6 +55,7 @@ export function HomeScreen() {
   const allEvents = useAllEvents();
   const newGameRef = useRef<HTMLAnchorElement>(null);
   const resumeRef = useRef<HTMLAnchorElement>(null);
+  const setupCard = useRef<PlayerSetupCardHandle>(null);
   const wasSettingUp = useRef(false);
 
   const liveLine = useMemo(
@@ -110,6 +111,7 @@ export function HomeScreen() {
         ) : null}
         {needsSetup ? (
           <PlayerSetupCard
+            ref={setupCard}
             player={player ?? null}
             // Resuming the live game stays the one main action.
             saveVariant={liveGame ? 'secondary' : 'primary'}
@@ -140,7 +142,7 @@ export function HomeScreen() {
               variant={liveGame || needsSetup ? 'secondary' : 'primary'}
             />
             {/* Under New game: on a small phone, Save and New game come first on screen. */}
-            <FirstRunLinks restore={needsSetup} sampleData={noGames} />
+            <FirstRunLinks restore={needsSetup} sampleData={noGames} setupCard={setupCard} />
           </div>
         )}
 
