@@ -9,6 +9,7 @@ import {
   listPendingStats,
   newPendingStat,
   notifyPendingStats,
+  pendingStatSaved,
   removePendingStat,
   watchPendingStats,
   type PendingStat,
@@ -143,6 +144,7 @@ describe('what is pending', () => {
       gameId: 'game-1',
       hasUnsaved: () => unsaved,
       retryQuietly: () => Promise.resolve(),
+      saved: () => {},
       forget: () => () => {},
     });
     expect(hasPendingStats()).toBe(true);
@@ -151,6 +153,24 @@ describe('what is pending', () => {
     unsaved = true;
     release();
     expect(hasPendingStats()).toBe(false);
+  });
+
+  it('forgets a tap saved from the journal, and tells the sessions holding taps', () => {
+    addPendingStat(stat({ id: 'a' }));
+    addPendingStat(stat({ id: 'b' }));
+    const saved = vi.fn();
+    onTestFinished(
+      holdUnsavedTaps({
+        gameId: 'game-1',
+        hasUnsaved: () => true,
+        retryQuietly: () => Promise.resolve(),
+        saved,
+        forget: () => () => {},
+      }),
+    );
+    pendingStatSaved('a');
+    expect(listPendingStats().map((each) => each.id)).toEqual(['b']);
+    expect(saved).toHaveBeenCalledExactlyOnceWith('a');
   });
 
   it('tells its watchers when a tap may have become pending, until they stop', () => {
@@ -176,6 +196,7 @@ describe('forgetting taps whose data is deleted or replaced', () => {
       gameId,
       hasUnsaved: () => false,
       retryQuietly: () => Promise.resolve(),
+      saved: () => {},
       forget,
     });
     onTestFinished(release);

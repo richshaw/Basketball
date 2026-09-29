@@ -815,6 +815,38 @@ describe('TrackGameScreen', () => {
       expect(lastAction()).toHaveTextContent('Block · Q1');
     });
 
+    it('keeps counting it when the app-wide retry saves it: the points never dip', async () => {
+      const game = await newGame();
+      await recordStat(game.id, 'fg2_made');
+      await renderTracking(game);
+      await expectStrip('Points: 2');
+      // Not saved at the tap, nor by the screen's own retry a moment later.
+      const failing = vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Connection lost'));
+      fireEvent.click(statButton('2PT Made'));
+      await expectStrip('Points: 4');
+      await waitFor(() => expect(failing).toHaveBeenCalledTimes(2), {
+        timeout: AUTO_RETRY_MS + 2000,
+      });
+      await waitFor(() => expect(notSaved()).toHaveTextContent('2PT Made not saved'));
+
+      // Every value the strip shows from here on.
+      const shown: string[] = [];
+      const points = () => within(strip()).getByText(/^Points: /).textContent ?? '';
+      const observer = new MutationObserver(() => shown.push(points()));
+      observer.observe(strip(), { subtree: true, childList: true, characterData: true });
+      try {
+        failing.mockRestore();
+        // The app-wide retry's next try saves it from the journal.
+        await act(() => retryPendingStats());
+        expect(await eventTypes(game.id)).toEqual(['fg2_made', 'fg2_made']);
+        await waitFor(() => expect(notSaved()).not.toBeInTheDocument());
+        await expectStrip('Points: 4');
+      } finally {
+        observer.disconnect();
+      }
+      expect(shown.filter((text) => text !== 'Points: 4')).toEqual([]);
+    });
+
     it('never saves it once it was undone, even if the save fails after the Undo', async () => {
       const game = await newGame();
       await renderTracking(game);

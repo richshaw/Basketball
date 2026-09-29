@@ -14,7 +14,7 @@
  * - The app-wide retry (src/data/pendingSaves.ts) also tries them again, quietly, for
  *   as long as the page is open, whether or not the screen is: sessions made by
  *   trackingSession() hold their taps for it (holdUnsavedTaps), including any the
- *   journal couldn't keep.
+ *   journal couldn't keep. It tells them which kept taps it saved (saved()).
  * - The session holds a tap only until it's among the saved stats the screen shows
  *   (syncSavedEvents): saved stats are the database's business. Undo takes back the
  *   most recent stat by tap time, a tap or a saved stat; one that turns out to be gone
@@ -197,7 +197,7 @@ export class TrackingSession implements UnsavedTapHolder {
   /** Taps not among the saved stats yet, and taken-back taps still being dealt with. */
   private taps: TapRecord[] = [];
   /** The game's saved stats, oldest first, as the screen last showed them. */
-  private saved: readonly StatEvent[] = [];
+  private savedEvents: readonly StatEvent[] = [];
   private savedIds = new Set<string>();
   /** Saved stats removed (or being removed) through this session, until they're gone. */
   private readonly removing = new Set<string>();
@@ -304,7 +304,7 @@ export class TrackingSession implements UnsavedTapHolder {
    * save lands, or elsewhere). Taps among them are the database's from here on.
    */
   syncSavedEvents(events: readonly StatEvent[]): void {
-    this.saved = events;
+    this.savedEvents = events;
     this.savedIds = new Set(events.map((event) => event.id));
     const newest = events.at(-1)?.createdAt;
     if (newest !== undefined) this.lastAt = Math.max(this.lastAt ?? newest, newest);
@@ -361,6 +361,8 @@ export class TrackingSession implements UnsavedTapHolder {
         this.emit();
       },
       () => {
+        // The app-wide retry saved it meanwhile (see saved()): it stays saved.
+        if (record.status === 'saved') return;
         record.status = 'failed';
         record.hasFailed = true;
         // (Unless it was taken back, or has shown up among the saved stats meanwhile.)
@@ -403,9 +405,10 @@ export class TrackingSession implements UnsavedTapHolder {
         record.kept &&
         isPendingStat(record.stat.id) === false
       ) {
-        // No longer kept: saved meanwhile (e.g. by the app-wide retry), or its game's
-        // data was deleted or replaced (e.g. in another tab). Never saved again. (Not
-        // when the journal can't be read right now: then it's saved, rather than lost.)
+        // No longer kept, though nothing on this page saved it (the app-wide retry says
+        // so: saved()) or took it back: its game's data was deleted or replaced, e.g. in
+        // another tab. Never saved again. (Not when the journal can't be read right now:
+        // then it's saved, rather than lost.)
         this.drop(record);
       } else if (record.status === 'failed') {
         this.save(record, quiet);
@@ -431,6 +434,19 @@ export class TrackingSession implements UnsavedTapHolder {
    */
   async retryQuietly(): Promise<void> {
     await Promise.all(this.retryTaps(true));
+  }
+
+  /**
+   * The app-wide retry saved one of its taps from the journal: it's saved, whatever a
+   * save of it under way here says, and like a tap this session saved, it counts until
+   * the saved stats on screen show it. (A tap taken back meanwhile is removed as usual.)
+   */
+  saved(id: string): void {
+    const record = this.taps.find((each) => !each.undone && each.stat.id === id);
+    if (!record || record.status === 'saved') return;
+    record.status = 'saved';
+    if (this.savedIds.has(id)) this.drop(record);
+    this.emit();
   }
 
   /** Whether it holds a tap not saved yet, or a taken-back one whose removal failed. */
@@ -587,7 +603,7 @@ export class TrackingSession implements UnsavedTapHolder {
         latestAt = at;
       }
     }
-    for (const event of this.saved) {
+    for (const event of this.savedEvents) {
       const at = event.createdAt;
       if (at < before && at > latestAt && !held.has(event.id) && !this.removing.has(event.id)) {
         latest = event;
@@ -642,7 +658,7 @@ export class TrackingSession implements UnsavedTapHolder {
       held.add(record.stat.id);
       if (!record.undone && record.stat.type === type) count += 1;
     }
-    for (const event of this.saved) {
+    for (const event of this.savedEvents) {
       if (event.type === type && !held.has(event.id) && !this.removing.has(event.id)) count += 1;
     }
     return count;
@@ -721,6 +737,7 @@ export function trackingSession(gameId: string, period: number): TrackingSession
       gameId,
       hasUnsaved: () => session.hasUnsaved(),
       retryQuietly: () => session.retryQuietly(),
+      saved: (id) => session.saved(id),
       forget: (id) => {
         const holdAgain = session.forget(id);
         if (id !== undefined) return holdAgain;

@@ -10,6 +10,7 @@ import {
   hasPendingStats,
   isPendingStat,
   listPendingStats,
+  pendingStatSaved,
   removePendingStat,
   retryHeldTaps,
   watchPendingStats,
@@ -64,7 +65,8 @@ export async function replayPendingStats(): Promise<ReplayResult> {
       // starts right after this check, so an Undo can't slip in between.
       if (isPendingStat(stat.id) !== true) continue;
       await savePendingStat(stat);
-      removePendingStat(stat.id);
+      // Forgotten, and the live game screen keeps counting it until it reads it back.
+      pendingStatSaved(stat.id);
       result.saved += 1;
     } catch {
       result.failed += 1;
@@ -79,8 +81,8 @@ export async function replayPendingStats(): Promise<ReplayResult> {
  * harmless (saving is idempotent). Never rejects.
  */
 export async function retryPendingStats(): Promise<void> {
-  // Kept taps first: a session then drops a kept tap saved meanwhile, rather than
-  // saving it again.
+  // Kept taps first: a session is then told which of its taps they saved
+  // (pendingStatSaved), rather than saving them again.
   await replayPendingStats();
   await retryHeldTaps();
 }

@@ -5,6 +5,7 @@ import {
   addPendingStat,
   hasPendingStats,
   listPendingStats,
+  removePendingStat,
   type PendingStat,
 } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
@@ -707,6 +708,57 @@ describe('TrackingSession', () => {
       expect(session.hasUnsaved()).toBe(false);
     });
 
+    /** A Steal and a Block that failed; then the app-wide retry saves the Block from the journal. */
+    async function blockSavedFromJournal() {
+      const fake = setUp();
+      fake.session.record('stl');
+      const block = fake.session.record('blk');
+      fake.fail(0);
+      fake.fail(1);
+      await flush();
+      // What replayPendingStats does: saves it, forgets its entry, and says so.
+      fake.land(1);
+      removePendingStat(block.id);
+      fake.session.saved(block.id);
+      return fake;
+    }
+
+    it('keeps counting a tap it saved from the journal until the saved stats show it', async () => {
+      const { session, saves, sync, pendingTypes, unsavedTypes, screenCount } =
+        await blockSavedFromJournal();
+      expect(unsavedTypes()).toEqual(['stl']);
+      // Before the saved stats on screen show it: it still counts, and isn't saved again.
+      session.retry();
+      expect(saves.map(({ stat }) => stat.type)).toEqual(['stl', 'blk', 'stl']);
+      expect(pendingTypes()).toEqual(['stl', 'blk']);
+      expect(screenCount('blk')).toBe(1);
+      expect(session.count('blk')).toBe(1);
+      // Once they do, it's theirs.
+      sync();
+      expect(pendingTypes()).toEqual(['stl']);
+      expect(screenCount('blk')).toBe(1);
+    });
+
+    it("lets the grid's Undo take back a tap it saved from the journal, not the stat before it", async () => {
+      const { session, storedTypes } = await blockSavedFromJournal();
+      void session.retryQuietly(); // (the Steal's save never answers here)
+      expect(await outcome(session.undoLatest())).toEqual(['blk', 'removed']);
+      expect(storedTypes()).toEqual([]);
+    });
+
+    it('keeps a tap it saved from the journal saved, even when a save of it under way here fails', async () => {
+      const { session, fail, pendingTypes } = setUp();
+      const steal = session.record('stl');
+      removePendingStat(steal.id);
+      session.saved(steal.id);
+      fail(0);
+      await flush();
+      expect(session.getSnapshot().unsaved).toEqual([]);
+      expect(session.hasUnsaved()).toBe(false);
+      expect(pendingTypes()).toEqual(['stl']);
+      expect(keptIds()).toEqual([]);
+    });
+
     it('has nothing to try once every tap is saved or taken back', async () => {
       const { session, saves, save, fail } = setUp();
       const steal = session.record('stl');
@@ -793,7 +845,7 @@ describe('TrackingSession', () => {
       expect(await taking.removal).toBe('removed');
     });
 
-    it('drops a kept tap that is no longer kept (saved meanwhile, or erased in another tab)', async () => {
+    it('drops a kept tap that is no longer kept, though nothing here saved it (erased in another tab)', async () => {
       const { session, saves, fail, pendingTypes } = setUp();
       const steal = session.record('stl');
       fail(0);
@@ -865,6 +917,34 @@ describe('TrackingSession', () => {
       expect(session.getSnapshot().pending).toEqual([]);
       expect(hasPendingStats()).toBe(false);
       expect(trackingSession(game.id, 1)).not.toBe(session);
+    });
+
+    it('keeps counting a tap the app-wide retry saves, until the saved stats show it', async () => {
+      const game = await createGame({
+        opponent: 'Central',
+        date: '2026-09-27',
+        periodFormat: 'quarters',
+      });
+      const types = async () => (await getGameEvents(game.id)).map((event) => event.type);
+      const session = trackingSession(game.id, 1);
+      session.record('stl');
+      await vi.waitFor(async () => expect(await types()).toEqual(['stl']));
+      session.syncSavedEvents(await getGameEvents(game.id));
+
+      // A 2PT Made can't be saved at the tap; the app-wide retry saves it from the journal.
+      const failing = vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Connection lost'));
+      session.record('fg2_made');
+      await vi.waitFor(() => expect(session.getSnapshot().unsaved).toHaveLength(1));
+      failing.mockRestore();
+      await retryPendingStats();
+      expect(await types()).toEqual(['stl', 'fg2_made']);
+
+      // The screen hasn't read the saved stats again: it still counts, and the grid's
+      // Undo takes back the 2PT Made, not the Steal tapped before it.
+      expect(session.count('fg2_made')).toBe(1);
+      expect(session.getSnapshot()).toMatchObject({ unsaved: [], takenBack: [] });
+      expect(await outcome(session.undoLatest())).toEqual(['fg2_made', 'removed']);
+      expect(await types()).toEqual(['stl']);
     });
 
     describe("holds a tap kept only in memory again if deleting or replacing its game's data fails", () => {

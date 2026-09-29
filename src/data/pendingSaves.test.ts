@@ -41,8 +41,11 @@ function startRetry(delaysMs: readonly number[]) {
 }
 
 /** Taps held in memory by a (fake) tracking session, for this test only. */
-function holdTaps(holder: Omit<UnsavedTapHolder, 'forget'>) {
-  cleanups.push(holdUnsavedTaps({ forget: () => () => {}, ...holder }));
+function holdTaps(
+  holder: Pick<UnsavedTapHolder, 'gameId' | 'hasUnsaved' | 'retryQuietly'> &
+    Partial<UnsavedTapHolder>,
+) {
+  cleanups.push(holdUnsavedTaps({ saved: () => {}, forget: () => () => {}, ...holder }));
 }
 
 /** Makes every save fail, as when WebKit has lost its IndexedDB connection. */
@@ -103,6 +106,20 @@ describe('replayPendingStats', () => {
     ]);
     expect(journalKeys()).toEqual([]);
     expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+  });
+
+  it('tells the sessions holding a tap that it saved it, once its entry is gone', async () => {
+    const game = await newGame();
+    addPendingStat(stat({ id: 'a', gameId: game.id }));
+    const told: [string, string[]][] = [];
+    holdTaps({
+      gameId: game.id,
+      hasUnsaved: () => true,
+      retryQuietly: () => Promise.resolve(),
+      saved: (id) => told.push([id, journalKeys()]),
+    });
+    expect(await replayPendingStats()).toMatchObject({ saved: 1 });
+    expect(told).toEqual([['a', []]]);
   });
 
   it('saves a tap whose write landed after all only once', async () => {

@@ -159,6 +159,11 @@ export interface UnsavedTapHolder {
    */
   retryQuietly(): Promise<void>;
   /**
+   * One of its taps was saved from the journal (by the app-wide retry): it's saved, and
+   * must still count until the saved stats on screen show it.
+   */
+  saved(id: string): void;
+  /**
    * Its game's data is being deleted or replaced (no id), or one stat is (its id):
    * forgets those taps, never saving them. Returns a function that holds them again,
    * for when that write fails.
@@ -177,6 +182,16 @@ export function holdUnsavedTaps(holder: UnsavedTapHolder): () => void {
   return () => {
     holders.delete(holder);
   };
+}
+
+/**
+ * A kept tap was saved from the journal (replayPendingStats): forgets it, and tells the
+ * sessions holding it that it's saved, so they keep counting it until the saved stats
+ * on screen show it, rather than taking its missing entry to mean it's gone.
+ */
+export function pendingStatSaved(id: string): void {
+  removePendingStat(id);
+  for (const holder of [...holders]) holder.saved(id);
 }
 
 /** Tries again to save the taps held in memory (quietly). Never rejects. */
