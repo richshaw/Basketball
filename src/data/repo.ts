@@ -262,9 +262,28 @@ export function updateGame(id: string, patch: GamePatch): Promise<Game> {
   return modifyGame(id, (game) => applyGamePatch(game, patch));
 }
 
-/** Moves the game to another period (1-based; past regulation is overtime). */
-export function setCurrentPeriod(gameId: string, period: number): Promise<Game> {
-  return modifyGame(gameId, (game) => ({ ...game, currentPeriod: period }));
+export interface SetCurrentPeriodOptions {
+  /**
+   * Checked as the write runs (inside its transaction), not when it's asked for: when it
+   * says no, nothing is written. For a move kept in the pending-periods journal: only
+   * while it's still the kept one, so a write that waited (the database didn't answer)
+   * never overrides a move made since, in this tab or another.
+   */
+  onlyIf?: () => boolean;
+}
+
+/**
+ * Moves the game to another period (1-based; past regulation is overtime). Resolves to
+ * the game as saved: with its period unchanged if `onlyIf` said no.
+ */
+export function setCurrentPeriod(
+  gameId: string,
+  period: number,
+  { onlyIf }: SetCurrentPeriodOptions = {},
+): Promise<Game> {
+  const move = () => modifyGame(gameId, (game) => ({ ...game, currentPeriod: period }));
+  if (!onlyIf) return move();
+  return db.transaction('rw', [db.games, db.meta], () => (onlyIf() ? move() : requireGame(gameId)));
 }
 
 export interface FinalScore {
