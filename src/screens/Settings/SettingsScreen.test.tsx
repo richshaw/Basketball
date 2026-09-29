@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { restoreStubs, simulateBrowser, stubProperties } from '@/test/browser';
-import { seedDemoData } from '@/data/demo';
+import { DEMO_PLAYER_ID, seedDemoData } from '@/data/demo';
 import {
   createGame,
   deleteGame,
@@ -276,8 +276,9 @@ describe('Settings: about', () => {
     expect(await getPlayer()).toMatchObject({ name: 'Ava', jerseyNumber: '12' });
   });
 
-  it('removes just the sample games', async () => {
+  it('removes the sample games and the sample player, keeping games of her own', async () => {
     await seedDemoData({ today: '2026-09-28' });
+    // Started with the sample player still there: it's credited to her record.
     const own = await createGame({
       opponent: 'Hillcrest',
       date: '2026-09-28',
@@ -288,17 +289,39 @@ describe('Settings: about', () => {
 
     const remove = screen.getByRole('button', { name: /Remove sample games/ });
     expect(remove).toHaveTextContent(
-      'Deletes just the 10 sample games. The player, your settings and any games of your own stay.',
+      'Deletes just the 10 sample games and the sample player, Ava #12. Your settings and any games of your own stay.',
     );
     await user.click(remove);
 
     await expectToast('Sample games removed');
     expect((await listGames()).map((game) => game.id)).toEqual([own.id]);
-    expect(await getPlayer()).toMatchObject({ name: 'Ava', jerseyNumber: '12' });
+    // Her record stays, with its name and number cleared, so the game is still hers.
+    const player = await getPlayer();
+    expect(player).toMatchObject({ id: DEMO_PLAYER_ID, name: '' });
+    expect(player?.jerseyNumber).toBeUndefined();
+    expect((await listGames())[0]?.playerId).toBe(DEMO_PLAYER_ID);
     expect(await getSettings()).toEqual(settings);
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /Remove sample games/ })).toBeNull();
     });
+    expect(within(list('Player')).getByRole('button', { name: /Add your player/ })).toBeVisible();
+  });
+
+  it('keeps the name of a sample player the parent renamed', async () => {
+    await seedDemoData({ today: '2026-09-28' });
+    await savePlayer({ name: 'Maya', jerseyNumber: '23' });
+    const { user } = await renderSettings();
+
+    const remove = screen.getByRole('button', { name: /Remove sample games/ });
+    expect(remove).toHaveTextContent(
+      'Deletes just the 10 sample games. The player, your settings and any games of your own stay.',
+    );
+    await user.click(remove);
+
+    await expectToast('Sample games removed');
+    expect(await listGames()).toEqual([]);
+    expect(await getPlayer()).toMatchObject({ name: 'Maya', jerseyNumber: '23' });
+    expect(within(list('Player')).getByRole('button', { name: /Maya/ })).toBeVisible();
   });
 
   it('leads from the sample data to the games', async () => {

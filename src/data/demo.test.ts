@@ -2,15 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { isOnHalfCourt, isThreePoint } from '@/lib/court';
 import { todayLocalISO } from '@/lib/format';
 import {
+  addSampleData,
   buildDemoData,
   DEMO_LIVE_GAME_ID,
+  DEMO_PLAYER_ID,
   DEMO_SEASON,
   demoGameId,
   isDemoGameId,
+  isDemoPlayer,
+  removeDemoData,
   seedDemoData,
 } from './demo';
 import {
   createGame,
+  deleteGame,
   getGame,
   getLiveGame,
   getPlayer,
@@ -199,5 +204,109 @@ describe('isDemoGameId', () => {
     expect(isDemoGameId(DEMO_LIVE_GAME_ID)).toBe(true);
     expect(isDemoGameId('3f9c2ab0-demo-game-01')).toBe(false);
     expect(isDemoGameId('demo-game-1')).toBe(false);
+  });
+});
+
+describe('seedDemoData with keepPlayer', () => {
+  it('makes the sample games belong to a player the parent set up', async () => {
+    const maya = await savePlayer({ name: 'Maya', jerseyNumber: '23' });
+
+    await seedDemoData({ today: TODAY, keepPlayer: true });
+
+    expect((await exportAll()).players).toEqual([maya]);
+    const games = await listGames();
+    expect(games).toHaveLength(10);
+    expect(new Set(games.map((game) => game.playerId))).toEqual(new Set([maya.id]));
+    expect((await exportAll()).events).toEqual(demo.events);
+  });
+
+  it('brings the sample player when the player was never set up', async () => {
+    // Starting a game before setting up the player makes an unnamed one.
+    const test = await createGame({ opponent: 'Test', date: TODAY, periodFormat: 'quarters' });
+    await deleteGame(test.id);
+
+    await seedDemoData({ today: TODAY, keepPlayer: true });
+
+    expect((await exportAll()).players).toEqual(demo.players);
+    expect((await listGames()).every((game) => game.playerId === DEMO_PLAYER_ID)).toBe(true);
+  });
+
+  it("still refuses to replace the device's own games", async () => {
+    await savePlayer({ name: 'Maya' });
+    const own = await createGame({ opponent: 'Westfield', date: TODAY, periodFormat: 'quarters' });
+
+    await expect(seedDemoData({ today: TODAY, keepPlayer: true })).rejects.toThrow(/own data/);
+    expect((await listGames()).map((game) => game.id)).toEqual([own.id]);
+  });
+});
+
+describe('addSampleData', () => {
+  it("adds the sample games, keeping the phone's settings and its player", async () => {
+    const maya = await savePlayer({ name: 'Maya' });
+    const settings = await updateSettings({ shotChart: false, defaultPeriodFormat: 'halves' });
+
+    expect(await addSampleData()).toBe(true);
+
+    expect(await listGames()).toHaveLength(10);
+    expect(await getPlayer()).toEqual(maya);
+    expect(await getSettings()).toEqual(settings);
+  });
+
+  it('adds nothing to a phone with games of its own', async () => {
+    const own = await createGame({ opponent: 'Westfield', date: TODAY, periodFormat: 'quarters' });
+
+    expect(await addSampleData()).toBe(false);
+
+    expect((await listGames()).map((game) => game.id)).toEqual([own.id]);
+  });
+});
+
+describe('removeDemoData', () => {
+  it("removes the sample games and the sample player's name and number", async () => {
+    await seedDemoData({ today: TODAY });
+    // A game of her own, started before the parent removed the sample games.
+    const own = await createGame({ opponent: 'Westfield', date: TODAY, periodFormat: 'quarters' });
+    const settings = await getSettings();
+    const sample = await getPlayer();
+    expect(sample && isDemoPlayer(sample)).toBe(true);
+
+    expect(await removeDemoData()).toBe(10);
+
+    expect((await listGames()).map((game) => game.id)).toEqual([own.id]);
+    const player = await getPlayer();
+    // The same record, so her own game stays hers; the app asks for her name again.
+    expect(player).toMatchObject({ id: DEMO_PLAYER_ID, name: '' });
+    expect(player?.jerseyNumber).toBeUndefined();
+    expect((await getGame(own.id))?.playerId).toBe(DEMO_PLAYER_ID);
+    expect(await getSettings()).toEqual(settings);
+  });
+
+  it('keeps the name of a sample player the parent renamed', async () => {
+    await seedDemoData({ today: TODAY });
+    const renamed = await savePlayer({ name: 'Maya' });
+    expect(isDemoPlayer(renamed)).toBe(false);
+
+    await removeDemoData();
+
+    expect(await getPlayer()).toMatchObject({ name: 'Maya', jerseyNumber: '12' });
+    expect(await listGames()).toEqual([]);
+  });
+
+  it("keeps the parent's own player", async () => {
+    const maya = await savePlayer({ name: 'Maya', jerseyNumber: '23' });
+    await seedDemoData({ today: TODAY, keepPlayer: true });
+
+    expect(await removeDemoData()).toBe(10);
+
+    expect(await getPlayer()).toEqual(maya);
+    expect(await listGames()).toEqual([]);
+  });
+
+  it('does nothing without sample data', async () => {
+    const maya = await savePlayer({ name: 'Ava', jerseyNumber: '12' });
+
+    expect(await removeDemoData()).toBe(0);
+
+    expect(await getPlayer()).toEqual(maya);
   });
 });

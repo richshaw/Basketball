@@ -1,12 +1,11 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { restoreStubs, stubProperties } from '@/test/browser';
-import { buildDemoData, seedDemoData } from '@/data/demo';
+import { buildDemoData } from '@/data/demo';
 import { createGame, deleteGame, listGames, savePlayer, updateSettings } from '@/data/repo';
 import { clearAllData, importAll } from '@/data/transfer';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
-import type * as DemoModule from '@/data/demo';
 import type * as RepoModule from '@/data/repo';
 import type * as TransferModule from '@/data/transfer';
 import fixtureJson from '../../../e2e/fixtures/settings-backup.json?raw';
@@ -30,11 +29,6 @@ vi.mock('@/data/transfer', async (importOriginal) => {
     importAll: vi.fn(actual.importAll),
     clearAllData: vi.fn(actual.clearAllData),
   };
-});
-
-vi.mock('@/data/demo', async (importOriginal) => {
-  const actual = await importOriginal<typeof DemoModule>();
-  return { ...actual, seedDemoData: vi.fn(actual.seedDemoData) };
 });
 
 const failure = () => new Error('The disk is full');
@@ -104,7 +98,7 @@ describe('Settings when a write fails', () => {
   });
 
   it('says so when the sample data cannot be added', async () => {
-    vi.mocked(seedDemoData).mockRejectedValueOnce(failure());
+    vi.mocked(importAll).mockRejectedValueOnce(failure());
     const { user } = await renderSettings();
 
     await user.click(screen.getByRole('button', { name: /Try it with sample data/ }));

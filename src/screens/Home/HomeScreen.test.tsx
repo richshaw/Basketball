@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
+import { removeDemoData, seedDemoData } from '@/data/demo';
 import {
   createGame,
   endGame,
@@ -137,6 +138,15 @@ describe('HomeScreen', () => {
       } finally {
         vi.unstubAllEnvs();
       }
+    });
+
+    it('asks who is being tracked again once the sample games are removed', async () => {
+      await seedDemoData({ today: '2026-09-28' });
+      await removeDemoData();
+      renderRoute(paths.home);
+
+      expect(await screen.findByRole('region', { name: 'Who are you tracking?' })).toBeVisible();
+      expect(screen.queryByText('Ava · #12')).not.toBeInTheDocument();
     });
 
     it('can start a game before the player is named', async () => {

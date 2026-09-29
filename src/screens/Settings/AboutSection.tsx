@@ -4,10 +4,10 @@ import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { useToast } from '@/components/Toast/toastContext';
-import { isDemoGameId, seedDemoData } from '@/data/demo';
-import { deleteGame, getPlayer, listGames } from '@/data/repo';
+import { addSampleData, isDemoGameId, isDemoPlayer, removeDemoData } from '@/data/demo';
 import { clearAllData } from '@/data/transfer';
 import type { Game, Player } from '@/data/types';
+import { formatPlayerName } from '@/lib/format';
 import { paths } from '@/routes';
 import { ActionRow } from './ActionRow';
 import { APP_VERSION } from './appVersion';
@@ -51,6 +51,20 @@ function eraseMessage(gameCount: number, coverage: BackupCoverage, now: number):
 }
 
 /**
+ * What "Remove sample games" deletes: the sample games, and the sample player too while
+ * she's still as the sample data made her (`samplePlayer`); a player of the parent's own
+ * stays.
+ */
+function removeSampleSubtitle(count: number, samplePlayer: Player | null): string {
+  const games = count === 1 ? 'sample game' : `${count} sample games`;
+  if (samplePlayer) {
+    const name = `${formatPlayerName(samplePlayer)} #${samplePlayer.jerseyNumber ?? ''}`;
+    return `Deletes just the ${games} and the sample player, ${name}. Your settings and any games of your own stay.`;
+  }
+  return `Deletes just the ${games}. The player, your settings and any games of your own stay.`;
+}
+
+/**
  * No games, and nothing the parent entered: sample data may replace the player. A
  * player that a first game created and never named counts as nothing (the game may
  * have been a test, since deleted).
@@ -72,20 +86,18 @@ export function AboutSection({
   const [removingSample, setRemovingSample] = useState(false);
   const canTrySample = isFreshPhone(player, games);
   const sampleGameCount = games.filter((game) => isDemoGameId(game.id)).length;
+  // Still the sample player: removing the sample games takes her name and number too.
+  const samplePlayer = player && isDemoPlayer(player) ? player : null;
 
-  const addSampleData = async () => {
+  const trySampleData = async () => {
     if (addingSample) return;
     setAddingSample(true);
     try {
-      // Checked again against the database, as the sample data replaces the player
-      // (so `force`: seedDemoData refuses to replace even an unnamed player).
-      const [currentPlayer, currentGames] = await Promise.all([getPlayer(), listGames()]);
-      if (!isFreshPhone(currentPlayer, currentGames)) {
+      // Checked again against the database. The Game setup chosen here stays as it is.
+      if (!(await addSampleData())) {
         toast.show({ message: 'This phone has games of its own now, so nothing was added.' });
         return;
       }
-      // The Game setup chosen here stays as it is.
-      await seedDemoData({ force: true, keepSettings: true });
       toast.show({
         message: 'Sample games added',
         actionLabel: 'See games',
@@ -103,12 +115,9 @@ export function AboutSection({
     if (removingSample) return;
     setRemovingSample(true);
     try {
-      // Only the sample games: games of the parent's own, the player and the settings stay.
-      const sampleIds = (await listGames()).map((game) => game.id).filter(isDemoGameId);
-      for (const id of sampleIds) await deleteGame(id);
-      toast.show({
-        message: sampleIds.length === 1 ? 'Sample game removed' : 'Sample games removed',
-      });
+      // Games of the parent's own, a player she named and the settings stay.
+      const removed = await removeDemoData();
+      toast.show({ message: removed === 1 ? 'Sample game removed' : 'Sample games removed' });
     } catch (error) {
       console.error('Removing the sample games failed', error);
       toast.show({ message: "Couldn't remove the sample games. Try again." });
@@ -141,15 +150,15 @@ export function AboutSection({
         {canTrySample ? (
           <ActionRow
             title="Try it with sample data"
-            subtitle="Adds a sample player with 10 finished games to look around. You can remove the games here any time."
-            onClick={addSampleData}
+            subtitle="Adds a sample player with 10 finished games to look around. You can remove them here any time."
+            onClick={trySampleData}
             disabled={addingSample}
           />
         ) : null}
         {sampleGameCount > 0 ? (
           <ListRow
             title="Remove sample games"
-            subtitle={`Deletes just the ${sampleGameCount === 1 ? 'sample game' : `${sampleGameCount} sample games`}. The player, your settings and any games of your own stay.`}
+            subtitle={removeSampleSubtitle(sampleGameCount, samplePlayer)}
             destructive
             onClick={removeSampleGames}
             disabled={removingSample}
