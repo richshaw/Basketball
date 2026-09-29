@@ -191,9 +191,22 @@ export interface UnsavedTapHolder {
    * for when that write fails.
    */
   forget(id?: string): () => void;
+  /**
+   * Calls `listener` whenever what it holds changes (so reloadSafe() may have), until
+   * the function it returns is called. For watchReloadSafe(); a holder whose
+   * reloadSafe() never changes can leave it out.
+   */
+  subscribe?(listener: () => void): () => void;
 }
 
 const holders = new Set<UnsavedTapHolder>();
+
+/** watchReloadSafe()'s listeners. */
+const reloadWatchers = new Set<() => void>();
+
+function tellReloadWatchers(): void {
+  for (const watcher of [...reloadWatchers]) watcher();
+}
 
 /**
  * Registers taps held in memory for the app-wide retry. Returns a function that
@@ -201,8 +214,15 @@ const holders = new Set<UnsavedTapHolder>();
  */
 export function holdUnsavedTaps(holder: UnsavedTapHolder): () => void {
   holders.add(holder);
+  const unsubscribe = holder.subscribe?.(tellReloadWatchers);
+  tellReloadWatchers();
+  let held = true;
   return () => {
+    if (!held) return;
+    held = false;
     holders.delete(holder);
+    unsubscribe?.();
+    tellReloadWatchers();
   };
 }
 
@@ -235,6 +255,18 @@ export async function retryHeldTaps(): Promise<void> {
  */
 export function isReloadSafe(): boolean {
   return [...holders].every((holder) => holder.reloadSafe());
+}
+
+/**
+ * Calls `listener` whenever isReloadSafe() may have changed: a holder's taps changed, or
+ * one was registered or let go. Returns a function that stops it. (useReloadSafe in
+ * hooks.ts, for the Reload buttons.)
+ */
+export function watchReloadSafe(listener: () => void): () => void {
+  reloadWatchers.add(listener);
+  return () => {
+    reloadWatchers.delete(listener);
+  };
 }
 
 /**

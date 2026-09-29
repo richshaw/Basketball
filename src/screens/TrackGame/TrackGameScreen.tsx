@@ -6,8 +6,7 @@ import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useToast } from '@/components/Toast/toastContext';
-import { useSteadyGame, useSteadyGameEvents, useSteadySettings } from '@/data/hooks';
-import { isReloadSafe } from '@/data/pendingStats';
+import { useReloadSafe, useSteadyGame, useSteadyGameEvents, useSteadySettings } from '@/data/hooks';
 import { endGame, type FinalScore } from '@/data/repo';
 import { shotsFromEvents } from '@/data/shots';
 import { computeStatLine, periodLabel } from '@/data/stats';
@@ -104,10 +103,11 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
   // Done on a finished game: the stats that weren't saved, and whether it's busy.
   const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [
-    session,
-    { period, pending, unsaved, unsavedKept, reloadSafe, retrying, takenBack, spotShot },
-  ] = useTrackingSession(game.id, game.currentPeriod, events);
+  const [session, { period, pending, unsaved, unsavedKept, retrying, takenBack, spotShot }] =
+    useTrackingSession(game.id, game.currentPeriod, events);
+  // Whether a reload would lose nothing: not this game's taps, spots, Undos or period
+  // moves, nor another game's that only this page holds.
+  const reloadSafe = useReloadSafe();
   // A double tap on the grid's Undo or on Next acts once.
   const [undoGuard] = useState(() => createTapGuard());
   const [nextGuard] = useState(() => createTapGuard());
@@ -357,9 +357,8 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
           <StatStrip line={line} compact={withCourt} />
           {/* A tap not saved and not kept keeps its own row: it asks to keep the app open. */}
           {readFailed && (unsaved.length === 0 || unsavedKept) ? (
-            // Reload only while it would lose nothing: not this game's taps, spots, Undos
-            // or period moves, nor another game's that only this page holds.
-            <ReadFailedNote canReload={reloadSafe && isReloadSafe()} compact={withCourt} />
+            // Reload only while it would lose nothing.
+            <ReadFailedNote canReload={reloadSafe} compact={withCourt} />
           ) : (
             <UnsavedStats
               unsaved={unsaved}

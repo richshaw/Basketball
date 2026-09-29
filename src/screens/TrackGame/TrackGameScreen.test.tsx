@@ -1291,19 +1291,14 @@ describe('TrackGameScreen', () => {
       expect(screen.getByText('Keep the app open until your taps are saved.')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
 
-      // The app-wide retry saves it: now a reload would lose nothing (the screen says so
-      // with its next read).
+      // The app-wide retry saves it: now a reload would lose nothing, and the screen says
+      // so at once (game B's stats still can't be read).
       full.mockRestore();
       failing.mockRestore();
       await act(() => retryPendingStats());
       expect(await eventTypes(gameA.id)).toEqual(['stl']);
-      expect(
-        await screen.findByRole(
-          'button',
-          { name: 'Reload' },
-          { timeout: (READ_RETRY_DELAYS_MS[0] ?? 0) + 2000 },
-        ),
-      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+      expect(screen.getByText('Your taps are kept on this phone.')).toBeInTheDocument();
     });
 
     describe("when the database can't be opened again (WebKit lost its connection)", () => {

@@ -20,6 +20,7 @@ import {
   pendingStatSaved,
   removePendingStat,
   watchPendingStats,
+  watchReloadSafe,
   type PendingStat,
   type UnsavedTapHolder,
 } from './pendingStats';
@@ -197,6 +198,39 @@ describe('what is pending', () => {
     expect(isReloadSafe()).toBe(true);
     safe = false;
     expect(isReloadSafe()).toBe(false);
+  });
+
+  it('tells its reload watchers when a session changes, comes or goes, until they stop', () => {
+    const listener = vi.fn();
+    const stop = watchReloadSafe(listener);
+    const sessionListeners = new Set<() => void>();
+    const release = holdUnsavedTaps({
+      gameId: 'game-1',
+      hasUnsaved: () => true,
+      reloadSafe: () => true,
+      retryQuietly: () => Promise.resolve(),
+      saved: () => {},
+      forget: () => () => {},
+      subscribe: (onChange) => {
+        sessionListeners.add(onChange);
+        return () => {
+          sessionListeners.delete(onChange);
+        };
+      },
+    });
+    expect(listener).toHaveBeenCalledTimes(1);
+    for (const onChange of sessionListeners) onChange();
+    expect(listener).toHaveBeenCalledTimes(2);
+    release();
+    expect(listener).toHaveBeenCalledTimes(3);
+    // Let go: its changes no longer count, and letting go again does nothing.
+    expect(sessionListeners.size).toBe(0);
+    release();
+    expect(listener).toHaveBeenCalledTimes(3);
+
+    stop();
+    holdTaps({ gameId: 'game-2' });
+    expect(listener).toHaveBeenCalledTimes(3);
   });
 
   it('forgets a tap saved from the journal, and tells the sessions holding taps', () => {

@@ -1198,6 +1198,7 @@ export function trackingSession(gameId: string, period: number): TrackingSession
       gameId,
       hasUnsaved: () => session.hasUnsaved(),
       reloadSafe: () => session.reloadSafe(),
+      subscribe: session.subscribe,
       retryQuietly: () => session.retryQuietly(),
       saved: (id, event) => session.saved(id, event),
       forget: (id) => {

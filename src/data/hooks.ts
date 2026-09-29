@@ -7,7 +7,8 @@
  */
 import { liveQuery } from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { isReloadSafe, watchReloadSafe } from './pendingStats';
 import { isDatabaseClosedError, watchDatabase } from './reopen';
 import {
   getAllEvents,
@@ -267,4 +268,13 @@ function settingsOrDefaults(): Promise<Settings> {
 /** useSettings that survives a failed read (see SteadyRead), for the live game screen. */
 export function useSteadySettings(): SteadyRead<Settings> {
   return useSteadyLiveQuery('settings', settingsOrDefaults);
+}
+
+/**
+ * Whether reloading the page now would lose nothing (isReloadSafe in pendingStats.ts),
+ * kept up to date as the tracking sessions' taps change. For a Reload button: offer it
+ * only while this is true, else ask to keep the app open.
+ */
+export function useReloadSafe(): boolean {
+  return useSyncExternalStore(watchReloadSafe, isReloadSafe);
 }
