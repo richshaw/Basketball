@@ -685,6 +685,30 @@ describe('Settings: erasing all data with cloud backup', () => {
     expect(cloud.server.uploads).toHaveLength(1);
   });
 
+  it('says backup is paused as soon as the phone is erased, before any upload is tried', async () => {
+    await seedOwnGames();
+    await turnOnCloudBackup();
+    const { user } = await renderSettings();
+
+    const dialog = await eraseQuestion(user);
+    await user.click(within(dialog).getByRole('button', { name: 'Erase all data' }));
+
+    await expectToast('All data erased');
+    // Not "Backed up just now · Newer changes will back up soon" until an upload finds
+    // out (the scheduler isn't even running here): the data alone says so.
+    await waitFor(() => {
+      expect(cloudList()).toHaveTextContent('Backup paused');
+    });
+    expect(cloudList()).toHaveTextContent(
+      'None of the 10 games in your last backup are on this phone, so automatic backup is paused to keep that backup safe.',
+    );
+    expect(cloudButton(/Back up anyway/)).toBeEnabled();
+    expect(
+      screen.getByRole('link', { name: 'Cloud backup is paused. Tap to fix' }),
+    ).toBeInTheDocument();
+    expect(cloud.server.uploads).toHaveLength(1);
+  });
+
   it("says what isn't backed up yet while changes wait for signal", async () => {
     await seedOwnGames();
     await turnOnCloudBackup();

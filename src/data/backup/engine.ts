@@ -22,6 +22,8 @@
  * Nothing here runs on the tap path of the live game screen: a write only moves a
  * timer (after a small read), and all work happens later, asynchronously.
  */
+import { db } from '../db';
+import { isDemoGameId } from '../demo';
 import { getLastChangeAt, getLiveGame, subscribeToChanges } from '../repo';
 import { exportAll, type ExportFile } from '../transfer';
 import {
@@ -53,6 +55,7 @@ import {
   retryDelayMs,
   shrinkCheck,
   type BackupTimings,
+  type RealData,
 } from './policy';
 import { decryptSnapshot, encryptSnapshot, SnapshotError } from './snapshot';
 import {
@@ -68,7 +71,14 @@ import {
   type PauseReason,
   type StoredBackupState,
 } from './state';
-import { deriveStatus, type BackupRuntime, type CloudBackupStatus } from './status';
+import {
+  checksShrink,
+  deriveStatus,
+  shownBackupState,
+  type BackupRuntime,
+  type CloudBackupStatus,
+  type StatusInputs,
+} from './status';
 
 /** Timers and time, injectable so tests can drive the scheduler step by step. */
 export interface BackupClock {
@@ -230,6 +240,37 @@ export async function readObservation(): Promise<BackupObservation> {
 }
 
 /**
+ * The parent's own games and stats on the phone now, as realData counts them in an
+ * export, read from the indexes alone (no records).
+ */
+export async function readRealData(): Promise<RealData> {
+  const ids = await db.games.toCollection().primaryKeys();
+  const gameIds = ids.filter((id) => !isDemoGameId(id));
+  const events = gameIds.length === 0 ? 0 : await db.events.where('gameId').anyOf(gameIds).count();
+  return { gameIds, events };
+}
+
+/**
+ * What the status is worked out from, read now: the backup state, `meta.lastChangeAt`
+ * and, when the next automatic upload would run the shrink guard on them
+ * (checksShrink), the parent's own games, so a pause shows as soon as the data calls
+ * for one (see shownBackupState).
+ */
+export async function readStatusInputs(): Promise<
+  Pick<StatusInputs, 'stored' | 'lastChangeAt' | 'current'>
+> {
+  const [stored, lastChangeAt] = await Promise.all([loadBackupState(), getLastChangeAt()]);
+  const current = checksShrink(stored, lastChangeAt) ? await readRealData() : undefined;
+  return { stored, lastChangeAt, current };
+}
+
+/** The backup state as the status shows it (see shownBackupState). */
+async function readShownState(): Promise<StoredBackupState | undefined> {
+  const { stored, lastChangeAt, current } = await readStatusInputs();
+  return isBackupOn(stored) ? shownBackupState(stored, lastChangeAt, current) : stored;
+}
+
+/**
  * Calls `listener` with the current observation, then again after writes (from any
  * tab, via subscribeToChanges). A burst of writes is read once, after the last read.
  */
@@ -353,11 +394,9 @@ export class BackupEngine {
   }
 
   async getStatus(): Promise<CloudBackupStatus> {
-    const [stored, lastChangeAt] = await Promise.all([loadBackupState(), getLastChangeAt()]);
     return deriveStatus({
       available: this.isAvailable(),
-      stored,
-      lastChangeAt,
+      ...(await readStatusInputs()),
       runtime: this.runtime,
     });
   }
@@ -1035,7 +1074,8 @@ export class BackupEngine {
     try {
       // Being turned off: wait, then see whether backup is still on.
       if (this.disabling) await this.disabling;
-      const overrides = force ? overridablePauses(await loadBackupState()) : [];
+      // The pause shown, also one the status shows before an upload has found it.
+      const overrides = force ? overridablePauses(await readShownState()) : [];
       const outcome = await this.exclusive(() => this.attempt({ manual: true, overrides }));
       switch (outcome.kind) {
         case 'uploaded':

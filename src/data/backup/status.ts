@@ -1,8 +1,9 @@
 /**
- * The cloud backup's status for the UI, worked out from the stored state and what
- * the scheduler is doing right now (pure; see useCloudBackupStatus in hooks.ts).
+ * The cloud backup's status for the UI, worked out from the stored state, what the
+ * scheduler is doing right now and, for the shrink guard, the games on the phone (pure;
+ * see useCloudBackupStatus in hooks.ts).
  */
-import { hasUnsavedChanges, isConnectionProblem } from './policy';
+import { hasUnsavedChanges, isConnectionProblem, shrinkCheck, type RealData } from './policy';
 import { isBackupOn, type BackupErrorInfo, type StoredBackupState } from './state';
 
 /**
@@ -60,7 +61,49 @@ export interface StatusInputs {
   stored: StoredBackupState | undefined;
   /** `meta.lastChangeAt`. */
   lastChangeAt: number | undefined;
+  /**
+   * The parent's own games and stats on the phone now (see realData), read when the next
+   * automatic upload would run the shrink guard on them (see checksShrink): then the
+   * status shows its pause as soon as the data calls for one (see shownBackupState).
+   */
+  current?: RealData;
   runtime: BackupRuntime;
+}
+
+/**
+ * Whether the next automatic upload would run the shrink guard on the data as it is
+ * now: backup is on and paused for nothing else (any other pause stops automatic
+ * uploads first), there are changes to upload, and the guard hasn't looked at this very
+ * data already. The same rules as the engine's (see tryUpload).
+ */
+export function checksShrink(
+  stored: StoredBackupState | undefined,
+  lastChangeAt: number | undefined,
+): stored is StoredBackupState {
+  if (!isBackupOn(stored)) return false;
+  if (stored.paused !== undefined && stored.paused !== 'shrink') return false;
+  if (stored.paused === 'shrink' && stored.shrink?.changeAt === lastChangeAt) return false;
+  return hasUnsavedChanges(stored, lastChangeAt);
+}
+
+/**
+ * The stored state with the shrink guard's pause as the data calls for it now, so the
+ * status doesn't wait for the next upload attempt to find it: paused as soon as that
+ * attempt would be held back (after "Erase all data", say), and no longer paused once
+ * the missing games are back (that attempt then uploads, which clears the pause). It
+ * only changes what's shown: the engine stores a pause when an attempt is held back.
+ */
+export function shownBackupState(
+  stored: StoredBackupState,
+  lastChangeAt: number | undefined,
+  current: RealData | undefined,
+): StoredBackupState {
+  if (current === undefined || !checksShrink(stored, lastChangeAt)) return stored;
+  const finding = shrinkCheck(stored, current);
+  if (finding) return { ...stored, paused: 'shrink', shrink: finding };
+  if (stored.paused !== 'shrink') return stored;
+  const { paused: _paused, shrink: _shrink, lastError, ...rest } = stored;
+  return lastError && lastError.kind !== 'shrink' ? { ...rest, lastError } : rest;
 }
 
 /**
@@ -92,13 +135,15 @@ function activity(
 
 export function deriveStatus({
   available,
-  stored,
+  stored: storedState,
   lastChangeAt,
+  current,
   runtime,
 }: StatusInputs): CloudBackupStatus {
-  if (!available || !isBackupOn(stored)) {
+  if (!available || !isBackupOn(storedState)) {
     return { available, enabled: false, state: 'idle', pendingChanges: false };
   }
+  const stored = shownBackupState(storedState, lastChangeAt, current);
   const pendingChanges = hasUnsavedChanges(stored, lastChangeAt);
   const status: CloudBackupStatus = {
     available,
