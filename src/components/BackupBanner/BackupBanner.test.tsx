@@ -1,24 +1,58 @@
 import { screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { backUpNow } from '@/data/backup/cloudBackup';
-import { paths } from '@/routes';
-import { buildRealData, realGameId, REAL_LIVE_GAME_ID } from '@/test/backupHarness';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  backUpFromAnotherPhone,
+  getBackupRuntime,
+  getCloudBackupStatus,
+  setBackupTimingsForTests,
+  startBackupScheduler,
+  stopBackupScheduler,
+  subscribeToBackupRuntime,
+  whenBackupIdle,
+  type CloudBackupStatus,
+} from '@/data/backup/cloudBackup';
+import { useCloudBackupStatus } from '@/data/backup/hooks';
+import { DEFAULT_TIMINGS } from '@/data/backup/policy';
+import { savePlayer } from '@/data/repo';
+import { paths } from '@/routes';
+import { realGameId, REAL_LIVE_GAME_ID } from '@/test/backupHarness';
+import {
   pauseForAnotherPhone,
   pauseForMissingGames,
   seedOwnGames,
   settledStatus,
   setUpFakeCloudBackup,
   stopForDeletedCloudCopy,
-  turnOnCloudBackup,
 } from '@/test/cloudBackupApp';
 import { renderRoute } from '@/test/render';
 import { backupBannerReason } from './backupBannerReason';
+import type * as BackupHooksModule from '@/data/backup/hooks';
+
+// The real status, unless a test sets one (so a banner that doesn't show is certain
+// not to, rather than still loading).
+vi.mock('@/data/backup/hooks', async (importOriginal) => {
+  const actual = await importOriginal<typeof BackupHooksModule>();
+  return { ...actual, useCloudBackupStatus: vi.fn(actual.useCloudBackupStatus) };
+});
 
 const cloud = setUpFakeCloudBackup();
 
 const banner = () => screen.queryByRole('complementary', { name: 'Cloud backup' });
+const pausedBanner = () => screen.getByRole('link', { name: 'Cloud backup is paused. Tap to fix' });
+
+const on = (status: Partial<CloudBackupStatus>): CloudBackupStatus => ({
+  available: true,
+  enabled: true,
+  state: 'idle',
+  pendingChanges: false,
+  lastSuccessAt: Date.now(),
+  ...status,
+});
+const PAUSED = on({ state: 'paused-shrink', shrink: { backedUpGames: 10, missingGames: 10 } });
+
+afterEach(() => {
+  // Back to the real status.
+  vi.mocked(useCloudBackupStatus).mockReset();
+});
 
 describe('BackupBanner', () => {
   it('shows on every tab screen while backup is paused, and leads to the fix', async () => {
@@ -58,19 +92,15 @@ describe('BackupBanner', () => {
 
   it('never shows on the live game screen or any other full-screen route', async () => {
     await seedOwnGames({ liveGame: true });
-    const code = await turnOnCloudBackup();
-    await backUpFromAnotherPhone(cloud.server, code, buildRealData());
-    await backUpNow();
-    expect(await settledStatus()).toMatchObject({ state: 'paused-other-device' });
+    vi.mocked(useCloudBackupStatus).mockReturnValue(PAUSED);
 
-    // On a tab screen it shows...
+    // On a tab screen it shows at once...
     const games = renderRoute(paths.home);
-    expect(
-      await screen.findByRole('link', { name: 'Cloud backup is paused. Tap to fix' }),
-    ).toBeVisible();
+    expect(pausedBanner()).toBeVisible();
     games.unmount();
 
-    // ...but never over a live game, or on any other full-screen route.
+    // ...but never over a live game, or on any other full-screen route: they're outside
+    // the tab screens' shell (no tab bar), the only place it lives.
     for (const path of [
       paths.trackGame(REAL_LIVE_GAME_ID),
       paths.gameReport(realGameId(1)),
@@ -78,32 +108,67 @@ describe('BackupBanner', () => {
       paths.restoreBackup(),
     ]) {
       const view = renderRoute(path);
-      await waitFor(() => {
-        expect(view.container).not.toBeEmptyDOMElement();
-      });
-      // Longer than the status takes to load on a tab screen.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await screen.findByRole('heading', { level: 1 });
+      expect(screen.queryByRole('navigation', { name: 'Main' })).toBeNull();
       expect(banner()).toBeNull();
       view.unmount();
     }
   });
 
-  it("doesn't show while backup is fine, waiting for signal, or off", async () => {
-    await seedOwnGames();
-    await turnOnCloudBackup();
-    const fine = renderRoute(paths.home);
-    await screen.findByRole('heading', { level: 1, name: 'Games' });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(banner()).toBeNull();
-    fine.unmount();
-
-    cloud.server.networkDown = true;
-    await backUpNow();
-    expect(await settledStatus()).toMatchObject({ state: 'waiting-for-signal' });
+  it.each<[string, CloudBackupStatus]>([
+    ['backed up', on({})],
+    ['backing up', on({ state: 'backing-up' })],
+    ['waiting for signal', on({ state: 'waiting-for-signal', pendingChanges: true })],
+    ['retrying later', on({ state: 'error', nextAttemptAt: Date.now() + 60_000 })],
+    ['off', { available: true, enabled: false, state: 'idle', pendingChanges: false }],
+  ])("doesn't show while %s", async (_, status) => {
+    vi.mocked(useCloudBackupStatus).mockReturnValue(status);
     renderRoute(paths.home);
     await screen.findByRole('heading', { level: 1, name: 'Games' });
-    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(banner()).toBeNull();
+  });
+
+  it('stays put while an automatic attempt checks the pause again', async () => {
+    await pauseForMissingGames();
+    expect(await settledStatus()).toMatchObject({ state: 'paused-shrink' });
+    renderRoute(paths.settings);
+    await screen.findByRole('heading', { level: 2, name: 'Player' });
+    await screen.findByRole('link', { name: 'Cloud backup is paused. Tap to fix' });
+
+    // Everything the banner and the paused rows show while the scheduler runs.
+    const seen = new Set<string>();
+    const look = () => {
+      const anyway = screen.queryByRole('button', { name: /^Back up anyway/ });
+      seen.add(`${banner() ? 'banner' : 'no banner'}, ${anyway ? 'anyway' : 'no anyway'}`);
+    };
+    const observer = new MutationObserver(look);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    const uploading: boolean[] = [];
+    const unsubscribe = subscribeToBackupRuntime(() =>
+      uploading.push(getBackupRuntime().uploading),
+    );
+
+    // A change (the parent names the player), then the real scheduler: its first check
+    // tries to back up, and the shrink guard holds it back again.
+    await savePlayer({ name: 'Maya' });
+    setBackupTimingsForTests({ startupDelayMs: 0, minIntervalMs: 0 });
+    startBackupScheduler();
+    try {
+      await waitFor(() => {
+        expect(uploading).toEqual([true, false]);
+      });
+      await whenBackupIdle();
+    } finally {
+      stopBackupScheduler();
+      setBackupTimingsForTests({ ...DEFAULT_TIMINGS });
+      unsubscribe();
+      observer.disconnect();
+    }
+
+    look();
+    expect([...seen]).toEqual(['banner, anyway']);
+    expect(await getCloudBackupStatus()).toMatchObject({ state: 'paused-shrink' });
+    expect(cloud.server.uploads).toHaveLength(1);
   });
 });
 
