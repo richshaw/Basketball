@@ -61,6 +61,8 @@ const watchers = new Set<(change: DatabaseChange) => void>();
 let recovering = false;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let trying = false;
+/** The limit of the try under way, until it answers. */
+let tryLimit: ReturnType<typeof setTimeout> | undefined;
 /** Tries in a row that failed: how far the waits have backed off. */
 let misses = 0;
 
@@ -111,19 +113,25 @@ function check(): void {
 /** Opens it: open() waits for one being opened, and is done if it's open. */
 function openWithinLimit(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const limit = setTimeout(() => {
+    const answered = () => {
+      clearTimeout(tryLimit);
+      tryLimit = undefined;
+    };
+    tryLimit = setTimeout(() => {
+      tryLimit = undefined;
       // It never answered: cancelled, so the next try opens afresh (with auto-open off
-      // meanwhile, reads and writes fail at once, as they did while it was closed).
+      // meanwhile, reads and writes fail at once, as they did while it was closed). The
+      // connection it may still answer with is closed (src/data/db.ts).
       db.close();
       reject(new Error('Opening the database again did not answer in time.'));
     }, tryLimitMs);
     db.open().then(
       () => {
-        clearTimeout(limit);
+        answered();
         resolve();
       },
       (error: unknown) => {
-        clearTimeout(limit);
+        answered();
         reject(error instanceof Error ? error : new Error(String(error)));
       },
     );
@@ -205,7 +213,9 @@ export function setReopenDelaysForTests(
 /**
  * For the test setup, after each test: stops trying to open it again, and forgets how
  * far the waits had backed off (and any waits a test set), so nothing carries into the
- * next test.
+ * next test. A try under way that hasn't answered is given up on now (db.close(), as
+ * its limit would), not by its limit in a later test; meanwhile Dexie would hold every
+ * read and write of the next test for it.
  */
 export function stopReopeningDatabase(): void {
   recovering = false;
@@ -214,5 +224,10 @@ export function stopReopeningDatabase(): void {
   tryLimitMs = REOPEN_TRY_LIMIT_MS;
   clearTimeout(timer);
   timer = undefined;
+  if (tryLimit !== undefined) {
+    clearTimeout(tryLimit);
+    tryLimit = undefined;
+    db.close();
+  }
   tryWhenAppShown(false);
 }
