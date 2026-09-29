@@ -11,6 +11,7 @@ import { createGame, deleteGame, deleteStat, getGameEvents, setCurrentPeriod } f
 import type { StatEvent, StatType } from '@/data/types';
 import {
   AUTO_RETRY_MS,
+  disposeTrackingSessions,
   trackingSession,
   TrackingSession,
   type SessionDeps,
@@ -750,6 +751,29 @@ describe('TrackingSession', () => {
       session.retry();
       expect(saves).toHaveLength(1);
       expect(pendingTypes()).toEqual([]);
+    });
+  });
+
+  describe('disposeTrackingSessions (the test setup, after each test)', () => {
+    it('stops every session: its taps are forgotten and its timers stopped', async () => {
+      vi.useFakeTimers();
+      const { session, saves, fail, pendingTypes } = setUp();
+      session.record('stl');
+      fail(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(pendingTypes()).toEqual(['stl']);
+
+      disposeTrackingSessions();
+      await vi.advanceTimersByTimeAsync(10 * AUTO_RETRY_MS);
+      expect(saves).toHaveLength(1);
+      expect(pendingTypes()).toEqual([]);
+    });
+
+    it('drops the session trackingSession() keeps for each game, and its hold on the retry', () => {
+      const session = trackingSession('game-to-drop', 1);
+      disposeTrackingSessions();
+      expect(trackingSession('game-to-drop', 1)).not.toBe(session);
+      expect(hasPendingStats()).toBe(false);
     });
   });
 

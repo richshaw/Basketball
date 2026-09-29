@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
-import { forgetPendingStats } from '@/data/pendingStats';
+import { disposeTrackingSessions } from '@/screens/TrackGame/session';
 import { resetDatabase } from './db';
 import { installDialogPolyfill } from './dialogPolyfill';
 
@@ -19,10 +19,8 @@ if (typeof HTMLCanvasElement !== 'undefined') {
 }
 
 // Every test starts with an empty database (seed data in beforeEach, not beforeAll),
-// with nothing in localStorage (e.g. taps kept by src/data/pendingStats.ts), and with
-// no taps held by an earlier test's live game screen.
+// and with nothing in localStorage (e.g. taps kept by src/data/pendingStats.ts).
 beforeEach(async () => {
-  forgetPendingStats();
   if (typeof localStorage !== 'undefined') localStorage.clear();
   await resetDatabase();
 });
@@ -30,6 +28,10 @@ beforeEach(async () => {
 afterEach(() => {
   // Vitest globals are off, so Testing Library can't register this itself.
   cleanup();
+  // No live game screen's taps or retry timers (src/screens/TrackGame/session.ts) carry
+  // into the next test: a late retry could keep a tap there, or save one. Before the
+  // timers are real again, so fake ones are cleared too.
+  disposeTrackingSessions();
   // IndexedDB runs on real timers: never let one test's fake timers stall the next reset.
   vi.useRealTimers();
 });

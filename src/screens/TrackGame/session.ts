@@ -59,6 +59,9 @@ const repoDeps: SessionDeps = {
   setCurrentPeriod: (gameId, period) => setCurrentPeriod(gameId, period),
 };
 
+/** Every session made, by trackingSession() or directly (as tests do): see disposeTrackingSessions. */
+const made = new Set<TrackingSession>();
+
 /** One tap of a stat button. */
 export interface Tap {
   /** Its stat's id: the event it's saved as. */
@@ -232,6 +235,7 @@ export class TrackingSession implements UnsavedTapHolder {
       this.lastAt = Math.max(this.lastAt ?? stat.at, stat.at);
     }
     this.snapshot = this.nextSnapshot();
+    made.add(this);
   }
 
   /** For useSyncExternalStore. */
@@ -671,7 +675,10 @@ export class TrackingSession implements UnsavedTapHolder {
   }
 }
 
+/** trackingSession()'s one session per game. */
 const sessions = new Map<string, TrackingSession>();
+/** Undoes each trackingSession() registration: the retry's hold, and the map entry. */
+const registrations = new Map<TrackingSession, () => void>();
 
 /**
  * The session of a game, made on first use; it lasts as long as the page, holding its
@@ -682,19 +689,35 @@ export function trackingSession(gameId: string, period: number): TrackingSession
   let session = sessions.get(gameId);
   if (!session) {
     const created = new TrackingSession(gameId, period);
+    const unregister = () => {
+      release();
+      registrations.delete(created);
+      if (sessions.get(gameId) === created) sessions.delete(gameId);
+    };
     const release = holdUnsavedTaps({
       gameId,
       hasUnsaved: () => created.hasUnsaved(),
       retryQuietly: () => created.retryQuietly(),
       forget: (id) => {
         created.forget(id);
-        if (id !== undefined) return;
-        release();
-        if (sessions.get(gameId) === created) sessions.delete(gameId);
+        if (id === undefined) unregister();
       },
     });
+    registrations.set(created, unregister);
     sessions.set(gameId, created);
     session = created;
   }
   return session;
+}
+
+/**
+ * Stops every tracking session, made by trackingSession() or directly: forgets its taps
+ * (never saving them) and stops its timers, so nothing it does carries into what comes
+ * next. For the test setup, after each test. The app never needs it: a session lasts as
+ * long as the page.
+ */
+export function disposeTrackingSessions(): void {
+  for (const unregister of [...registrations.values()]) unregister();
+  for (const session of made) session.forget();
+  made.clear();
 }
