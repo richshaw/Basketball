@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
+import { addPendingRemoval, listPendingRemovals } from '@/data/pendingRemovals';
 import { replayPendingStats, retryPendingStats, savePendingStat } from '@/data/pendingSaves';
 import { addPendingSpot, listPendingSpots } from '@/data/pendingSpots';
 import {
@@ -46,6 +47,9 @@ const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 /** The ids of the taps kept in the pending-stats journal. */
 const keptIds = () => listPendingStats().map((stat) => stat.id);
+
+/** The ids of the taps taken back whose removal is kept (the pending-removals journal). */
+const keptRemovalIds = () => listPendingRemovals().map((removal) => removal.id);
 
 /**
  * A fake database: each save waits until the test answers it (`save`/`fail`), so
@@ -372,6 +376,42 @@ describe('TrackingSession', () => {
     await flush();
     expect(unsavedTypes()).toEqual(['stl']);
     expect(session.getSnapshot().unsavedKept).toBe(true);
+  });
+
+  it('starts with the removals an earlier page kept: taken back already, and removed', async () => {
+    const { deps, deletes, store, stored } = fakeDeps();
+    // An earlier page took back a Steal whose save had landed and a Block whose save
+    // hadn't, but couldn't remove either.
+    store(event('steal', 'stl', 5), event('assist', 'ast', 6));
+    addPendingRemoval({ id: 'steal', gameId: 'g', type: 'stl', period: 1, at: 5 });
+    addPendingRemoval({ id: 'block', gameId: 'g', type: 'blk', period: 1, at: 7 });
+    addPendingRemoval({ id: 'elsewhere', gameId: 'other', type: 'blk', period: 1, at: 8 });
+    const session = newSession('g', 1, deps);
+    // Neither counts, nor is a tap to save, and a reload would still remove them.
+    expect(session.getSnapshot()).toMatchObject({
+      pending: [],
+      unsaved: [],
+      takenBack: ['block', 'steal'],
+      reloadSafe: true,
+    });
+    expect(session.hasUnsaved()).toBe(true);
+
+    // The saved stats on screen show the Steal: it's removed, and never counted.
+    session.syncSavedEvents(stored());
+    expect(session.count('stl')).toBe(0);
+    await flush();
+    expect(deletes).toEqual(['steal']);
+    expect(stored().map((each) => each.id)).toEqual(['assist']);
+    // The Block's stat isn't among them: the first retry finds it gone.
+    expect(session.hasUnsaved()).toBe(true);
+    session.retry();
+    await flush();
+    expect(deletes).toEqual(['steal', 'block']);
+    expect(session.hasUnsaved()).toBe(false);
+    session.syncSavedEvents(stored());
+    expect(session.getSnapshot().takenBack).toEqual([]);
+    // (Another game's is that game's session's, or the app-wide retry's.)
+    expect(keptRemovalIds()).toEqual(['elsewhere']);
   });
 
   it("starts with its own game's kept taps only", () => {
@@ -823,8 +863,8 @@ describe('TrackingSession', () => {
       expect(session.reloadSafe()).toBe(true);
     });
 
-    it("doesn't hold while a tap is being taken back, nor after its removal failed", async () => {
-      const { session, land, fail, failDeletes, storedTypes } = setUp();
+    it('holds while a tap taken back has its removal kept on the phone, even once that failed', async () => {
+      const { session, land, fail, failDeletes, storedTypes, deletes } = setUp();
       const reloadSafe = () => session.getSnapshot().reloadSafe;
       const foul = session.record('foul');
       land(0); // it landed...
@@ -832,17 +872,78 @@ describe('TrackingSession', () => {
       await flush();
       failDeletes(true);
       const taking = session.undo(foul);
-      expect(reloadSafe()).toBe(false);
-      // Said to be removed, but only this page knows to remove its stat: a reload would
-      // bring it back.
+      // No save of it is under way: its removal is kept at once, so a reload would still
+      // remove its stat.
+      expect(keptRemovalIds()).toEqual([foul.id]);
+      expect(keptIds()).toEqual([]);
+      expect(reloadSafe()).toBe(true);
+      // Said to be removed; its stat is still saved, and its removal still kept.
       expect(await taking.removal).toBe('removed');
       expect(storedTypes()).toEqual(['foul']);
-      expect(reloadSafe()).toBe(false);
+      expect(keptRemovalIds()).toEqual([foul.id]);
+      expect(reloadSafe()).toBe(true);
+      expect(session.hasUnsaved()).toBe(true);
+
+      // Tried again (and failing): still kept, and safe all along.
+      session.retry();
+      expect(reloadSafe()).toBe(true);
+      await flush();
+      expect(deletes).toEqual([foul.id, foul.id]);
+      expect(reloadSafe()).toBe(true);
 
       failDeletes(false);
       session.retry();
       await flush();
       expect(storedTypes()).toEqual([]);
+      expect(keptRemovalIds()).toEqual([]);
+      expect(session.hasUnsaved()).toBe(false);
+      expect(reloadSafe()).toBe(true);
+    });
+
+    it("doesn't hold while a save of a tap taken back is under way: its removal can't be kept yet", async () => {
+      const { session, save, holdDeletes, releaseDeletes, storedTypes } = setUp();
+      const reloadSafe = () => session.getSnapshot().reloadSafe;
+      const steal = session.record('stl');
+      const taking = session.undo(steal);
+      // A reload now could leave the stat its save lands (the line said it's removed).
+      expect(reloadSafe()).toBe(false);
+      expect(keptRemovalIds()).toEqual([]);
+
+      holdDeletes();
+      save(0);
+      await flush();
+      // Its save is done: its removal is kept until that's done too.
+      expect(storedTypes()).toEqual(['stl']);
+      expect(keptRemovalIds()).toEqual([steal.id]);
+      expect(reloadSafe()).toBe(true);
+      releaseDeletes();
+      expect(await taking.removal).toBe('removed');
+      expect(storedTypes()).toEqual([]);
+      expect(keptRemovalIds()).toEqual([]);
+      expect(reloadSafe()).toBe(true);
+    });
+
+    it("doesn't hold while a tap taken back couldn't have its removal kept", async () => {
+      const { session, fail, failDeletes, storedTypes, land } = setUp();
+      const reloadSafe = () => session.getSnapshot().reloadSafe;
+      const block = session.record('blk');
+      land(0);
+      fail(0);
+      await flush();
+      const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      });
+      failDeletes(true);
+      expect(await session.undo(block).removal).toBe('removed');
+      expect(storedTypes()).toEqual(['blk']);
+      // Only this page knows to remove its stat: a reload would bring it back.
+      expect(reloadSafe()).toBe(false);
+
+      // Room again: the next try keeps it (and fails to remove it).
+      full.mockRestore();
+      session.retry();
+      await flush();
+      expect(keptRemovalIds()).toEqual([block.id]);
       expect(reloadSafe()).toBe(true);
     });
 
@@ -1835,6 +1936,33 @@ describe('TrackingSession spots (the shot chart)', () => {
       await vi.waitFor(() => expect(keptSpots()).toEqual([]));
       expect(await getGameEvents(game.id)).toEqual([]);
       expect(await after.saveAll()).toEqual({ count: 0, kept: true });
+    });
+
+    it('removes a tap taken back while nothing could be written when the app starts again', async () => {
+      const game = await newGame();
+      // Its save lands, but the page hears it failed; then removing it fails too.
+      const before = newSession(game.id, 1, {
+        recordStat: async (stat) => {
+          await savePendingStat(stat);
+          throw new DOMException('Connection lost.', 'UnknownError');
+        },
+        deleteStat: broken,
+        setCurrentPeriod,
+        setStatLocation: broken,
+      });
+      const steal = before.record('stl');
+      await vi.waitFor(() => expect(before.getSnapshot().unsaved).toHaveLength(1));
+      expect(await before.undo(steal).removal).toBe('removed');
+      expect((await getGameEvents(game.id)).map((event) => event.type)).toEqual(['stl']);
+      // A reload loses nothing: the removal is kept.
+      expect(before.reloadSafe()).toBe(true);
+
+      // The page reloads (its memory is gone), and the app's start removes the stat.
+      before.forget();
+      expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
+      expect(await getGameEvents(game.id)).toEqual([]);
+      expect(keptRemovalIds()).toEqual([]);
+      expect(keptTaps()).toEqual([]);
     });
 
     it('saves a tap kept with its spot when the game screen opens again, once', async () => {

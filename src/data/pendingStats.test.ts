@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { addPendingRemoval, listPendingRemovals } from './pendingRemovals';
 import {
   addPendingSpot,
   listPendingSpots,
@@ -267,6 +268,8 @@ describe('forgetting taps whose data is deleted or replaced', () => {
     localStorage.setItem(`${KEY_PREFIX}garbled`, '{"id":');
     keepSpot('shot', 'game-1');
     localStorage.setItem(`${SPOT_PREFIX}garbled`, '{"gameId":"game-2"');
+    // A tap taken back whose stat may still have to be removed (pendingRemovals.ts).
+    addPendingRemoval({ id: 'undone', gameId: 'game-2', type: 'blk', period: 1, at: T0 });
     localStorage.setItem('hoop-stats.lastBackupFile', '{"savedAt":1}');
     const one = holdForgettingTaps('game-1');
     const two = holdForgettingTaps('game-2');
@@ -282,6 +285,8 @@ describe('forgetting taps whose data is deleted or replaced', () => {
     addPendingStat(steal);
     keepUnreadable('c', 'game-1');
     const spot = keepSpot('shot', 'game-1');
+    const undone = { id: 'undone', gameId: 'game-1', type: 'blk' as const, period: 1, at: T0 };
+    addPendingRemoval(undone);
     const one = holdForgettingTaps('game-1');
     const two = holdForgettingTaps('game-2');
     // By the time a session holds its taps again, their entries are back.
@@ -293,11 +298,13 @@ describe('forgetting taps whose data is deleted or replaced', () => {
     const keepAgain = forgetPendingStats('game-1');
     expect(journalKeys()).toEqual([]);
     expect(listPendingSpots()).toEqual([]);
+    expect(listPendingRemovals()).toEqual([]);
     expect(one.holdAgain).not.toHaveBeenCalled();
     keepAgain();
     expect(journalKeys()).toEqual([`${KEY_PREFIX}a`, `${KEY_PREFIX}c`]);
     expect(listPendingStats()).toEqual([steal]);
     expect(listPendingSpots()).toEqual([spot]);
+    expect(listPendingRemovals()).toEqual([undone]);
     expect(keptThen).toEqual([[[steal], [spot]]]);
     expect(two.holdAgain).not.toHaveBeenCalled();
     // The app-wide retry wakes up for them.

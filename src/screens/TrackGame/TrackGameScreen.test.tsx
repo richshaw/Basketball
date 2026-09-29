@@ -5,6 +5,7 @@ import { courtBox, mockScreenBox, svgToClient } from '@/components/Court/courtTe
 import { db } from '@/data/db';
 import { demoGameId, seedDemoData } from '@/data/demo';
 import { READ_RETRY_DELAYS_MS, READ_WATCHDOG_MS } from '@/data/hooks';
+import { listPendingRemovals } from '@/data/pendingRemovals';
 import { replayPendingStats, retryPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
 import { listPendingSpots } from '@/data/pendingSpots';
 import { addPendingStat, listPendingStats, newPendingStat } from '@/data/pendingStats';
@@ -25,7 +26,7 @@ import { clearAllData } from '@/data/transfer';
 import { MAX_PERIOD, type CourtPoint, type Game, type StatType } from '@/data/types';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
-import { AUTO_RETRY_MS } from './session';
+import { AUTO_RETRY_MS, disposeTrackingSessions } from './session';
 import { COURT_DEPTH } from './ShotCourt';
 import { DOUBLE_TAP_MS } from './tracking';
 
@@ -1182,9 +1183,9 @@ describe('TrackGameScreen', () => {
       expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
     });
 
-    it("doesn't offer Reload while an Undo isn't done: after a reload, the stat would count again", async () => {
+    it('keeps offering Reload through an Undo it can not finish yet: the removal is kept, and a reload finishes it', async () => {
       const game = await newGame();
-      await renderTracking(game);
+      const { unmount } = await renderTracking(game);
       const savedTypes = async () =>
         (await db.events.where('gameId').equals(game.id).toArray()).map((event) => event.type);
       // Reads fail from now on, and the 3PT Made's write lands but the page hears it failed.
@@ -1198,27 +1199,74 @@ describe('TrackGameScreen', () => {
       expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
       await waitFor(() => expect(lastAction()).toHaveTextContent('3PT Made not saved'));
 
-      // Removing it fails too. The line says it's removed, and it no longer counts, but
-      // its stat is saved, and only this page knows to remove it.
+      // Removing it fails too. The line says it's removed, and it no longer counts. Its
+      // stat is still saved, but its removal is kept on the phone: a reload would still
+      // remove it, so Reload stays.
       const deletes = vi.spyOn(repo, 'deleteStat').mockRejectedValue(lost());
       await tapLineButton();
       expect(lastAction()).toHaveTextContent('Removed 3PT Made');
       await expectStrip('3-pointers: 0 of 0');
       await waitFor(() => expect(deletes).toHaveBeenCalled());
       expect(await savedTypes()).toEqual(['fg3_made']);
-      expect(screen.getByText('Keep the app open until your taps are saved.')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+      expect(listPendingRemovals().map((removal) => removal.type)).toEqual(['fg3_made']);
+      expect(screen.getByText('Your taps are kept on this phone.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
 
-      // Removing works again, and the app comes back into view: it's removed, and a
-      // reload would lose nothing (the stats still can't be read).
+      // Reload: the page (and all it held) is gone, and the app's next start removes it.
+      unmount();
+      disposeTrackingSessions();
+      deletes.mockRestore();
+      await replayPendingStats();
+      expect(await savedTypes()).toEqual([]);
+      expect(listPendingRemovals()).toEqual([]);
+      expect(listPendingStats()).toEqual([]);
+    });
+
+    it('keeps offering Reload through an Undo during an outage, for as long as it lasts', async () => {
+      const game = await newGame();
+      await renderTracking(game);
+      // Reads fail from now on; the Steal's save lands but can't be read back.
+      vi.spyOn(repo, 'getGameEvents').mockRejectedValue(lost());
+      fireEvent.click(statButton('Steal'));
+      expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+      // The connection is lost: every write fails too. The Block is kept.
+      vi.spyOn(repo, 'recordStat').mockRejectedValue(lost());
+      const deletes = vi.spyOn(repo, 'deleteStat').mockRejectedValue(lost());
+      fireEvent.click(statButton('Block'));
+      await waitFor(() => expect(listPendingStats().map((stat) => stat.type)).toEqual(['blk']));
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+      // Wrong stat: Undo. It's taken back at once; removing its stat by id (in case its
+      // save landed) fails like every write, and is kept for after a reload. Nothing is
+      // lost, and the note says so.
+      fireEvent.click(screen.getByRole('button', { name: 'Undo last stat' }));
+      await waitFor(() => expect(lastAction()).toHaveTextContent('Removed Block'));
+      await expectStrip('Blocks: 0', 'Steals: 1');
+      await waitFor(() => expect(deletes).toHaveBeenCalled());
+      expect(listPendingStats()).toEqual([]);
+      expect(listPendingRemovals().map((removal) => removal.type)).toEqual(['blk']);
+      expect(screen.getByText('Your taps are kept on this phone.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+      // The app comes back to the front, and the removal is tried again (and fails): still
+      // nothing to lose.
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await waitFor(() => expect(deletes).toHaveBeenCalledTimes(2));
+      expect(screen.getByText(CANT_READ)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+      expect(screen.queryByText('Keep the app open until your taps are saved.')).toBeNull();
+
+      // Writes work again: the removal is done (nothing was there) and forgotten.
       deletes.mockRestore();
       act(() => {
         document.dispatchEvent(new Event('visibilitychange'));
       });
-      expect(await screen.findByRole('button', { name: 'Reload' })).toBeInTheDocument();
-      expect(screen.getByText('Your taps are kept on this phone.')).toBeInTheDocument();
-      expect(await savedTypes()).toEqual([]);
-      await expectStrip('3-pointers: 0 of 0');
+      await waitFor(() => expect(listPendingRemovals()).toEqual([]));
+      expect((await db.events.toArray()).map((event) => event.type)).toEqual(['stl']);
     });
 
     it("doesn't offer Reload while another game has a tap that's neither saved nor kept", async () => {

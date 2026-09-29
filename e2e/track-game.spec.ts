@@ -8,6 +8,7 @@ import {
   expectStats,
   failNextSaves,
   failStatReads,
+  keptRemovals,
   keptTaps,
   lastAction,
   lineButton,
@@ -408,6 +409,34 @@ test('a lost database connection: a calm note with Reload, then it carries on by
   expect(await gameEventTypes(page, gameId)).toEqual(['stl', 'blk']);
   await tapStats(page, ['Assist']);
   await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['stl', 'blk', 'ast']);
+});
+
+test('an Undo while the connection is lost keeps Reload, and the reload loses nothing', async ({
+  page,
+}) => {
+  await canLoseDatabaseConnection(page);
+  const gameId = await startGame(page);
+  await tapStats(page, ['Steal']);
+  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['stl']);
+  await loseDatabaseConnection(page);
+  await tapStats(page, ['Block']);
+  await expect(readFailedNote(page)).toBeVisible();
+
+  // Wrong stat: Undo. Its removal can't be written either: it's kept on the phone, so
+  // Reload stays, and the note says nothing is lost.
+  await page.getByRole('button', { name: 'Undo last stat' }).tap();
+  await expect(lastAction(page)).toContainText('Removed Block');
+  await expectStats(page, 'Steals: 1', 'Blocks: 0');
+  expect(await keptTaps(page)).toEqual([]);
+  await expect.poll(() => keptRemovals(page)).toHaveLength(1);
+  await expect(page.getByText('Your taps are kept on this phone.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Reload' }).tap();
+  await expect(page.getByRole('heading', { level: 1, name: 'vs Westfield' })).toBeVisible();
+  await expect(readFailedNote(page)).toHaveCount(0);
+  await expectStats(page, 'Steals: 1', 'Blocks: 0');
+  await expect.poll(() => keptRemovals(page)).toEqual([]);
+  expect(await gameEventTypes(page, gameId)).toEqual(['stl']);
 });
 
 test('the log deletes a stat once confirmed', async ({ page }) => {

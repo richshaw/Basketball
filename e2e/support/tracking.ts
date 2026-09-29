@@ -66,6 +66,16 @@ export function keptTaps(page: Page): Promise<string[]> {
   );
 }
 
+/**
+ * The taps taken back whose stat is kept on the phone to be removed, until it's confirmed
+ * gone (see src/data/pendingRemovals.ts).
+ */
+export function keptRemovals(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    Object.keys(localStorage).filter((key) => key.startsWith('hoop-stats.pendingRemoval.')),
+  );
+}
+
 /** A spot on the court in feet: the basket at (0, 0), +y toward half court (src/lib/court.ts). */
 export interface CourtSpot {
   x: number;

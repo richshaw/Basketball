@@ -19,6 +19,11 @@
  *   (syncSavedEvents): saved stats are the database's business. Undo takes back the
  *   most recent stat by tap time, a tap or a saved stat; one that turns out to be gone
  *   already is skipped, and never reported as removed.
+ * - A tap taken back is removed by id once no save of it is under way (one may have
+ *   landed). Until that's confirmed its removal is kept in the pending-removals journal
+ *   (src/data/pendingRemovals.ts), so a reload still removes its stat, and it's tried
+ *   again with the taps. A new session starts with its game's kept removals, not
+ *   counting their stats.
  * - The period moves on screen at once and is then saved; the saved period takes
  *   over again once no move is being saved (or a move couldn't be saved).
  * - A 2PT/3PT tap can get its spot from a tap on the court (markSpot) for
@@ -31,6 +36,11 @@
  *   couldn't be removed after all.
  */
 import { savePendingStat } from '@/data/pendingSaves';
+import {
+  addPendingRemoval,
+  listPendingRemovals,
+  removePendingRemoval,
+} from '@/data/pendingRemovals';
 import { addPendingSpot, listPendingSpots, removePendingSpot } from '@/data/pendingSpots';
 import {
   addPendingStat,
@@ -143,6 +153,11 @@ interface TapRecord {
    * the stat shows up among the saved ones.
    */
   orphan: boolean;
+  /**
+   * Taken back, and its removal is kept in the pending-removals journal until it's done:
+   * a reload would still remove its stat.
+   */
+  removalKept: boolean;
   /**
    * Let go of for good (see drop()): saved and shown, taken back, or no longer kept.
    * Never held again, not even when a forget() is undone.
@@ -313,9 +328,29 @@ export class TrackingSession implements UnsavedTapHolder {
         settled: Promise.resolve(),
         undone: false,
         orphan: false,
+        removalKept: false,
         dropped: false,
       });
       this.lastAt = Math.max(this.lastAt ?? stat.at, stat.at);
+    }
+    // Taps an earlier page took back but couldn't confirm removed: taken back already
+    // (they don't count, and can't be undone), and removed by the first retry.
+    const held = new Set(this.taps.map((record) => record.stat.id));
+    for (const stat of listPendingRemovals(gameId)) {
+      if (held.has(stat.id)) continue;
+      this.taps.push({
+        stat,
+        status: 'failed',
+        hasFailed: false,
+        kept: false,
+        autoRetried: false,
+        quiet: false,
+        settled: Promise.resolve(),
+        undone: true,
+        orphan: true,
+        removalKept: true,
+        dropped: false,
+      });
     }
     // Spots an earlier page kept for saved stats: put on them by the first retry (or
     // dropped, if their stat is gone). Never taps: they don't count or show as unsaved.
@@ -448,6 +483,7 @@ export class TrackingSession implements UnsavedTapHolder {
       settled: Promise.resolve(),
       undone: false,
       orphan: false,
+      removalKept: false,
       dropped: false,
     };
     this.taps.push(record);
@@ -580,16 +616,24 @@ export class TrackingSession implements UnsavedTapHolder {
   /**
    * Whether reloading the page now would lose nothing it holds: every tap that isn't
    * confirmed saved is kept in the journal (which outlives the page), and every spot not
-   * on its stat yet in the spots journal; no tap or stat is still being taken back (after
-   * a reload, nothing would remove a stat whose tap's save landed after all, and the line
-   * has said it's removed); and no period move is still being saved (the next taps would
-   * land in the old period).
+   * on its stat yet in the spots journal; every tap taken back has its removal kept in
+   * the removals journal (after a reload, that still removes a stat whose tap's save
+   * landed after all; the line has said it's removed), which it can't be while a save of
+   * it is under way; no saved stat is being removed (it has stopped counting); and no
+   * period move is still being saved (the next taps would land in the old period).
    */
   reloadSafe(): boolean {
+    const keptRemovals = new Set(
+      this.taps
+        .filter((record) => record.undone && record.removalKept)
+        .map((record) => record.stat.id),
+    );
     return (
-      this.removals.size === 0 &&
+      [...this.removals.keys()].every((id) => keptRemovals.has(id)) &&
       this.movesInFlight === 0 &&
-      this.taps.every((record) => !record.undone && (record.kept || record.status === 'saved')) &&
+      this.taps.every((record) =>
+        record.undone ? record.removalKept : record.kept || record.status === 'saved',
+      ) &&
       [...this.spotSaves.values()].every((spotSave) => spotSave.kept)
     );
   }
@@ -716,11 +760,33 @@ export class TrackingSession implements UnsavedTapHolder {
 
   private removeOrphan(record: TapRecord): Promise<Removal> {
     record.orphan = false;
+    // (Kept already, unless localStorage was full: then it's tried again.)
+    if (!record.removalKept) this.keepRemoval(record);
     return this.removeStat(record.stat.id).then((removal) => {
-      if (removal === 'failed') record.orphan = true;
-      else this.drop(record);
+      if (removal === 'failed') {
+        record.orphan = true;
+      } else {
+        this.forgetRemoval(record);
+        this.drop(record);
+      }
+      this.emit();
       return removal;
     });
+  }
+
+  /**
+   * Keeps a taken-back tap's removal in the pending-removals journal (a reload then still
+   * removes its stat): once no save of it is under way, so none can land after it.
+   */
+  private keepRemoval(record: TapRecord): void {
+    const { id, gameId, type, period, at } = record.stat;
+    record.removalKept = addPendingRemoval({ id, gameId, type, period, at }) || record.removalKept;
+  }
+
+  /** Forgets a kept removal: its stat is gone, or it stays after all. */
+  private forgetRemoval(record: TapRecord): void {
+    removePendingRemoval(record.stat.id);
+    record.removalKept = false;
   }
 
   /** Takes back a tap: at once if it isn't confirmed saved, else by removing its stat. */
@@ -734,6 +800,9 @@ export class TrackingSession implements UnsavedTapHolder {
     }
     const confirmed = record.status === 'saved';
     record.undone = true;
+    // Its removal is kept for after a reload, unless a save of it is under way (it's
+    // kept once that's done: a save landing later would bring back a stat found gone).
+    if (record.status !== 'saving') this.keepRemoval(record);
     // Never saved again, even after a reload; nor is its spot (unless the stat stays).
     removePendingStat(id);
     const spot = this.setSpotAside(id);
@@ -748,15 +817,19 @@ export class TrackingSession implements UnsavedTapHolder {
     spot: SpotSave | undefined,
     forgets: number,
   ): Promise<Removal> {
-    // A save of it may have landed (even one that seemed to fail): remove it by id.
+    // A save of it may have landed (even one that seemed to fail): remove it by id. No
+    // save of it is under way any more, so its removal is kept until that's done.
     const confirmed = record.status === 'saved';
+    if (!record.removalKept) this.keepRemoval(record);
     return this.removeStat(record.stat.id).then((removal): Removal => {
       if (removal !== 'failed') {
+        this.forgetRemoval(record);
         this.drop(record);
         return confirmed ? removal : 'removed';
       }
       if (confirmed) {
         // Its stat is saved and stays: the tap counts again, and its spot is kept again.
+        this.forgetRemoval(record);
         record.undone = false;
         record.removal = undefined;
         if (spot) this.restoreSpot(record.stat.id, spot, forgets);
@@ -764,8 +837,9 @@ export class TrackingSession implements UnsavedTapHolder {
         return 'failed';
       }
       // No save of it ever landed, as far as anyone heard: it's taken back. In case one
-      // did, removing it is tried again later.
+      // did, removing it is tried again later (and after a reload: it's kept).
       record.orphan = true;
+      this.emit();
       return 'removed';
     });
   }

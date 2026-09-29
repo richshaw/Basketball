@@ -17,8 +17,10 @@
  * Only taps live here: an entry is a stat to save, and saving it again after its stat
  * was deleted would bring the stat back. A shot's spot (the shot chart) is kept with its
  * tap while the tap isn't saved; a spot for a stat that's saved already is kept in the
- * pending-spots journal (pendingSpots.ts), which never adds a stat. What's pending, and
- * what's forgotten when data is deleted or replaced, covers both journals.
+ * pending-spots journal (pendingSpots.ts), which never adds a stat; and a tap taken back
+ * whose stat may still have to be removed is kept in the pending-removals journal
+ * (pendingRemovals.ts). What's pending, and what's forgotten when data is deleted or
+ * replaced, covers all three journals.
  *
  * This module never touches the database (pendingSaves.ts saves the kept taps and
  * spots), so the repository can use it too.
@@ -27,6 +29,7 @@ import { isRealPoint } from '@/lib/court';
 import { compareIds, newId } from '@/lib/id';
 import { nextTimestamp } from './db';
 import { removeJournalEntries } from './journal';
+import { forgetPendingRemovals, listPendingRemovals } from './pendingRemovals';
 import { forgetPendingSpots, listPendingSpots } from './pendingSpots';
 import { isFieldGoalType } from './stats';
 import type { CourtPoint, StatEvent, StatType } from './types';
@@ -235,13 +238,14 @@ export function isReloadSafe(): boolean {
 }
 
 /**
- * Whether any tap (or spot) isn't saved yet: kept in a journal (by this page or an
- * earlier one), or held in memory.
+ * Whether any tap (or spot, or removal of a tap taken back) isn't saved yet: kept in a
+ * journal (by this page or an earlier one), or held in memory.
  */
 export function hasPendingStats(): boolean {
   return (
     listPendingStats().length > 0 ||
     listPendingSpots().length > 0 ||
+    listPendingRemovals().length > 0 ||
     [...holders].some((holder) => holder.hasUnsaved())
   );
 }
@@ -267,25 +271,28 @@ export function notifyPendingStats(): void {
 /**
  * Forgets the kept taps of one game, or of every game (then every entry, even one this
  * version can't read, so no game id or stat type is left behind), the spots kept for
- * their stats (pendingSpots.ts) too, and has the sessions holding such taps and spots in
- * memory forget theirs. For writes that delete or replace a game's data: no retry may
- * save one of its taps into it afterwards, or put one of its spots on a stat, say in a
- * game restored or made again under the same id. Call it just before that write, so a
- * save asked for earlier lands first and goes with it. Returns a function that keeps the
- * forgotten entries again and has the sessions hold theirs again, for when the write
- * fails.
+ * their stats (pendingSpots.ts) and the removals kept for taps taken back
+ * (pendingRemovals.ts) too, and has the sessions holding such taps and spots in memory
+ * forget theirs. For writes that delete or replace a game's data: no retry may save one
+ * of its taps into it afterwards, put one of its spots on a stat, or remove one of its
+ * stats, say in a game restored or made again under the same id. Call it just before
+ * that write, so a save asked for earlier lands first and goes with it. Returns a
+ * function that keeps the forgotten entries again and has the sessions hold theirs
+ * again, for when the write fails.
  */
 export function forgetPendingStats(gameId?: string): () => void {
   const taps = removeJournalEntries(KEY_PREFIX, gameId);
   const spots = forgetPendingSpots(gameId);
+  const removals = forgetPendingRemovals(gameId);
   const holdAgain: (() => void)[] = [];
   for (const holder of [...holders]) {
     if (gameId === undefined || holder.gameId === gameId) holdAgain.push(holder.forget());
   }
   return () => {
-    if (taps.count + spots.count === 0 && holdAgain.length === 0) return;
+    if (taps.count + spots.count + removals.count === 0 && holdAgain.length === 0) return;
     taps.putBack();
     spots.putBack();
+    removals.putBack();
     // After the entries: a session's kept taps and spots are back in the journals by then.
     for (const again of holdAgain) again();
     // The app-wide retry wakes up for them.
