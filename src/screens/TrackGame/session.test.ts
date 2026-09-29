@@ -142,7 +142,7 @@ function setUp(period = 1) {
   const pendingTypes = () => session.getSnapshot().pending.map((tap) => tap.type);
   /** Shows the session the saved stats, as the screen does whenever they change. */
   const sync = () => session.syncSavedEvents(fake.stored());
-  /** What the grid and the strip count of `type`: the saved stats as the screen shows them, with the taps. */
+  /** What the grid and the strip count of `type`: the saved stats on screen, and the taps. */
   const screenCount = (type: StatType) => {
     const { pending, takenBack } = session.getSnapshot();
     return withTaps(fake.stored(), pending, takenBack).filter((stat) => stat.type === type).length;
@@ -597,7 +597,7 @@ describe('TrackingSession', () => {
         expect(screenCount('foul')).toBe(1);
       });
 
-      it('stops counting a tap undone while it saves, even once its stat shows up before its removal lands', async () => {
+      it('stops counting a tap undone while it saves, even once its stat shows up', async () => {
         const { session, save, sync, holdDeletes, releaseDeletes, screenCount } = setUp();
         holdDeletes();
         const foul = session.record('foul');
@@ -617,7 +617,7 @@ describe('TrackingSession', () => {
         expect(screenCount('foul')).toBe(0);
       });
 
-      it('never counts a tap it said it removed, even if a save that seemed to fail landed and removing it failed', async () => {
+      it('never counts a tap it said it removed, even if its save landed and its removal failed', async () => {
         const { session, land, fail, sync, failDeletes, screenCount } = setUp();
         const foul = session.record('foul');
         land(0); // it landed...

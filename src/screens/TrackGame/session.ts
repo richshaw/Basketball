@@ -59,7 +59,10 @@ const repoDeps: SessionDeps = {
   setCurrentPeriod: (gameId, period) => setCurrentPeriod(gameId, period),
 };
 
-/** Every session made, by trackingSession() or directly (as tests do): see disposeTrackingSessions. */
+/**
+ * Every session made, by trackingSession() or directly (as tests do), for
+ * disposeTrackingSessions.
+ */
 const made = new Set<TrackingSession>();
 
 /** One tap of a stat button. */

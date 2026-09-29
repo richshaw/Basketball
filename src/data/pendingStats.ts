@@ -7,7 +7,8 @@
  * closes first (an iOS relaunch, the Update button), or IndexedDB keeps failing (WebKit
  * can lose its connection while the app is in the background, and every write fails
  * until it's back or the page reloads), what's left is saved later (pendingSaves.ts):
- * at app start, and by the game's tracking session when it starts.
+ * by the app-wide retry, at app start and while the app is open, and by the game's
+ * tracking session when it starts.
  *
  * One key per tap, so keeping or removing one never rewrites the others. localStorage
  * may be missing, full or blocked: every access is guarded, nothing here throws, and
@@ -163,7 +164,10 @@ export interface UnsavedTapHolder {
 
 const holders = new Set<UnsavedTapHolder>();
 
-/** Registers taps held in memory for the app-wide retry. Returns a function that unregisters them. */
+/**
+ * Registers taps held in memory for the app-wide retry. Returns a function that
+ * unregisters them.
+ */
 export function holdUnsavedTaps(holder: UnsavedTapHolder): () => void {
   holders.add(holder);
   return () => {
@@ -184,7 +188,10 @@ export async function retryHeldTaps(): Promise<void> {
   );
 }
 
-/** Whether any tap isn't saved yet: kept in the journal (by this page or an earlier one), or held in memory. */
+/**
+ * Whether any tap isn't saved yet: kept in the journal (by this page or an earlier
+ * one), or held in memory.
+ */
 export function hasPendingStats(): boolean {
   return listPendingStats().length > 0 || [...holders].some((holder) => holder.hasUnsaved());
 }

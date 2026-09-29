@@ -36,11 +36,12 @@ export interface ReplayResult {
 }
 
 /**
- * Saves the taps kept by a page that closed (or couldn't reach the database) before
- * they were saved. Called at app start, in the background. Each is saved at most once
- * and then forgotten; one that can't be saved stays kept for next time, and one whose
- * game no longer exists is dropped. Stats can be added to finished games, so their
- * taps are saved too. Never rejects.
+ * Saves the kept taps: those of a page that closed (or couldn't reach the database)
+ * before they were saved, and those this page couldn't save yet. The app-wide retry
+ * calls it, at app start and again while any tap isn't saved, in the background. Each
+ * is saved at most once and then forgotten; one that can't be saved stays kept for next
+ * time, and one whose game no longer exists is dropped. Stats can be added to finished
+ * games, so their taps are saved too. Never rejects.
  */
 export async function replayPendingStats(): Promise<ReplayResult> {
   const result: ReplayResult = { saved: 0, dropped: 0, failed: 0 };
@@ -82,7 +83,7 @@ export async function retryPendingStats(): Promise<void> {
   await retryHeldTaps();
 }
 
-/** Waits for `task` (which never rejects), but no longer than `ms`: it carries on unwatched. */
+/** Waits for `task` (which never rejects), but no longer than `ms`: then it runs on alone. */
 async function waitAtMost(task: Promise<void>, ms: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([

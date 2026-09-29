@@ -57,10 +57,11 @@ export function withTaps(
  * automatically only while the app stays open (the app-wide retry, pendingSaves.ts).
  */
 export function unsavedNote(count: number, kept: boolean): string {
-  const [they, theyAre] = count === 1 ? ["It's", "it's"] : ["They're", "they're"];
+  // "It's" or "They're", starting a sentence and inside one.
+  const [starting, inside] = count === 1 ? ["It's", "it's"] : ["They're", "they're"];
   return kept
-    ? `${they} kept on this phone and will be saved automatically.`
-    : `${they} not kept on this phone. Keep the app open until ${theyAre} saved.`;
+    ? `${starting} kept on this phone and will be saved automatically.`
+    : `${starting} not kept on this phone. Keep the app open until ${inside} saved.`;
 }
 
 /** E.g. "1 stat isn't saved yet" or "2 stats aren't saved yet". */
