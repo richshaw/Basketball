@@ -136,3 +136,20 @@ test('restores the games on a new phone from the backup code', async ({
   );
   await phone.context().close();
 });
+
+test('the whole backup code fits its field on a 375-point iPhone', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await routeFakeBackupServer(page);
+  await page.goto('./');
+  const code = await enableCloudBackup(page);
+
+  await page.goto(appUrl(paths.restoreBackup()));
+  const field = page.getByLabel('Backup code');
+  // Filled in with this phone's own code, all of it in view.
+  await expect(field).toHaveValue(code);
+  const { scrollWidth, clientWidth } = await field.evaluate((input: HTMLInputElement) => ({
+    scrollWidth: input.scrollWidth,
+    clientWidth: input.clientWidth,
+  }));
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+});

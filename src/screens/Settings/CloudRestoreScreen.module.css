@@ -16,11 +16,15 @@
 
 /*
  * Monospaced capitals, like the code as it was shown, so it's easy to check character
- * by character, and small enough that all of it shows on an iPhone.
+ * by character. A whole code (34 characters with its dashes) fits the field on a
+ * 375-point iPhone, the narrowest current one: 16px text (the least iOS doesn't zoom
+ * on), set a little tighter and with less padding than other fields.
  */
 .codeField input {
+  padding-inline: var(--space-2);
   font-family: var(--font-family-mono);
   font-size: var(--font-size-code-field);
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 
