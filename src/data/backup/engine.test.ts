@@ -29,6 +29,7 @@ import { BackupEngine, observeDatabase, readObservation, type BackupObservation 
 import { deriveBackupKeys } from './keys';
 import { decryptSnapshot, encryptSnapshot } from './snapshot';
 import { loadBackupState, turnOnBackupState } from './state';
+import type { BackupRuntime } from './status';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -1055,6 +1056,67 @@ describe('restoring a backup under the same code', () => {
     expect(await phone.engine.getStatus()).toMatchObject({ state: 'idle', pendingChanges: false });
     expect(h.server.putCount).toBe(4);
   });
+
+  it('carries on from the newest version the caller saw, without asking the server', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    await change(h);
+    await h.advance(MINUTE);
+    expect(h.server.putCount).toBe(2);
+
+    // A new phone restores the older backup, with the list it picked it from.
+    h.engine.stop();
+    await resetDatabase();
+    const phone = createEngineHarness({ fetch: h.server.fetch });
+    const versions = await phone.engine.listVersions(code);
+    if (!versions.ok) throw new Error(versions.error.message);
+    const [newest, older] = versions.value;
+    const fetched = await phone.engine.fetchBackup(code, { version: older?.version });
+    if (!fetched.ok) throw new Error(fetched.error.message);
+    await importAll(fetched.value.file, 'replace');
+    // No signal now: turning backup on needs none. (Asking the server would have failed
+    // and fallen back to the restored backup's own, older version.)
+    h.server.networkDown = true;
+    expect(
+      await phone.engine.enableWithCode(code, {
+        backup: fetched.value,
+        newestVersion: newest?.version,
+      }),
+    ).toEqual({ ok: true, value: undefined });
+    expect(await loadBackupState()).toMatchObject({ code, lastVersion: newest?.version });
+    await phone.engine.whenIdle();
+
+    // With signal back, it backs up on top of the newest, not taking it for another phone's.
+    h.server.networkDown = false;
+    expect((await phone.engine.backUpNow()).ok).toBe(true);
+    expect(await phone.engine.getStatus()).toMatchObject({ state: 'idle' });
+    expect(h.server.uploads).toHaveLength(3);
+  });
+
+  it('takes a newer version than the caller saw for another phone’s, and pauses', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    const code = await turnOn(h);
+    const fetched = await h.engine.fetchBackup(code);
+    if (!fetched.ok) throw new Error(fetched.error.message);
+    // Another phone backs up between the preview and the restore.
+    await uploadFromAnotherPhone(h, code);
+
+    await importAll(fetched.value.file, 'merge');
+    expect(
+      (
+        await h.engine.enableWithCode(code, {
+          backup: fetched.value,
+          newestVersion: fetched.value.version,
+        })
+      ).ok,
+    ).toBe(true);
+    await h.settle();
+    // Its backup wasn't replaced: this phone asks first.
+    expect((await h.engine.getStatus()).state).toBe('paused-other-device');
+    expect(h.server.putCount).toBe(2);
+  });
 });
 
 describe('an upload stored on the server but answered badly', () => {
@@ -1266,6 +1328,35 @@ describe('"Back up anyway" (force)', () => {
     expect(h.server.uploads.at(-1)?.version).not.toBe(theirs.version);
     expect(await loadBackupState()).not.toHaveProperty('confirmedPauses');
     expect((await h.engine.getStatus()).state).toBe('idle');
+  });
+
+  it('says which attempts are forced, so one that will be held keeps its pause on screen', async () => {
+    const h = createEngineHarness();
+    await seedReal();
+    await turnOn(h);
+    await clearAllData();
+    await h.notify();
+    await h.advance(MINUTE);
+    expect((await h.engine.getStatus()).state).toBe('paused-shrink');
+
+    // A plain "Back up now" checks again and is held: it runs unforced, and the status
+    // keeps the pause all along.
+    const seen: BackupRuntime[] = [];
+    const unsubscribe = h.engine.subscribe(() => seen.push(h.engine.getRuntime()));
+    expect(await h.engine.backUpNow()).toMatchObject({ ok: false, error: { kind: 'shrink' } });
+    expect(seen).toContainEqual({ uploading: true, forced: false, online: true });
+
+    // "Back up anyway" runs forced, and shows as backing up until it's done.
+    const release = h.server.hold();
+    const forced = h.engine.backUpNow({ force: true });
+    await vi.waitFor(async () => {
+      expect((await h.engine.getStatus()).state).toBe('backing-up');
+    });
+    expect(h.engine.getRuntime()).toEqual({ uploading: true, forced: true, online: true });
+    release();
+    expect((await forced).ok).toBe(true);
+    expect(h.engine.getRuntime()).toEqual({ uploading: false, forced: false, online: true });
+    unsubscribe();
   });
 
   it('with nothing paused, still checks for another phone', async () => {

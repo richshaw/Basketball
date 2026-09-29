@@ -1,11 +1,11 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/Button/Button';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { Sheet } from '@/components/Sheet/Sheet';
 import { useToast } from '@/components/Toast/toastContext';
-import { importAll, type ExportFile, type ImportMode } from '@/data/transfer';
+import { importAll, type ExportFile, type ImportMode, type ImportSummary } from '@/data/transfer';
 import { cx } from '@/lib/cx';
 import { ActionRow } from './ActionRow';
 import { backupSummary, nothingNewMessage, restoredMessage } from './backupFiles';
@@ -13,11 +13,12 @@ import styles from './RestoreSheet.module.css';
 
 /**
  * What the sheet shows: a backup ready to restore (with how many games the phone had
- * when it was picked, so the choices don't change as it restores), or why a file
- * can't be restored (`notABackup`: the wrong file was picked, so say which to pick).
+ * when it was picked, so the choices don't change as it restores, and optionally what
+ * to say it holds instead of `backupSummary`), or why a file can't be restored
+ * (`notABackup`: the wrong file was picked, so say which to pick).
  */
 export type RestoreRequest =
-  | { kind: 'preview'; backup: ExportFile; phoneGameCount: number }
+  | { kind: 'preview'; backup: ExportFile; phoneGameCount: number; summary?: readonly string[] }
   | { kind: 'error'; message: string; notABackup: boolean };
 
 export interface RestoreSheetProps {
@@ -25,9 +26,27 @@ export interface RestoreSheetProps {
   /** Kept after closing, so the sheet keeps its content while it slides away. */
   request: RestoreRequest | null;
   onClose: () => void;
+  /**
+   * Called as soon as the backup is on the phone, before the sheet closes and says so
+   * (e.g. to turn cloud backup on with the backup's code, in the background). Returns a
+   * sentence to add to what the sheet says, at once: nothing waits for it. If it throws,
+   * the restore still stands and the sheet says only what was restored.
+   */
+  afterRestore?: () => string | undefined;
+  /**
+   * A restore finished and closed the sheet (e.g. to leave the screen). Not called if
+   * the parent closed the sheet herself while it was restoring.
+   */
+  onRestored?: () => void;
+  /** Said above the choices, before anything is restored (e.g. which backup code is used). */
+  children?: ReactNode;
+  /** Added to the "Replace everything" question (e.g. that the phone switches codes). */
+  replaceNote?: string;
 }
 
 const RESTORE_FAILED = "Couldn't restore the backup. Nothing on this phone was changed.";
+/** A toast with a second sentence (see `afterRestore`) stays long enough to read. */
+const NOTE_TOAST_MS = 6000;
 
 /** 'The game on this phone and its stats' or 'All 3 games on this phone and their stats'. */
 function phoneGamesAndStats(count: number): string {
@@ -65,12 +84,35 @@ function replaceSubtitle(phoneGameCount: number, backup: ExportFile): string {
  * it just adds the backup: a merge, so the player's name and the settings set up
  * here are kept (Replace would erase them too).
  */
-export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
+export function RestoreSheet({
+  open,
+  request,
+  onClose,
+  afterRestore,
+  onRestored,
+  children,
+  replaceNote,
+}: RestoreSheetProps) {
   const confirm = useConfirm();
   const toast = useToast();
   const [restoring, setRestoring] = useState(false);
   // The request whose "Add" found nothing new: a new file starts without the note.
-  const [nothingNewFor, setNothingNewFor] = useState<RestoreRequest | null>(null);
+  const [nothingNew, setNothingNew] = useState<{ request: RestoreRequest; note?: string } | null>(
+    null,
+  );
+  // A restore that finishes after the sheet (or its screen) has gone says nothing: the
+  // parent may be on the live game screen by then.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   if (!request) return null;
 
@@ -105,28 +147,45 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
     if (mode === 'replace') {
       const confirmed = await confirm({
         title: 'Replace everything on this phone?',
-        message: replaceWarning(phoneGameCount, backup),
+        message: replaceNote
+          ? `${replaceWarning(phoneGameCount, backup)} ${replaceNote}`
+          : replaceWarning(phoneGameCount, backup),
         confirmLabel: 'Replace everything',
         destructive: true,
       });
       if (!confirmed) return;
     }
     setRestoring(true);
+    let taken: ImportSummary;
     try {
-      const taken = await importAll(backup, mode);
-      if (mode === 'merge' && taken.games === 0 && backup.games.length > 0 && !phoneIsEmpty) {
-        // Nothing to add: say so next to Replace, the way to get the backup's versions.
-        setNothingNewFor(request);
-        return;
-      }
-      onClose();
-      toast.show({ message: restoredMessage(taken, backup.games.length) });
+      taken = await importAll(backup, mode);
     } catch (error) {
       console.error('Restoring a backup failed', error);
-      toast.show({ message: RESTORE_FAILED });
-    } finally {
       setRestoring(false);
+      if (mounted.current) toast.show({ message: RESTORE_FAILED });
+      return;
     }
+    let note: string | undefined;
+    try {
+      note = afterRestore?.();
+    } catch (error) {
+      // The backup is on the phone either way: say so, without the extra sentence.
+      console.error('After restoring a backup', error);
+    }
+    setRestoring(false);
+    if (!mounted.current) return;
+    if (mode === 'merge' && taken.games === 0 && backup.games.length > 0 && !phoneIsEmpty) {
+      // Nothing to add: say so next to Replace, the way to get the backup's versions.
+      setNothingNew({ request, note });
+      return;
+    }
+    const closedMeanwhile = !openRef.current;
+    onClose();
+    const restored = restoredMessage(taken, backup.games.length);
+    toast.show(
+      note ? { message: `${restored}. ${note}`, duration: NOTE_TOAST_MS } : { message: restored },
+    );
+    if (!closedMeanwhile) onRestored?.();
   };
 
   return (
@@ -134,11 +193,15 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
       open={open}
       onClose={onClose}
       title="Restore this backup?"
-      description={backupSummary(backup).map((part, index) => (
-        // Line breaks only between the parts, never inside "Sep 28, 2026".
+      description={(request.summary ?? backupSummary(backup)).map((part, index, parts) => (
+        // A part moves to the next line whole (never "Sep 28," then "2026"), with the dot
+        // after it; only a part longer than a whole line wraps inside.
         <Fragment key={index}>
-          {index > 0 ? ' · ' : null}
-          <span className={styles.noWrap}>{part}</span>
+          {index > 0 ? ' ' : null}
+          <span className={styles.part}>
+            {part}
+            {index < parts.length - 1 ? ' ·' : null}
+          </span>
         </Fragment>
       ))}
       footer={
@@ -149,6 +212,7 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
         ) : null
       }
     >
+      {children ? <div className={styles.before}>{children}</div> : null}
       {phoneIsEmpty ? (
         <p className={styles.note}>
           There are no games on this phone yet, so nothing will be lost.
@@ -178,9 +242,10 @@ export function RestoreSheet({ open, request, onClose }: RestoreSheetProps) {
           </GroupedList>
           {/* Always there (empty until needed), so screen readers announce what appears. */}
           <div role="status" aria-label="Restore result">
-            {nothingNewFor === request ? (
+            {nothingNew?.request === request ? (
               <p className={cx(styles.note, styles.result)}>
                 {nothingNewMessage(backup.games.length)}
+                {nothingNew.note ? ` ${nothingNew.note}` : null}
               </p>
             ) : null}
           </div>

@@ -50,6 +50,8 @@ export interface CloudBackupStatus {
 /** What the scheduler is doing in this window (not stored). */
 export interface BackupRuntime {
   uploading: boolean;
+  /** The running attempt overrides the pause shown ("Back up anyway"). */
+  forced?: boolean;
   online: boolean;
 }
 
@@ -61,12 +63,23 @@ export interface StatusInputs {
   runtime: BackupRuntime;
 }
 
+/**
+ * Pauses that every attempt checks again unless it's forced: an attempt made while one is
+ * shown (an automatic one after a change, say) is held again, so the pause stays on
+ * screen instead of blinking to "backing up" and back.
+ */
+function rechecksPause(paused: StoredBackupState['paused']): boolean {
+  return paused === 'shrink' || paused === 'other-device';
+}
+
 function activity(
   stored: StoredBackupState,
   pendingChanges: boolean,
   runtime: BackupRuntime,
 ): CloudBackupStatusState {
-  if (runtime.uploading) return 'backing-up';
+  if (runtime.uploading && (runtime.forced || !rechecksPause(stored.paused))) {
+    return 'backing-up';
+  }
   if (stored.paused === 'shrink') return 'paused-shrink';
   if (stored.paused === 'other-device') return 'paused-other-device';
   if (stored.paused) return 'needs-attention';

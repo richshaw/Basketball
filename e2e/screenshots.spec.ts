@@ -44,6 +44,7 @@ const screens: Screen[] = [
     setup: (page) => seedDemoData(page, { liveGame: true }),
     interact: (page) => expect(page.getByRole('group', { name: 'Record a stat' })).toBeVisible(),
   },
+  { name: 'restore-backup', path: paths.restoreBackup() },
   // The shared component gallery, and its overlays one at a time.
   { name: 'dev-ui', path: paths.devUi },
   {

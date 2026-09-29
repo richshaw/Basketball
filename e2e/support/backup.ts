@@ -7,9 +7,14 @@ import { FakeBackupServer } from '../../src/test/fakeBackupServer';
  */
 export const E2E_BACKUP_API_URL = 'https://backup.hoop-stats.test';
 
-/** Answers the backup server's URL, in this page, from an in-memory copy of the server. */
-export async function routeFakeBackupServer(page: Page): Promise<FakeBackupServer> {
-  const server = new FakeBackupServer({ allowedOrigins: ['*'] });
+/**
+ * Answers the backup server's URL, in this page, from an in-memory copy of the server.
+ * Pass the `server` another page routes to for a second phone on the same server.
+ */
+export async function routeFakeBackupServer(
+  page: Page,
+  server = new FakeBackupServer({ allowedOrigins: ['*'] }),
+): Promise<FakeBackupServer> {
   await page.route(`${E2E_BACKUP_API_URL}/**`, async (route) => {
     const request = route.request();
     const response = server.handle({
@@ -33,6 +38,26 @@ export interface BackupStatus {
   state: string;
   pendingChanges: boolean;
   shrink?: { backedUpGames: number; missingGames: number };
+  otherDevice?: { backedUpAt?: number };
+  lastError?: { kind: string; message: string };
+}
+
+/**
+ * Another phone backs up with the same code as the one phone on `server`: a new newest
+ * backup (not a real snapshot: it can't be restored), straight on the server.
+ */
+export function backUpFromAnotherPhone(server: FakeBackupServer): void {
+  const [entry, ...others] = server.accounts.entries();
+  if (!entry || others.length > 0) throw new Error('Expected exactly one backup on the server');
+  const [accountId, account] = entry;
+  const response = server.handle({
+    method: 'PUT',
+    url: `${E2E_BACKUP_API_URL}/v1/backups/${accountId}`,
+    headers: { authorization: `Bearer ${account.token}`, 'content-length': '64' },
+    body: new Uint8Array(64).fill(7),
+  });
+  if (response.status !== 201)
+    throw new Error(`The other phone's backup failed: ${response.status}`);
 }
 
 type Result = { ok: true; value?: Record<string, unknown> } | { ok: false; error: unknown };
@@ -45,6 +70,8 @@ interface BackupWindow {
       backUpNow(options?: { force?: boolean }): Promise<Result>;
       fetchCloudBackup(code: string): Promise<Result>;
       getCloudBackupStatus(): Promise<BackupStatus>;
+      getBackupCode(): Promise<string | undefined>;
+      disableCloudBackup(options?: { deleteCloudCopy?: boolean }): Promise<Result>;
       setBackupTimingsForTests(timings: Record<string, number>): void;
     };
   };
@@ -84,6 +111,24 @@ export async function fetchCloudBackup(page: Page, code: string): Promise<Result
   return (await backup(page)).evaluate(
     (value) => (window as unknown as BackupWindow).hoopStats.backup.fetchCloudBackup(value),
     code,
+  );
+}
+
+/** Turns cloud backup off (keeping the code and the online backup, unless told to delete it). */
+export async function disableCloudBackup(
+  page: Page,
+  options: { deleteCloudCopy?: boolean } = {},
+): Promise<Result> {
+  return (await backup(page)).evaluate(
+    (value) => (window as unknown as BackupWindow).hoopStats.backup.disableCloudBackup(value),
+    options,
+  );
+}
+
+/** This phone's backup code (on, or kept after turning off), if it has one. */
+export async function getBackupCode(page: Page): Promise<string | undefined> {
+  return (await backup(page)).evaluate(() =>
+    (window as unknown as BackupWindow).hoopStats.backup.getBackupCode(),
   );
 }
 

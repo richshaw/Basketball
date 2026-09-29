@@ -13,9 +13,12 @@
 
   /* Typography */
   --font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  /* Codes to copy by hand (the cloud backup code): every character the same width. */
+  --font-family-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --font-size-xs: 0.75rem; /* 12px: captions, tab labels */
   --font-size-sm: 0.9375rem; /* 15px: secondary text */
   --font-size-md: 1.0625rem; /* 17px: body (iOS default) */
+  --font-size-code-field: 1rem; /* 16px, the least iOS won't zoom on: the backup code field (restore) */
   --font-size-lg: 1.25rem; /* 20px: section titles, large buttons */
   --font-size-xl: 1.5rem; /* 24px */
   --font-size-2xl: 1.75rem; /* 28px */
@@ -52,6 +55,7 @@
   --tap-target: 44px; /* minimum size of anything tappable */
   --tap-target-lg: 56px;
   --icon-size-nav: 26px; /* tab bar and back-button icons */
+  --icon-size-md: 22px; /* a status glyph in a list row's icon slot (cloud backup) */
   --icon-size-sm: 18px; /* list-row chevrons */
   --icon-size-xs: 16px; /* small glyphs, e.g. the sheet's close X */
   --icon-circle-size: 30px; /* round backdrop of a small icon button (sheet close) */
@@ -98,6 +102,7 @@
   --duration-fast: 120ms;
   --duration-normal: 200ms;
   --duration-slow: 320ms;
+  --duration-spin: 900ms; /* one turn of a busy spinner */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in: cubic-bezier(0.4, 0, 1, 1);
 
