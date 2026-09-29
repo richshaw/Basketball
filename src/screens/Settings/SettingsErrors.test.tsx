@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { restoreStubs, stubProperties } from '@/test/browser';
 import { buildDemoData } from '@/data/demo';
-import { createGame, deleteGame, listGames, savePlayer, updateSettings } from '@/data/repo';
+import { createGame, deleteGameRecords, listGames, savePlayer, updateSettings } from '@/data/repo';
 import { clearAllData, importAll } from '@/data/transfer';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
@@ -18,7 +18,8 @@ vi.mock('@/data/repo', async (importOriginal) => {
     ...actual,
     savePlayer: vi.fn(actual.savePlayer),
     updateSettings: vi.fn(actual.updateSettings),
-    deleteGame: vi.fn(actual.deleteGame),
+    // (What removing the sample games deletes each one with.)
+    deleteGameRecords: vi.fn(actual.deleteGameRecords),
   };
 });
 
@@ -109,7 +110,7 @@ describe('Settings when a write fails', () => {
 
   it('says so when the sample games cannot be removed', async () => {
     await importAll(buildDemoData({ today: '2026-09-28' }), 'replace');
-    vi.mocked(deleteGame).mockRejectedValueOnce(failure());
+    vi.mocked(deleteGameRecords).mockRejectedValueOnce(failure());
     const { user } = await renderSettings();
 
     await user.click(screen.getByRole('button', { name: /Remove sample games/ }));
