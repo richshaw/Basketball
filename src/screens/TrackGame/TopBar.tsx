@@ -37,9 +37,10 @@ export const TopBar = memo(function TopBar({
 }: TopBarProps) {
   return (
     <header className={styles.bar}>
-      <Link to={paths.home} className={styles.back}>
+      {/* Named "Games" even where it's only its chevron (on phones, for the title's room). */}
+      <Link to={paths.home} className={styles.back} aria-label="Games">
         <ChevronLeftIcon className={styles.backIcon} />
-        <span>Games</span>
+        <span className={styles.backLabel}>Games</span>
       </Link>
       <div className={styles.heading}>
         <h1 className={styles.title}>{title}</h1>

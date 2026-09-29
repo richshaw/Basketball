@@ -457,6 +457,49 @@ test('a stat tapped just after a sheet closes counts: the sheet takes no taps as
   }
 });
 
+// An ordinary opponent's name fits the title whole: 16 characters on an iPhone SE, 18 at
+// 390 points. The back link is then only its chevron, and every control in the bar is
+// still a full tap target.
+for (const device of [
+  { name: 'an iPhone SE', width: 375, height: 667 - 20, opponent: 'Central Catholic' },
+  { name: 'an iPhone', width: 390, height: 797, opponent: 'Lakeview Christian' },
+]) {
+  test(`the title shows an ordinary opponent's name whole on ${device.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: device.width, height: device.height });
+    await startGame(page, device.opponent);
+    const title = page.getByRole('heading', { level: 1, name: `vs ${device.opponent}` });
+    const whole = (locator: typeof title) =>
+      locator.evaluate((element) => element.scrollWidth <= element.clientWidth);
+    expect(await whole(title)).toBe(true);
+    expect(await title.evaluate((element) => getComputedStyle(element).fontSize)).toBe('16px');
+
+    const controls = [
+      page.getByRole('link', { name: 'Games' }),
+      page.getByRole('button', { name: /^Period Q\d$/ }),
+      page.getByRole('button', { name: 'Next period' }),
+    ];
+    for (const control of controls) {
+      const box = await control.boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(44);
+      expect(box?.height).toBeGreaterThanOrEqual(44);
+      await expect(control).toBeInViewport({ ratio: 1 });
+    }
+    await expect(page.getByRole('link', { name: 'Games' })).toHaveText('', { useInnerText: true });
+
+    // A finished game says so under the title, whole too.
+    await page.getByRole('button', { name: 'End game' }).tap();
+    await page
+      .getByRole('dialog', { name: 'Final score' })
+      .getByRole('button', { name: 'End game' })
+      .tap();
+    await page.getByRole('link', { name: 'Add or fix stats' }).tap();
+    const note = page.getByText('Finished game', { exact: true });
+    await expect(note).toBeVisible();
+    expect(await whole(note)).toBe(true);
+    expect(await whole(title)).toBe(true);
+  });
+}
+
 // Installed-app viewports: the screen minus the status bar (the page starts below it).
 const DEVICES = [
   { name: 'iPhone', width: 390, height: 797, safeBottom: IPHONE_SAFE_BOTTOM },

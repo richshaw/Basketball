@@ -19,6 +19,7 @@
   --font-size-sm: 0.9375rem; /* 15px: secondary text */
   --font-size-md: 1.0625rem; /* 17px: body (iOS default) */
   --font-size-code-field: 1rem; /* 16px, the least iOS won't zoom on: the backup code field (restore) */
+  --font-size-bar-title: 1rem; /* 16px: the live game screen's title on phones, where its bar is full */
   --font-size-lg: 1.25rem; /* 20px: section titles, large buttons */
   --font-size-xl: 1.5rem; /* 24px */
   --font-size-2xl: 1.75rem; /* 28px */
