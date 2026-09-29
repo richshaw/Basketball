@@ -238,6 +238,8 @@ export interface TakingBack {
    * answered by then (it's kept, still under way, and the stat doesn't count).
    */
   readonly removal: Promise<Removal>;
+  /** How it went in the end, however long that takes (never 'unanswered'). */
+  readonly outcome: Promise<Removal>;
 }
 
 /**
@@ -909,7 +911,13 @@ export class TrackingSession implements UnsavedTapHolder {
       // that failed), waited for no longer than the first time (it may still hang).
       if (record.orphan) record.removal = this.removeOrphan(record);
       const removal = record.removal ?? Promise.resolve<Removal>('removed');
-      return { id, type, immediate: false, removal: answeredWithin(removal, waitMs) };
+      return {
+        id,
+        type,
+        immediate: false,
+        removal: answeredWithin(removal, waitMs),
+        outcome: removal,
+      };
     }
     const confirmed = record.status === 'saved';
     record.undone = true;
@@ -930,6 +938,7 @@ export class TrackingSession implements UnsavedTapHolder {
       // A saved one goes once its removal says so, waited for no longer than `waitMs`:
       // one that doesn't answer is kept, and still happens.
       removal: confirmed ? answeredWithin(record.removal, waitMs) : record.removal,
+      outcome: record.removal,
     };
   }
 
@@ -975,12 +984,13 @@ export class TrackingSession implements UnsavedTapHolder {
     this.closeSpot();
     const record = this.taps.find((each) => each.stat.id === stat.id);
     if (record) return this.takeBack(record, waitMs);
-    return {
-      id: stat.id,
-      type: stat.type,
-      immediate: false,
-      removal: answeredWithin(this.removeSavedStat(stat.id), waitMs),
-    };
+    return this.takeBackSaved(stat, waitMs);
+  }
+
+  /** Takes back a saved stat that isn't one of this session's taps. */
+  private takeBackSaved({ id, type }: Pick<Tap, 'id' | 'type'>, waitMs: number): TakingBack {
+    const outcome = this.removeSavedStat(id);
+    return { id, type, immediate: false, removal: answeredWithin(outcome, waitMs), outcome };
   }
 
   /**
@@ -1063,12 +1073,7 @@ export class TrackingSession implements UnsavedTapHolder {
       while (item) {
         const taking = isTapRecord(item)
           ? this.takeBack(item, waitMs)
-          : {
-              id: item.id,
-              type: item.type,
-              immediate: false,
-              removal: answeredWithin(this.removeSavedStat(item.id), waitMs),
-            };
+          : this.takeBackSaved(item, waitMs);
         if (taking.immediate) return taking;
         const removal = await taking.removal;
         if (removal !== 'gone') return { ...taking, removal: Promise.resolve(removal) };

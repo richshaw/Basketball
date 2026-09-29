@@ -1057,13 +1057,16 @@ describe('TrackingSession', () => {
       // The Undo isn't busy any more: it goes on to the stat before it.
       expect(await outcome(session.undoLatest(50))).toEqual(['stl', 'unanswered']);
       // Try again (the log, or the line): waited for as long again.
-      expect(await session.undo({ id: 'block', type: 'blk' }, 50).removal).toBe('unanswered');
+      const again = session.undo({ id: 'block', type: 'blk' }, 50);
+      expect(await again.removal).toBe('unanswered');
 
-      // It answers after all: both are gone, and nothing is left to remove.
+      // It answers after all: both are gone, and nothing is left to remove. How it went
+      // in the end is there too.
       releaseDeletes();
       await flush();
       expect(storedTypes()).toEqual([]);
       expect(keptRemovalIds()).toEqual([]);
+      expect(await again.outcome).toBe('removed');
     });
 
     it("stops waiting for a confirmed tap's removal that never answers, and keeps it", async () => {
@@ -1072,7 +1075,8 @@ describe('TrackingSession', () => {
       save(0);
       await flush();
       holdDeletes();
-      expect(await outcome(session.undoLatest(50))).toEqual(['stl', 'unanswered']);
+      const taking = await session.undoLatest(50);
+      expect(await outcome(taking)).toEqual(['stl', 'unanswered']);
       expect(keptRemovalIds()).toEqual([steal.id]);
       expect(session.getSnapshot().reloadSafe).toBe(true);
       expect(screenCount('stl')).toBe(0);
@@ -1080,6 +1084,8 @@ describe('TrackingSession', () => {
       await flush();
       expect(storedTypes()).toEqual([]);
       expect(keptRemovalIds()).toEqual([]);
+      if (typeof taking === 'string') throw new Error('Nothing was undone');
+      expect(await taking.outcome).toBe('removed');
     });
 
     it("doesn't hold while a period move is being saved, for its wait at most", async () => {

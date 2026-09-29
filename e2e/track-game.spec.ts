@@ -10,6 +10,7 @@ import {
   failNextSaves,
   failStatDeletes,
   failStatReads,
+  holdStatWrites,
   keptRemovals,
   keptTaps,
   lastAction,
@@ -566,6 +567,34 @@ for (const [name, viewport] of [
     });
   }
 }
+
+test.describe('iPhone SE, with the court: an Undo that takes its time', () => {
+  test.use({ viewport: { width: 375, height: 667 - 20 } });
+
+  test("an Undo that doesn't answer in time says so in a few words, then how it went", async ({
+    page,
+  }) => {
+    const gameId = await startGame(page);
+    await expect(shotCourt(page)).toHaveCount(1);
+    await tapStats(page, ['Deflection', 'Charge Taken']);
+    await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['deflection', 'charge']);
+    const charges = statGrid(page).getByRole('button', { name: 'Charge Taken', exact: true });
+    await expect(charges).toHaveAccessibleDescription('1 this game');
+
+    // Removing it doesn't answer for a while: it stops counting at once, and the line
+    // says it isn't saved yet (nothing failed, and there's nothing to tap), whole.
+    const writes = await holdStatWrites(page);
+    await page.getByRole('button', { name: 'Undo last stat' }).tap();
+    await expect(charges).toHaveAccessibleDescription('');
+    await expect(lastAction(page)).toHaveText('Undo not saved yet', { timeout: 10_000 });
+    expect(await lastActionFits(page)).toBe(true);
+
+    // It lands: the line says so instead.
+    await writes.release();
+    await expect(lastAction(page)).toHaveText('Removed Charge Taken');
+    expect(await gameEventTypes(page, gameId)).toEqual(['deflection']);
+  });
+});
 
 /**
  * Deletes a stat straight from IndexedDB, where the screen doesn't see it: as another tab

@@ -27,7 +27,7 @@ import { LogSheet } from './LogSheet';
 import { NotSavedSheet } from './NotSavedSheet';
 import { PeriodSheet } from './PeriodSheet';
 import { ReadFailedNote } from './ReadFailedNote';
-import type { NotSaved, TakingBack, Tap } from './session';
+import type { NotSaved, Removal, TakingBack, Tap } from './session';
 import { ShotCourt } from './ShotCourt';
 import { StatGrid } from './StatGrid';
 import { StatStrip } from './StatStrip';
@@ -140,27 +140,43 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
 
   /**
    * Says a stat is gone: at once for a tap not saved yet (it no longer counts), else
-   * once its removal is done. Speaks up if it couldn't be removed (it counts again), or
-   * hasn't been in time (it's still being removed, and doesn't count), with Try again
-   * for exactly that stat: short enough to fit the line on the smallest iPhone.
+   * once its removal is done. Speaks up if it couldn't be removed (it counts again), with
+   * Try again for exactly that stat, and if it hasn't been in time (it's still being
+   * removed, and doesn't count): then the line says how it went once it's done, unless
+   * it has moved on. Short enough to fit the line on the smallest iPhone.
    */
   const takeBack = useMemo(() => {
-    const follow = ({ id, type, immediate, removal }: TakingBack): void => {
+    const follow = ({ id, type, immediate, removal, outcome }: TakingBack): void => {
       const label = statLabel(type);
-      if (immediate) show({ message: `Removed ${label}`, tone: 'muted' });
-      void removal.then((result) => {
-        if (result === 'failed' || result === 'unanswered') {
-          show({
+      const said = (result: Removal): Omit<LastAction, 'key'> | null => {
+        if (result === 'failed') {
+          return {
             message: "Couldn't undo",
             tone: 'error',
             actionLabel: 'Try again',
             onAction: () => follow(session.undo({ id, type })),
-          });
-        } else if (!immediate) {
-          const message =
-            result === 'removed' ? `Removed ${label}` : `${label} was already removed`;
-          show({ message, tone: 'muted' });
+          };
         }
+        if (immediate) return null;
+        const message = result === 'removed' ? `Removed ${label}` : `${label} was already removed`;
+        return { message, tone: 'muted' };
+      };
+      if (immediate) show({ message: `Removed ${label}`, tone: 'muted' });
+      void removal.then((result) => {
+        if (result !== 'unanswered') {
+          const action = said(result);
+          if (action) show(action);
+          return;
+        }
+        show({ message: 'Undo not saved yet', tone: 'muted', removalId: id });
+        void outcome.then((late) => {
+          const action = said(late);
+          if (!action) return;
+          // In place of 'Undo not saved yet', if the line still says it.
+          setLastAction((previous) =>
+            previous?.removalId === id ? { ...action, key: previous.key + 1 } : previous,
+          );
+        });
       });
     };
     return follow;
@@ -271,12 +287,21 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
       });
       if (!confirmed) return;
       // The log shows it's gone; the line says so once the log is closed.
-      const result = await session.undo(event).removal;
+      const { removal, outcome } = session.undo(event);
+      const result = await removal;
+      const failed = () => toast.show({ message: `Couldn't delete ${what}. Try again.` });
       if (result === 'removed') show({ message: `Deleted ${what}`, tone: 'muted' });
       // (Without its period, to fit the line whole on the smallest iPhone.)
       else if (result === 'gone') {
         show({ message: `${statLabel(event.type)} was already deleted`, tone: 'muted' });
-      } else toast.show({ message: `Couldn't delete ${what}. Try again.` });
+      } else if (result === 'failed') failed();
+      else {
+        // Still under way (it's gone from the log): if it fails in the end, it's back.
+        toast.show({ message: `Deleting ${what} isn't saved yet.` });
+        void outcome.then((late) => {
+          if (late === 'failed') failed();
+        });
+      }
     },
     [confirm, toast, show, session, periodFormat],
   );

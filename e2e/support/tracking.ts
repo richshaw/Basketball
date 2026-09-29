@@ -292,6 +292,39 @@ export async function failStatDeletes(page: Page, on: boolean) {
 }
 
 /**
+ * Holds up every write to the saved stats (and every read of them) until `release()`,
+ * as IndexedDB does while an earlier transaction on them hasn't finished: another
+ * connection keeps one going. A stat's removal meanwhile (an Undo, say) doesn't answer
+ * until then. Read nothing through the app (e.g. `exportAll`) before `release()`.
+ */
+export async function holdStatWrites(page: Page): Promise<{ release: () => Promise<void> }> {
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('hoop-stats');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('Could not open the database'));
+    });
+    const events = db.transaction('events', 'readwrite').objectStore('events');
+    let holding = true;
+    // One read after another keeps the transaction going; closing lets it finish.
+    const keepGoing = () => {
+      if (holding) events.count().onsuccess = keepGoing;
+      else db.close();
+    };
+    keepGoing();
+    (window as unknown as { releaseStatWrites?: () => void }).releaseStatWrites = () => {
+      holding = false;
+    };
+  });
+  return {
+    release: () =>
+      page.evaluate(() => {
+        (window as unknown as { releaseStatWrites?: () => void }).releaseStatWrites?.();
+      }),
+  };
+}
+
+/**
  * Makes saving the game itself fail in IndexedDB while `on` (moving to another period,
  * say), as a write can when iOS brings the app back from the background: the game's
  * `put` throws inside its transaction. (A stat's save writes the game too, so taps fail

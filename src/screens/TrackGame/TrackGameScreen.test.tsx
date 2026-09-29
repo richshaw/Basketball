@@ -606,6 +606,42 @@ describe('TrackGameScreen', () => {
     );
   });
 
+  it("says a delete from the log that takes its time isn't saved yet, and if it fails in the end", async () => {
+    const game = await newGame();
+    await recordStat(game.id, 'stl');
+    const { user } = await renderTracking(game);
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    const sheet = screen.getByRole('dialog', { name: 'Stat log' });
+    let fail: (error: Error) => void = () => {};
+    vi.spyOn(repo, 'deleteStat').mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    await user.click(within(sheet).getByRole('button', { name: /^Steal/ }));
+    const confirm = screen.getByRole('alertdialog', { name: 'Delete Steal (Q1)?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
+    // It stops counting at once. Its delete doesn't answer for a while: it's still under
+    // way (nothing failed, and there's nothing to do), which a toast says.
+    await expectStrip('Steals: 0');
+    expect(
+      await screen.findByText("Deleting Steal (Q1) isn't saved yet.", undefined, {
+        timeout: REMOVE_WAIT_MS + 2000,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't delete/)).toBeNull();
+
+    // It fails in the end: the Steal counts again, and a toast says so.
+    act(() => fail(new Error('Disk error')));
+    await expectStrip('Steals: 1');
+    expect(
+      await screen.findByText("Couldn't delete Steal (Q1). Try again.", undefined, {
+        timeout: 6000,
+      }),
+    ).toBeInTheDocument();
+  }, 20_000);
+
   it('says so when the log is empty', async () => {
     const game = await newGame();
     const { user } = await renderTracking(game);
@@ -1390,14 +1426,22 @@ describe('TrackGameScreen', () => {
         expect(screen.queryByText('Keep the app open until your taps are saved.')).toBeNull();
       });
 
-      it('keeps Reload through removing a saved stat that never answers, and frees the Undo', async () => {
+      it('keeps Reload through removing a saved stat that takes its time, frees the Undo, and says how it went', async () => {
         const game = await newGame();
         await recordStat(game.id, 'blk');
         await recordStat(game.id, 'stl');
         await renderTracking(game);
         await expectStrip('Steals: 1', 'Blocks: 1');
-        // IndexedDB stops answering deletes, and reads fail (the note shows).
-        vi.spyOn(repo, 'deleteStat').mockReturnValue(new Promise(() => {}));
+        // IndexedDB stops answering deletes (until the test lets them land), and reads
+        // fail (the note shows).
+        const realDelete = repo.deleteStat;
+        const held: (() => void)[] = [];
+        vi.spyOn(repo, 'deleteStat').mockImplementation(
+          (id) =>
+            new Promise((resolve, reject) => {
+              held.push(() => void realDelete(id).then(resolve, reject));
+            }),
+        );
         vi.spyOn(repo, 'getGameEvents').mockRejectedValue(lost());
         act(() => {
           document.dispatchEvent(new Event('visibilitychange'));
@@ -1411,20 +1455,67 @@ describe('TrackGameScreen', () => {
         expect(listPendingRemovals().map((removal) => removal.type)).toEqual(['stl']);
         expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
 
-        // It never answers: after a while the line says so, with Try again. The Steal
-        // still doesn't count (its removal is kept, and still happens), and the grid's
-        // Undo works again.
-        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't undo$/), {
+        // It doesn't answer: after a while the line says so, in a few words (nothing
+        // failed, and there's nothing to do). The Steal still doesn't count (its removal
+        // is kept, and still happens), and the grid's Undo works again.
+        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Undo not saved yet$/), {
           timeout: REMOVE_WAIT_MS + 2000,
         });
-        expect(lineButton('Try again')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
         await expectStrip('Steals: 0', 'Blocks: 1');
         expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
         await afterDoubleTapWindow();
         fireEvent.click(statButton('Undo last stat'));
         await expectStrip('Steals: 0', 'Blocks: 0');
         expect(listPendingRemovals().map((removal) => removal.type)).toEqual(['blk', 'stl']);
+
+        // The Steal's removal lands at last: the line, still saying it's under way, says
+        // it's done instead. Then the Block's.
+        act(() => held[0]?.());
+        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Removed Steal$/));
+        act(() => held[1]?.());
+        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Removed Block$/));
+        expect(listPendingRemovals()).toEqual([]);
+        expect(await db.events.count()).toBe(0);
       }, 15_000);
+
+      it('leaves the line alone once it has moved on when a removal that took its time lands, and says if it failed', async () => {
+        const game = await newGame();
+        await recordStat(game.id, 'blk');
+        await recordStat(game.id, 'stl');
+        await renderTracking(game);
+        await expectStrip('Steals: 1', 'Blocks: 1');
+        // Deletes don't answer until the test fails them.
+        const failures: ((error: Error) => void)[] = [];
+        vi.spyOn(repo, 'deleteStat').mockImplementation(
+          () =>
+            new Promise((_resolve, reject) => {
+              failures.push(reject);
+            }),
+        );
+        fireEvent.click(statButton('Undo last stat'));
+        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Undo not saved yet$/), {
+          timeout: REMOVE_WAIT_MS + 2000,
+        });
+
+        // It fails in the end: the Steal counts again, and the line says so, with Try again.
+        act(() => failures[0]?.(new Error('Disk error')));
+        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't undo$/));
+        expect(lineButton('Try again')).toBeInTheDocument();
+        await expectStrip('Steals: 1');
+
+        // Try again doesn't answer either, and the line moves on (a Deflection) before it
+        // lands: the Deflection's line stays.
+        await tapLineButton('Try again');
+        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Undo not saved yet$/), {
+          timeout: REMOVE_WAIT_MS + 2000,
+        });
+        fireEvent.click(statButton('Deflection'));
+        expect(lastAction()).toHaveTextContent('Deflection · Q1');
+        act(() => failures[1]?.(new Error('Disk error')));
+        await expectStrip('Steals: 1');
+        expect(lastAction()).toHaveTextContent('Deflection · Q1');
+      }, 20_000);
 
       it('keeps a period move that answers late on screen, and gives Reload back meanwhile', async () => {
         const game = await newGame();
