@@ -148,7 +148,7 @@ async function finishedGame(page: Page) {
   // (The device's own Shot chart setting, not the demo's.)
   await seedDemoData(page, { keepSettings: true });
   await openTracking(page, demoGameId(10));
-  await expect(page.getByText('Editing a finished game')).toBeVisible();
+  await expect(page.getByText('Finished game', { exact: true })).toBeVisible();
   await tapStat(page, 'Foul');
   await expect(stats(page).getByText('Fouls: 4 (foul trouble)')).toBeAttached();
   await expectAllSaved(page);

@@ -351,12 +351,12 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
       <main className={cx(styles.screen, withCourt && styles.withCourt)}>
         <TopBar
           title={gameTitle(game)}
+          note={isFinal ? 'Finished game' : undefined}
           periodText={periodText}
           canAdvance={period < MAX_PERIOD}
           onPickPeriod={openPeriods}
           onNextPeriod={nextPeriod}
         />
-        {isFinal ? <p className={styles.banner}>Editing a finished game</p> : null}
         <div className={styles.stripArea}>
           <StatStrip line={line} compact={withCourt} />
           {/* A tap not saved and not kept keeps its own row: it asks to keep the app open. */}

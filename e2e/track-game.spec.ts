@@ -467,7 +467,7 @@ const DEVICES = [
 // With the Shot chart setting off: no court (e2e/track-shots.spec.ts has the layout with it).
 for (const device of DEVICES) {
   for (const finished of [false, true]) {
-    const what = finished ? 'a finished game (with its banner)' : 'a live game';
+    const what = finished ? 'a finished game (with its note)' : 'a live game';
     test(`fits the ${device.name} screen for ${what}, every button big and clear`, async ({
       page,
     }) => {
@@ -481,7 +481,7 @@ for (const device of DEVICES) {
       await setShotChart(page, false);
       await page.goto(appUrl(paths.trackGame(finished ? demoGameId(10) : DEMO_LIVE_GAME_ID)));
       await expect(page.getByRole('heading', { level: 1, name: /^(vs|@) / })).toBeVisible();
-      await expect(page.getByText('Editing a finished game')).toHaveCount(finished ? 1 : 0);
+      await expect(page.getByText('Finished game', { exact: true })).toHaveCount(finished ? 1 : 0);
       await expect(shotCourt(page)).toHaveCount(0);
 
       const main = page.getByRole('main');

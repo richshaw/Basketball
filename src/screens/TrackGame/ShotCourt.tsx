@@ -10,10 +10,12 @@ import { statLabel } from './tracking';
 import styles from './ShotCourt.module.css';
 
 /**
- * How far from the baseline the court goes, in feet: 3 feet past the top of the
- * three-point arc (25 feet out), so a three from the top of the key has room too.
+ * How far from the baseline the court goes, in feet: 7 feet past the top of the
+ * three-point arc (25 feet out), so a deep three from the top of the key, 5 or 6 feet
+ * behind the arc, is marked on the court with room to spare, not tapped just below it
+ * (on a shot button, which would record another shot).
  */
-export const COURT_DEPTH = 28;
+export const COURT_DEPTH = 32;
 
 const view = courtViewBox(COURT_DEPTH);
 /** The whole drawing's proportions: the court takes them unless the buttons need the height. */

@@ -21,19 +21,6 @@
   -webkit-touch-callout: none;
 }
 
-/* Says this isn't a live game, without shouting over the stats. */
-.banner {
-  flex-shrink: 0;
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  background-color: var(--color-surface-2);
-  color: var(--color-accent-text);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-bold);
-  line-height: var(--line-height-tight);
-  text-align: center;
-}
-
 /* The stat strip, with the "not saved" row laid over it when a tap wasn't saved. */
 .stripArea {
   position: relative;

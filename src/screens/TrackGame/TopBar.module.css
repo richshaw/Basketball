@@ -30,13 +30,31 @@
   stroke-width: 2.5;
 }
 
-.title {
+/* The title, and the note under it when there's one: both within the bar's height. */
+.heading {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-width: 0;
+  text-align: center;
+}
+
+.title {
   overflow: hidden;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-bold);
-  text-align: center;
+  line-height: var(--line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Says this isn't a live game, without shouting over the stats. */
+.note {
+  overflow: hidden;
+  color: var(--color-accent-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

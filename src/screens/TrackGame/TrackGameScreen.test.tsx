@@ -723,12 +723,12 @@ describe('TrackGameScreen', () => {
     expect(router.state.location.pathname).toBe(paths.home);
   });
 
-  it('edits a finished game: a banner, Done instead of End game, and stats still record', async () => {
+  it('edits a finished game: says so under the title, Done instead of End game, and stats still record', async () => {
     const game = await newGame();
     await endGame(game.id, { teamScore: 40, opponentScore: 31 });
     const { user, router } = await renderTracking(game);
 
-    expect(screen.getByText('Editing a finished game')).toBeInTheDocument();
+    expect(screen.getByText('Finished game')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'End game' })).not.toBeInTheDocument();
 
     fireEvent.click(statButton('3PT Made'));
