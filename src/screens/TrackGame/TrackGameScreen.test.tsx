@@ -1426,30 +1426,48 @@ describe('TrackGameScreen', () => {
         expect(listPendingRemovals().map((removal) => removal.type)).toEqual(['blk', 'stl']);
       }, 15_000);
 
-      it('gives Reload back once a period move that never answers counts as not saved', async () => {
+      it('keeps a period move that answers late on screen, and gives Reload back meanwhile', async () => {
         const game = await newGame();
         await renderTracking(game);
-        vi.spyOn(repo, 'setCurrentPeriod').mockReturnValue(new Promise(() => {}));
+        // A slow write: it answers only when the test says, well after the move's wait.
+        const realMove = repo.setCurrentPeriod;
+        let land = () => {};
+        vi.spyOn(repo, 'setCurrentPeriod').mockImplementation(
+          (gameId, period) =>
+            new Promise((resolve, reject) => {
+              land = () => void realMove(gameId, period).then(resolve, reject);
+            }),
+        );
+        // Reads fail too (the note shows, with Reload once a reload would lose nothing).
         vi.spyOn(repo, 'getGame').mockRejectedValue(lost());
-        fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
-        fireEvent.click(statButton('Steal'));
+        act(() => {
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
         expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
-        // While the move is on its way, a reload would lose it: no Reload yet.
+        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
+        // While the move is on its way, a reload would lose it: no Reload.
         expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
         expect(
           screen.getByText('Keep the app open until your taps are saved.'),
         ).toBeInTheDocument();
 
-        // It never answers: after a while it counts as not saved, the saved period is back
-        // (a reload would show that too), and the line says so, with Try again.
-        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't go to Q2$/), {
-          timeout: MOVE_WAIT_MS + 2000,
-        });
-        expect(screen.getByRole('button', { name: 'Period Q1' })).toBeInTheDocument();
-        expect(lineButton('Try again')).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
-        // The Steal tapped meanwhile is saved where it was tapped.
+        // It doesn't answer for a while: it stops holding Reload back (it may never
+        // answer, and a reload would only show the saved Q1), but she's still in Q2.
+        await screen.findByRole('button', { name: 'Reload' }, { timeout: MOVE_WAIT_MS + 2000 });
+        expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
+        expect(lastAction()).toHaveTextContent(/^Now in Q2/);
+        // A Steal tapped now goes into Q2.
+        fireEvent.click(statButton('Steal'));
+        expect(lastAction()).toHaveTextContent('Steal · Q2');
         await waitFor(async () => expect(await eventPeriods(game.id)).toEqual([['stl', 2]]));
+
+        // It lands at last: there's nothing to say, and she's still in Q2.
+        act(() => land());
+        await waitFor(async () => expect((await db.games.get(game.id))?.currentPeriod).toBe(2));
+        expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
+        expect(lastAction()).toHaveTextContent('Steal · Q2');
       }, 15_000);
     });
 

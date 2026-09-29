@@ -28,9 +28,11 @@
  *   too until it's gone, and forgotten if it stays. A saved stat's removal is waited for
  *   no longer than REMOVE_WAIT_MS: one that doesn't answer stays kept, and still happens.
  *   A new session starts with its game's kept removals, not counting their stats.
- * - The period moves on screen at once and is then saved; the saved period takes
- *   over again once no move is being saved (or a move couldn't be saved, or didn't
- *   answer within MOVE_WAIT_MS).
+ * - The period moves on screen at once and is then saved; it stays on screen until
+ *   the move is saved, however long that takes, or fails (the saved period comes back
+ *   once no other move is on its way). A move holds Reload back for MOVE_WAIT_MS at
+ *   most: it isn't journaled, so a reload shows the saved period (the taps keep the
+ *   period they were tapped in).
  * - A 2PT/3PT tap can get its spot from a tap on the court (markSpot) for
  *   SPOT_WINDOW_MS, until the next stat, Undo or period change. The spot goes where
  *   the tap is: into its pending-stats entry while it isn't saved (its save takes the
@@ -72,9 +74,9 @@ export const AUTO_RETRY_MS = 1000;
 export const SAVE_ALL_WAIT_MS = 3000;
 
 /**
- * How long a period move may go unanswered before it counts as not saved (the saved
- * period is shown again): a write that never answers must not leave it on its way for
- * good.
+ * How long a period move on its way holds Reload back (a reload would show the saved
+ * period): a write that may never answer must not take Reload away for good. The move
+ * stays on screen, answered or not, until it's saved or fails.
  */
 export const MOVE_WAIT_MS = 5000;
 
@@ -354,7 +356,10 @@ export class TrackingSession implements UnsavedTapHolder {
   private readonly listeners = new Set<() => void>();
   private period: number;
   private savedPeriod: number;
-  private movesInFlight = 0;
+  /** Period moves that haven't answered yet: the saved period doesn't take over meanwhile. */
+  private movesPending = 0;
+  /** Those on their way for less than MOVE_WAIT_MS: a reload would lose them. */
+  private movesHoldingReload = 0;
   private undoInFlight = false;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private spotShot: SpotShot | null = null;
@@ -698,8 +703,9 @@ export class TrackingSession implements UnsavedTapHolder {
    * taken back, and every saved stat being removed (it has stopped counting), has its
    * removal kept in the removals journal, from the Undo (or the log's delete) on: after
    * a reload, that still removes the stat, even one whose tap's save landed after all;
-   * and no period move is still being saved (the next taps would land in the old
-   * period), which a move that doesn't answer stops being after MOVE_WAIT_MS.
+   * and no period move has been on its way for less than MOVE_WAIT_MS (a reload shows
+   * the saved period; after that, a move that hasn't answered may never answer, and
+   * mustn't take Reload away for good).
    */
   reloadSafe(): boolean {
     const keptRemovals = new Set([
@@ -710,7 +716,7 @@ export class TrackingSession implements UnsavedTapHolder {
     ]);
     return (
       [...this.removals.keys()].every((id) => keptRemovals.has(id)) &&
-      this.movesInFlight === 0 &&
+      this.movesHoldingReload === 0 &&
       this.taps.every((record) =>
         record.undone
           ? record.removalKept
@@ -1256,40 +1262,54 @@ export class TrackingSession implements UnsavedTapHolder {
   }
 
   /**
-   * Moves to another period: on screen at once, then saved. Resolves to false if it
-   * couldn't be saved, or didn't answer within `waitMs` (the saved period is shown
-   * again, unless another move is on its way). A move that answers after that changes
-   * nothing here: the saved period on screen follows the game as read (syncSavedPeriod).
+   * Moves to another period: on screen at once (the taps tapped next land there), then
+   * saved. Resolves to true once it's saved, or to false if it couldn't be (the saved
+   * period is shown again, unless another move is on its way), whenever that is: one
+   * that doesn't answer stays on screen meanwhile, as a tap does before it's saved. It
+   * holds Reload back (reloadSafe) for `waitMs` at most, since it may never answer: a
+   * reload after that would show the saved period.
    */
   movePeriod(to: number, waitMs = MOVE_WAIT_MS): Promise<boolean> {
     this.period = to;
-    this.movesInFlight += 1;
+    this.movesPending += 1;
+    this.movesHoldingReload += 1;
     this.setSpotShot(null);
     this.emit();
-    return new Promise<boolean>((resolve) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const done = (moved: boolean) => {
-        if (timer === undefined) return;
+    let holding = true;
+    const stopHolding = () => {
+      if (!holding) return;
+      holding = false;
+      this.movesHoldingReload -= 1;
+    };
+    const timer = setTimeout(() => {
+      stopHolding();
+      this.emit();
+    }, waitMs);
+    return attempt(() => this.deps.setCurrentPeriod(this.gameId, to)).then(
+      () => {
         clearTimeout(timer);
-        timer = undefined;
-        this.movesInFlight -= 1;
-        if (moved) this.savedPeriod = to;
-        else if (this.movesInFlight === 0) this.period = this.savedPeriod;
+        stopHolding();
+        this.movesPending -= 1;
+        this.savedPeriod = to;
         this.emit();
-        resolve(moved);
-      };
-      timer = setTimeout(() => done(false), waitMs);
-      attempt(() => this.deps.setCurrentPeriod(this.gameId, to)).then(
-        () => done(true),
-        () => done(false),
-      );
-    });
+        return true;
+      },
+      () => {
+        clearTimeout(timer);
+        stopHolding();
+        this.movesPending -= 1;
+        if (this.movesPending === 0) this.period = this.savedPeriod;
+        this.emit();
+        return false;
+      },
+    );
   }
 
   /** The game's period as saved (it changes when a move lands, or elsewhere). */
   syncSavedPeriod(period: number): void {
     this.savedPeriod = period;
-    if (this.movesInFlight === 0) {
+    // Not over a move still on its way (answered or not): she moved there.
+    if (this.movesPending === 0) {
       this.period = period;
       this.emit();
     }

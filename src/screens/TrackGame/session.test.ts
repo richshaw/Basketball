@@ -57,6 +57,9 @@ function deferred<T>(): Deferred<T> {
 /** Lets pending promise callbacks run. */
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+/** Waits `ms` milliseconds (real time). */
+const waitMs = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 /** The ids of the taps kept in the pending-stats journal. */
 const keptIds = () => listPendingStats().map((stat) => stat.id);
 
@@ -1079,7 +1082,7 @@ describe('TrackingSession', () => {
       expect(keptRemovalIds()).toEqual([]);
     });
 
-    it("doesn't hold while a period move is being saved, until it counts as not saved", async () => {
+    it("doesn't hold while a period move is being saved, for its wait at most", async () => {
       const { session, moves } = setUp();
       const reloadSafe = () => session.getSnapshot().reloadSafe;
       const moved = session.movePeriod(2);
@@ -1088,17 +1091,17 @@ describe('TrackingSession', () => {
       expect(await moved).toBe(true);
       expect(reloadSafe()).toBe(true);
 
-      // A move that never answers counts as not saved after its wait: the saved period
-      // is back on screen, and a reload would lose nothing.
-      const hung = session.movePeriod(3, 50);
+      // A move that doesn't answer holds Reload back for its wait only: it may never
+      // answer. It stays on screen meanwhile (a reload would show the saved period).
+      const late = session.movePeriod(3, 50);
       expect(reloadSafe()).toBe(false);
-      expect(await hung).toBe(false);
-      expect(session.getSnapshot().period).toBe(2);
+      await waitMs(100);
       expect(reloadSafe()).toBe(true);
-      // Its answer, if it ever comes, changes nothing here (the game as read does).
+      expect(session.getSnapshot().period).toBe(3);
+      // Its answer, whenever it comes, still counts.
       moves[1]?.answer.resolve(undefined);
-      await flush();
-      expect(session.getSnapshot().period).toBe(2);
+      expect(await late).toBe(true);
+      expect(session.getSnapshot().period).toBe(3);
       expect(reloadSafe()).toBe(true);
     });
   });
@@ -1448,6 +1451,30 @@ describe('TrackingSession', () => {
     it('goes back to the saved period if a move could not be saved', async () => {
       const { session, moves } = setUp(3);
       const moved = session.movePeriod(4);
+      moves[0]?.answer.reject(new Error('Disk error'));
+      expect(await moved).toBe(false);
+      expect(session.getSnapshot().period).toBe(3);
+    });
+
+    it('keeps a move that answers after its wait on screen, with the taps tapped meanwhile', async () => {
+      const { session, moves, saves } = setUp(1);
+      const moved = session.movePeriod(2, 50);
+      await waitMs(100);
+      // Still on its way: she's in Q2 (the saved game still says Q1), and taps go there.
+      session.syncSavedPeriod(1);
+      expect(session.getSnapshot().period).toBe(2);
+      session.record('stl');
+      expect(saves.map((call) => call.stat.period)).toEqual([2]);
+      moves[0]?.answer.resolve(undefined);
+      expect(await moved).toBe(true);
+      expect(session.getSnapshot().period).toBe(2);
+    });
+
+    it('goes back to the saved period if a move fails after its wait', async () => {
+      const { session, moves } = setUp(3);
+      const moved = session.movePeriod(4, 50);
+      await waitMs(100);
+      expect(session.getSnapshot().period).toBe(4);
       moves[0]?.answer.reject(new Error('Disk error'));
       expect(await moved).toBe(false);
       expect(session.getSnapshot().period).toBe(3);
