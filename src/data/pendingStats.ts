@@ -14,14 +14,22 @@
  * may be missing, full or blocked: every access is guarded, nothing here throws, and
  * without it taps are still saved, just not kept across a reload.
  *
- * This module never touches the database (pendingSaves.ts saves the kept taps), so the
- * repository can use it too.
+ * Only taps live here: an entry is a stat to save, and saving it again after its stat
+ * was deleted would bring the stat back. A shot's spot (the shot chart) is kept with its
+ * tap while the tap isn't saved; a spot for a stat that's saved already is kept in the
+ * pending-spots journal (pendingSpots.ts), which never adds a stat. What's pending, and
+ * what's forgotten when data is deleted or replaced, covers both journals.
+ *
+ * This module never touches the database (pendingSaves.ts saves the kept taps and
+ * spots), so the repository can use it too.
  */
 import { isRealPoint } from '@/lib/court';
 import { compareIds, newId } from '@/lib/id';
 import { nextTimestamp } from './db';
+import { removeJournalEntries } from './journal';
+import { forgetPendingSpots, listPendingSpots } from './pendingSpots';
 import { isFieldGoalType } from './stats';
-import type { CourtPoint, StatType } from './types';
+import type { CourtPoint, StatEvent, StatType } from './types';
 import { statEventSchema } from './validation';
 
 /** A stat tap that isn't confirmed saved yet: everything needed to save it. */
@@ -146,17 +154,21 @@ export function listPendingStats(gameId?: string): PendingStat[] {
 
 /**
  * Taps held in memory that aren't saved yet: a tracking session's (see
- * src/screens/TrackGame/session.ts), including any it couldn't keep in the journal.
+ * src/screens/TrackGame/session.ts), including any it couldn't keep in the journal, and
+ * the spots it's still putting on saved stats (the shot chart).
  */
 export interface UnsavedTapHolder {
   /** The game whose taps it holds. */
   readonly gameId: string;
-  /** Whether it holds a tap that isn't saved yet (or a taken-back one to remove again). */
+  /**
+   * Whether it holds a tap or a spot that isn't saved yet (or a taken-back tap to remove
+   * again).
+   */
   hasUnsaved(): boolean;
   /**
-   * Whether reloading the page now would lose nothing it holds: each of its taps that
-   * isn't saved yet is kept in the journal, and nothing is still being taken back (a
-   * reload would forget to remove its stat) or moved to another period.
+   * Whether reloading the page now would lose nothing it holds: each of its taps and
+   * spots that isn't saved yet is kept in a journal, and nothing is still being taken
+   * back (a reload would forget to remove its stat) or moved to another period.
    */
   reloadSafe(): boolean;
   /**
@@ -165,10 +177,11 @@ export interface UnsavedTapHolder {
    */
   retryQuietly(): Promise<void>;
   /**
-   * One of its taps was saved from the journal (by the app-wide retry): it's saved, and
-   * must still count until the saved stats on screen show it.
+   * One of its taps was saved from the journal (by the app-wide retry), as `event`: it's
+   * saved, and must still count until the saved stats on screen show it (and get the spot
+   * marked for it meanwhile, if `event` lacks it).
    */
-  saved(id: string): void;
+  saved(id: string, event: StatEvent): void;
   /**
    * Its game's data is being deleted or replaced (no id), or one stat is (its id):
    * forgets those taps, never saving them. Returns a function that holds them again,
@@ -191,13 +204,13 @@ export function holdUnsavedTaps(holder: UnsavedTapHolder): () => void {
 }
 
 /**
- * A kept tap was saved from the journal (replayPendingStats): forgets it, and tells the
- * sessions holding it that it's saved, so they keep counting it until the saved stats
- * on screen show it, rather than taking its missing entry to mean it's gone.
+ * A kept tap was saved from the journal (replayPendingStats), as `event`: forgets it,
+ * and tells the sessions holding it that it's saved, so they keep counting it until the
+ * saved stats on screen show it, rather than taking its missing entry to mean it's gone.
  */
-export function pendingStatSaved(id: string): void {
+export function pendingStatSaved(id: string, event: StatEvent): void {
   removePendingStat(id);
-  for (const holder of [...holders]) holder.saved(id);
+  for (const holder of [...holders]) holder.saved(id, event);
 }
 
 /** Tries again to save the taps held in memory (quietly). Never rejects. */
@@ -215,18 +228,22 @@ export async function retryHeldTaps(): Promise<void> {
 
 /**
  * Whether reloading the page now would lose nothing held in memory, for any game (see
- * UnsavedTapHolder.reloadSafe): what the journal keeps outlives the page anyway.
+ * UnsavedTapHolder.reloadSafe): what the journals keep outlives the page anyway.
  */
 export function isReloadSafe(): boolean {
   return [...holders].every((holder) => holder.reloadSafe());
 }
 
 /**
- * Whether any tap isn't saved yet: kept in the journal (by this page or an earlier
- * one), or held in memory.
+ * Whether any tap (or spot) isn't saved yet: kept in a journal (by this page or an
+ * earlier one), or held in memory.
  */
 export function hasPendingStats(): boolean {
-  return listPendingStats().length > 0 || [...holders].some((holder) => holder.hasUnsaved());
+  return (
+    listPendingStats().length > 0 ||
+    listPendingSpots().length > 0 ||
+    [...holders].some((holder) => holder.hasUnsaved())
+  );
 }
 
 const listeners = new Set<() => void>();
@@ -247,56 +264,29 @@ export function notifyPendingStats(): void {
 // ---------------------------------------------------------------------------
 // Forgetting taps whose data is deleted or replaced
 
-/** The game id in an entry, read loosely: an entry this version can't save has one too. */
-function entryGameId(text: string): unknown {
-  try {
-    const value = JSON.parse(text) as unknown;
-    return typeof value === 'object' && value !== null
-      ? (value as Record<string, unknown>).gameId
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Forgets the kept taps of one game, or of every game (then every entry, even one this
- * version can't read, so no game id or stat type is left behind), and has the sessions
- * holding such taps in memory forget theirs. For writes that delete or replace a game's
- * data: no retry may save one of its taps into it afterwards (say, into a game restored
- * or made again under the same id). Call it just before that write, so a save asked for
- * earlier lands first and goes with it. Returns a function that keeps the forgotten
- * entries again and has the sessions hold their taps again, for when the write fails.
+ * version can't read, so no game id or stat type is left behind), the spots kept for
+ * their stats (pendingSpots.ts) too, and has the sessions holding such taps and spots in
+ * memory forget theirs. For writes that delete or replace a game's data: no retry may
+ * save one of its taps into it afterwards, or put one of its spots on a stat, say in a
+ * game restored or made again under the same id. Call it just before that write, so a
+ * save asked for earlier lands first and goes with it. Returns a function that keeps the
+ * forgotten entries again and has the sessions hold theirs again, for when the write
+ * fails.
  */
 export function forgetPendingStats(gameId?: string): () => void {
-  const forgotten: [key: string, text: string][] = [];
-  try {
-    const keys: string[] = [];
-    for (let index = 0; index < localStorage.length; index++) {
-      const key = localStorage.key(index);
-      if (key?.startsWith(KEY_PREFIX)) keys.push(key);
-    }
-    for (const key of keys) {
-      const text = localStorage.getItem(key);
-      if (text === null || (gameId !== undefined && entryGameId(text) !== gameId)) continue;
-      localStorage.removeItem(key);
-      forgotten.push([key, text]);
-    }
-  } catch {
-    // Blocked storage: nothing could have been kept there.
-  }
+  const taps = removeJournalEntries(KEY_PREFIX, gameId);
+  const spots = forgetPendingSpots(gameId);
   const holdAgain: (() => void)[] = [];
   for (const holder of [...holders]) {
     if (gameId === undefined || holder.gameId === gameId) holdAgain.push(holder.forget());
   }
   return () => {
-    if (forgotten.length === 0 && holdAgain.length === 0) return;
-    try {
-      for (const [key, text] of forgotten) localStorage.setItem(key, text);
-    } catch {
-      // Full or blocked since: those taps can't be kept any more.
-    }
-    // After the entries: a session's kept taps are back in the journal by then.
+    if (taps.count + spots.count === 0 && holdAgain.length === 0) return;
+    taps.putBack();
+    spots.putBack();
+    // After the entries: a session's kept taps and spots are back in the journals by then.
     for (const again of holdAgain) again();
     // The app-wide retry wakes up for them.
     notifyPendingStats();
@@ -306,7 +296,9 @@ export function forgetPendingStats(gameId?: string): () => void {
 /**
  * Forgets one tap by its stat's id, kept or held in memory, just before that stat is
  * deleted: no retry may save it again afterwards. Nothing needs to come back if that
- * delete fails: the stat is saved (that's how it can be deleted), and it stays.
+ * delete fails: the stat is saved (that's how it can be deleted), and it stays. (A spot
+ * kept for the stat is forgotten only once the delete has worked, by deleteStat: a spot
+ * never brings back its stat, so it can wait, and it's still saved if the stat stays.)
  */
 export function forgetPendingStat(id: string): void {
   removePendingStat(id);

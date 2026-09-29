@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   countShots,
   hasLocation,
+  sameSpot,
   SHOT_ZONES,
   shotChartSection,
   shotsByZone,
@@ -72,6 +73,19 @@ describe('hasLocation', () => {
     const [located, unlocated] = shotsFromEvents([event('fg2_made', layup), event('fg2_made')]);
     expect(located && hasLocation(located)).toBe(true);
     expect(unlocated && hasLocation(unlocated)).toBe(false);
+  });
+});
+
+describe('sameSpot', () => {
+  it('compares spots as they are stored, and missing ones too', () => {
+    expect(sameSpot(elbow, { x: -8, y: 12 })).toBe(true);
+    expect(sameSpot(elbow, corner)).toBe(false);
+    expect(sameSpot(elbow, { x: -8, y: 12.01 })).toBe(false);
+    // A spot past the sideline is stored on it.
+    expect(sameSpot({ x: 25, y: 10 }, { x: 26.5, y: 10 })).toBe(true);
+    expect(sameSpot(undefined, undefined)).toBe(true);
+    expect(sameSpot(undefined, elbow)).toBe(false);
+    expect(sameSpot(elbow, undefined)).toBe(false);
   });
 });
 

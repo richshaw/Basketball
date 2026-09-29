@@ -6,6 +6,7 @@ import {
   savePendingStatsBeforeExport,
   startPendingStatsRetry,
 } from './pendingSaves';
+import { addPendingSpot, listPendingSpots } from './pendingSpots';
 import {
   addPendingStat,
   holdUnsavedTaps,
@@ -15,8 +16,16 @@ import {
   type UnsavedTapHolder,
 } from './pendingStats';
 import * as repo from './repo';
-import { createGame, deleteGame, endGame, getAllEvents, getGameEvents, type NewGame } from './repo';
-import type { Game } from './types';
+import {
+  createGame,
+  deleteGame,
+  endGame,
+  getAllEvents,
+  getGameEvents,
+  recordStat,
+  type NewGame,
+} from './repo';
+import type { Game, StatEvent } from './types';
 
 const T0 = new Date(2026, 8, 27, 18, 0).getTime();
 const KEY_PREFIX = 'hoop-stats.pendingStat.';
@@ -110,18 +119,20 @@ describe('replayPendingStats', () => {
     expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
   });
 
-  it('tells the sessions holding a tap that it saved it, once its entry is gone', async () => {
+  it('tells the sessions holding a tap that it saved it, and as what, once its entry is gone', async () => {
     const game = await newGame();
     addPendingStat(stat({ id: 'a', gameId: game.id }));
-    const told: [string, string[]][] = [];
+    const told: [string, string[], StatEvent][] = [];
     holdTaps({
       gameId: game.id,
       hasUnsaved: () => true,
       retryQuietly: () => Promise.resolve(),
-      saved: (id) => told.push([id, journalKeys()]),
+      saved: (id, event) => told.push([id, journalKeys(), event]),
     });
     expect(await replayPendingStats()).toMatchObject({ saved: 1 });
-    expect(told).toEqual([['a', []]]);
+    expect(told).toEqual([
+      ['a', [], { id: 'a', gameId: game.id, type: 'stl', period: 2, createdAt: T0 }],
+    ]);
   });
 
   it('saves a tap whose write landed after all only once', async () => {
@@ -134,6 +145,28 @@ describe('replayPendingStats', () => {
     expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
     expect((await getGameEvents(game.id)).map((event) => event.id)).toEqual([steal.id]);
     expect(journalKeys()).toEqual([]);
+  });
+
+  it('gives a tap saved before its spot was marked that spot, once', async () => {
+    const game = await newGame();
+    const shot = stat({ gameId: game.id, type: 'fg2_made' });
+    // Its write landed without a spot (the page heard it failed); the spot was marked
+    // next, and kept with the tap.
+    await savePendingStat(shot);
+    const elbow = { x: -6, y: 13.75 };
+    addPendingStat({ ...shot, location: elbow });
+
+    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
+    expect(await getGameEvents(game.id)).toEqual([
+      { id: shot.id, gameId: game.id, type: 'fg2_made', period: 2, createdAt: T0, location: elbow },
+    ]);
+    expect(journalKeys()).toEqual([]);
+
+    // A spot moved since wins; a tap without one never clears it.
+    const layup = { x: 1, y: 2 };
+    expect((await savePendingStat({ ...shot, location: layup })).location).toEqual(layup);
+    expect((await savePendingStat(shot)).location).toEqual(layup);
+    expect(await getGameEvents(game.id)).toHaveLength(1);
   });
 
   it('saves taps on a finished game too', async () => {
@@ -312,6 +345,23 @@ describe('startPendingStatsRetry (the app-wide retry)', () => {
     await sleep(300);
     expect(saves).not.toHaveBeenCalled();
     expect(journalKeys()).toEqual([]);
+  });
+
+  it('puts a kept spot on its stat too, with no live game screen open', async () => {
+    const game = await newGame();
+    const shot = await recordStat(game.id, 'fg3_made');
+    const corner = { x: 23, y: -3 };
+    // Kept by a page that couldn't put it on its stat before it closed.
+    addPendingSpot({ id: shot.id, gameId: game.id, location: corner });
+    vi.spyOn(repo, 'setStatLocation').mockRejectedValueOnce(
+      new DOMException('Connection to Indexed Database server lost.', 'UnknownError'),
+    );
+    // The try at start fails; the next one, on the timer, puts it on.
+    startRetry([40]);
+    await vi.waitFor(async () =>
+      expect((await getGameEvents(game.id)).map((event) => event.location)).toEqual([corner]),
+    );
+    expect(listPendingSpots()).toEqual([]);
   });
 
   it('tries again when the app is shown again, and when the connection comes back', async () => {

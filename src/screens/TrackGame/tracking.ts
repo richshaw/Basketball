@@ -2,7 +2,15 @@
  * Pure helpers for the live game screen: no React, no DOM, no database.
  */
 import { regulationPeriods, statDefOf, type StatDef } from '@/data/stats';
-import { MAX_PERIOD, MAX_SCORE, STAT_TYPES, type PeriodFormat, type StatType } from '@/data/types';
+import {
+  MAX_PERIOD,
+  MAX_SCORE,
+  STAT_TYPES,
+  type CourtPoint,
+  type PeriodFormat,
+  type StatType,
+} from '@/data/types';
+import { isThreePoint } from '@/lib/court';
 import { pad2 } from '@/lib/format';
 
 export type StatCounts = Record<StatType, number>;
@@ -31,6 +39,8 @@ export function statKind(type: StatType): StatDef['kind'] {
 export interface Counted {
   readonly id: string;
   readonly type: StatType;
+  /** Where a 2PT/3PT shot was taken, when its spot was marked. */
+  readonly location?: CourtPoint;
 }
 
 /**
@@ -49,6 +59,23 @@ export function withTaps(
   const savedIds = new Set(saved.map((stat) => stat.id));
   const notSaved = taps.filter((tap) => !savedIds.has(tap.id) && !gone.has(tap.id));
   return notSaved.length === 0 ? counted : [...counted, ...notSaved];
+}
+
+/**
+ * The last-action line's note on a shot's spot, with the shot chart on: how to mark it
+ * while the court takes it (`open`), then that it's marked. A spot on the other side
+ * of the 3-point line from the button tapped says so (the button still counts).
+ * Undefined when there's nothing to say.
+ */
+export function spotNote(
+  type: StatType,
+  spot: CourtPoint | undefined,
+  open: boolean,
+): string | undefined {
+  if (!spot) return open ? 'Tap the court to mark the spot' : undefined;
+  const three = statDefOf(type)?.shot === 'fg3';
+  if (isThreePoint(spot) === three) return 'Spot marked';
+  return three ? 'Spot marked · inside the arc' : 'Spot marked · beyond the arc';
 }
 
 /**

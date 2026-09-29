@@ -1,11 +1,12 @@
 /**
- * Saving the taps that aren't saved yet into the database: one kept tap
- * (savePendingStat), every kept tap (replayPendingStats), and the app-wide retry
- * (startPendingStatsRetry), which keeps trying while any tap isn't saved, whether or
- * not the live game screen is open. Saving is idempotent (recordStat with the tap's
- * id), so a tap saved twice is still one stat.
+ * Saving the taps (and shot spots) that aren't saved yet into the database: one kept
+ * tap (savePendingStat), everything kept in the journals (replayPendingStats), and the
+ * app-wide retry (startPendingStatsRetry), which keeps trying while anything isn't
+ * saved, whether or not the live game screen is open. Saving is idempotent (recordStat
+ * with the tap's id, setStatLocation for a spot), so a tap saved twice is still one stat.
  */
 import { waitAtMost } from '@/lib/wait';
+import { getPendingSpot, listPendingSpots, removePendingSpot } from './pendingSpots';
 import {
   hasPendingStats,
   isPendingStat,
@@ -16,22 +17,29 @@ import {
   watchPendingStats,
   type PendingStat,
 } from './pendingStats';
-import { getGame, recordStat } from './repo';
+import { getGame, recordStat, setStatLocation } from './repo';
+import { sameSpot } from './shots';
 import type { StatEvent } from './types';
 
-/** Saves a tap as its stat. Idempotent: a tap saved already resolves to its stat. */
-export function savePendingStat(stat: PendingStat): Promise<StatEvent> {
-  return recordStat(stat.gameId, stat.type, stat.location, {
+/**
+ * Saves a tap as its stat, with its spot. Idempotent: a tap saved already resolves to
+ * its stat, which gets the tap's spot if it doesn't have it (a spot marked after a
+ * save that seemed to fail had landed).
+ */
+export async function savePendingStat(stat: PendingStat): Promise<StatEvent> {
+  const event = await recordStat(stat.gameId, stat.type, stat.location, {
     id: stat.id,
     at: stat.at,
     period: stat.period,
   });
+  if (!stat.location || sameSpot(event.location, stat.location)) return event;
+  return (await setStatLocation(event.id, stat.location)) ?? event;
 }
 
 export interface ReplayResult {
-  /** Saved (or found saved already) and forgotten. */
+  /** Saved (or found saved already) and forgotten: taps, and spots put on their stats. */
   saved: number;
-  /** Their game no longer exists: forgotten without saving. */
+  /** Their game (or, for a spot, its stat) no longer exists: forgotten without saving. */
   dropped: number;
   /** Couldn't be saved: still kept, for next time. */
   failed: number;
@@ -39,11 +47,13 @@ export interface ReplayResult {
 
 /**
  * Saves the kept taps: those of a page that closed (or couldn't reach the database)
- * before they were saved, and those this page couldn't save yet. The app-wide retry
- * calls it, at app start and again while any tap isn't saved, in the background. Each
- * is saved at most once and then forgotten; one that can't be saved stays kept for next
- * time, and one whose game no longer exists is dropped. Stats can be added to finished
- * games, so their taps are saved too. Never rejects.
+ * before they were saved, and those this page couldn't save yet; then the spots kept
+ * for saved stats (pendingSpots.ts). The app-wide retry calls it, at app start and again
+ * while anything isn't saved, in the background. Each is saved at most once and then
+ * forgotten; one that can't be saved stays kept for next time. A tap whose game no
+ * longer exists is dropped, and so is a spot whose stat doesn't (a spot never brings
+ * back a deleted stat). Stats can be added to finished games, so their taps are saved
+ * too. Never rejects.
  */
 export async function replayPendingStats(): Promise<ReplayResult> {
   const result: ReplayResult = { saved: 0, dropped: 0, failed: 0 };
@@ -64,21 +74,46 @@ export async function replayPendingStats(): Promise<ReplayResult> {
       // be read right now: leave it be (still kept, it's tried next time). The save
       // starts right after this check, so an Undo can't slip in between.
       if (isPendingStat(stat.id) !== true) continue;
-      await savePendingStat(stat);
+      const event = await savePendingStat(stat);
       // Forgotten, and the live game screen keeps counting it until it reads it back.
-      pendingStatSaved(stat.id);
+      pendingStatSaved(stat.id, event);
       result.saved += 1;
     } catch {
       result.failed += 1;
     }
   }
+  await replayPendingSpots(result);
   return result;
 }
 
+/** The replay's second half: puts each kept spot on its stat, or drops it if it's gone. */
+async function replayPendingSpots(result: ReplayResult): Promise<void> {
+  for (const { id } of listPendingSpots()) {
+    // As kept right now: it may have been saved, or moved, on the live game screen.
+    const spot = getPendingSpot(id);
+    if (!spot) continue;
+    try {
+      const saved = await setStatLocation(id, spot.location);
+      // (Moved again meanwhile: that one is the game screen's to save.)
+      if (sameSpot(getPendingSpot(id)?.location, spot.location)) removePendingSpot(id);
+      if (saved) result.saved += 1;
+      else result.dropped += 1;
+    } catch (error) {
+      // A spot its stat can never take (it isn't a shot): nothing to keep it for.
+      if (error instanceof TypeError) {
+        removePendingSpot(id);
+        result.dropped += 1;
+      } else {
+        result.failed += 1;
+      }
+    }
+  }
+}
+
 /**
- * Tries once to save every tap that isn't saved yet: the kept ones (replayPendingStats),
- * then the ones the tracking sessions hold, kept or not, quietly. Two at once are
- * harmless (saving is idempotent). Never rejects.
+ * Tries once to save every tap (and spot) that isn't saved yet: the kept ones
+ * (replayPendingStats), then the ones the tracking sessions hold, kept or not, quietly.
+ * Two at once are harmless (saving is idempotent). Never rejects.
  */
 export async function retryPendingStats(): Promise<void> {
   // Kept taps first: a session is then told which of its taps they saved
@@ -120,13 +155,13 @@ export interface PendingStatsRetryOptions {
 }
 
 /**
- * Starts the app-wide retry of taps that aren't saved yet (main.tsx starts it once,
- * after the first render). It tries at once (taps an earlier page kept), then, while
- * any tap isn't saved (kept in the journal, or held by a tracking session even if it
- * couldn't be kept), again when the app is shown again, when the connection comes back
- * and on a timer that backs off. It stops as soon as nothing is pending, runs whether
- * or not the live game screen is open, and never shows anything: saved stats simply
- * appear. Returns a function that stops it.
+ * Starts the app-wide retry of taps (and spots) that aren't saved yet (main.tsx starts
+ * it once, after the first render). It tries at once (what an earlier page kept), then,
+ * while anything isn't saved (kept in a journal, or held by a tracking session even if
+ * it couldn't be kept), again when the app is shown again, when the connection comes
+ * back and on a timer that backs off. It stops as soon as nothing is pending, runs
+ * whether or not the live game screen is open, and never shows anything: saved stats
+ * simply appear. Returns a function that stops it.
  */
 export function startPendingStatsRetry({
   delaysMs = PENDING_RETRY_DELAYS_MS,

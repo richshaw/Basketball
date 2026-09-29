@@ -2,9 +2,9 @@ import styles from './ReadFailedNote.module.css';
 
 export interface ReadFailedNoteProps {
   /**
-   * A reload would lose nothing (every tap not saved yet, of any game, is kept on this
-   * phone, and no Undo or period move is still being saved): it says the taps are kept,
-   * and offers Reload. Otherwise it asks to keep the app open instead.
+   * A reload would lose nothing (every tap and spot not saved yet, of any game, is kept
+   * on this phone, and no Undo or period move is still being saved): it says the taps are
+   * kept, and offers Reload. Otherwise it asks to keep the app open instead.
    */
   canReload: boolean;
 }
@@ -14,7 +14,7 @@ export interface ReadFailedNoteProps {
  * can't be read (e.g. WebKit lost its IndexedDB connection in the background). The
  * screen stays up with the stats it read last, and taps still count and are kept; the
  * reads are tried again on their own. Calm, since nothing is lost: a polite status, not
- * an alert. Reload (which the journal makes safe) only ever happens on the parent's tap.
+ * an alert. Reload (which the journals make safe) only ever happens on the parent's tap.
  */
 export function ReadFailedNote({ canReload }: ReadFailedNoteProps) {
   return (

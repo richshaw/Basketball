@@ -1,11 +1,15 @@
-/* Fills the height its parent leaves for it: four equal rows of four equal buttons. */
+/*
+ * Fills the height its parent leaves for it: four equal rows of four equal buttons.
+ * The parent can hold it to a minimum height and set its gap (the screen does, when
+ * the shot chart's court shares the height).
+ */
 .grid {
   display: grid;
   flex: 1 1 0;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-rows: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2);
-  min-height: 0;
+  gap: var(--stat-grid-gap, var(--space-2));
+  min-height: var(--stat-grid-min-height, 0);
 }
 
 .button {
@@ -66,11 +70,26 @@
  * As big as the buttons allow, and the same on every button: at most the xl size, and
  * small enough that the widest word on the grid (its width in em is --label-em, set
  * on the grid by StatGrid.tsx) fits the width. On a 390pt iPhone that's the xl size.
+ * The parent can let labels take more of a shorter button's height (--stat-label-max,
+ * in cqb: 22% of the height otherwise).
  */
 .label {
   max-width: 100%;
-  font-size: min(var(--font-size-xl), 22cqb, calc(98cqi / var(--label-em, 5)));
+  font-size: min(
+    var(--font-size-xl),
+    var(--stat-label-max, 22cqb),
+    calc(98cqi / var(--label-em, 5))
+  );
   line-height: var(--line-height-tight);
+}
+
+/*
+ * A label on two lines. The parent can move it down, clear of the count in the top
+ * corner (--stat-two-line-shift: a top margin, so the centered label moves down by
+ * half of it).
+ */
+.twoLines {
+  margin-top: var(--stat-two-line-shift, 0);
 }
 
 .word {
@@ -79,10 +98,11 @@
 
 /*
  * This game's count, tucked into the top corner (clear of a centered label even on
- * the smallest iPhone): the button's fill color on its text color.
+ * the smallest iPhone): the button's fill color on its text color. The parent can set
+ * its size for shorter buttons (--stat-count-size, --stat-count-font-size).
  */
 .count {
-  --count-size: calc(var(--space-5) + var(--space-1) / 2);
+  --count-size: var(--stat-count-size, calc(var(--space-5) + var(--space-1) / 2));
 
   position: absolute;
   top: calc(var(--space-1) / 2);
@@ -93,7 +113,7 @@
   height: var(--count-size);
   padding-inline: var(--space-1);
   border-radius: var(--radius-full);
-  font-size: var(--font-size-sm);
+  font-size: var(--stat-count-font-size, var(--font-size-sm));
   font-weight: var(--font-weight-heavy);
   line-height: 1;
 }

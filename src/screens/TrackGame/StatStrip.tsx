@@ -49,18 +49,33 @@ function Item({ value, label, spoken, className }: ItemProps) {
   );
 }
 
+export interface StatStripProps {
+  line: StatLine;
+  /**
+   * One row of the numbers that matter mid-game (points, fouls and shooting), for when
+   * the shot chart's court needs the height. The other counts are on their buttons.
+   */
+  compact?: boolean;
+}
+
 /**
  * The player's totals for this game, readable at arm's length: points big, then the
  * counting stats and shooting. Fouls turn orange at 4 and red at 5 (fouled out).
  */
-export const StatStrip = memo(function StatStrip({ line }: { line: StatLine }) {
+export const StatStrip = memo(function StatStrip({ line, compact = false }: StatStripProps) {
   const fouls = foulStatus(line.pf);
 
   return (
-    <ul role="list" aria-label="Game stats" className={styles.strip}>
+    <ul role="list" aria-label="Game stats" className={cx(styles.strip, compact && styles.compact)}>
       <Item value={line.pts} label="PTS" spoken={`Points: ${line.pts}`} className={styles.points} />
       {COUNTERS.map(({ key, short, full }) => (
-        <Item key={key} value={line[key]} label={short} spoken={`${full}: ${line[key]}`} />
+        <Item
+          key={key}
+          value={line[key]}
+          label={short}
+          spoken={`${full}: ${line[key]}`}
+          className={compact ? styles.counter : undefined}
+        />
       ))}
       <Item
         value={line.pf}

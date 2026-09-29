@@ -96,4 +96,21 @@ describe('LastActionLine', () => {
     expect(screen.getByRole('status', { name: 'Last action' })).toHaveTextContent('Removed Steal');
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
+
+  it("shows a note under the message, which screen readers don't hear", () => {
+    const { rerender } = render(
+      <LastActionLine
+        action={action({ message: '2PT Made · Q3', detail: 'Tap the court to mark the spot' })}
+      />,
+    );
+    const status = screen.getByRole('status', { name: 'Last action' });
+    const note = screen.getByText('Tap the court to mark the spot');
+    expect(status).toContainElement(note);
+    expect(note).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('2PT Made · Q3')).not.toHaveAttribute('aria-hidden');
+
+    rerender(<LastActionLine action={action({ message: '2PT Made · Q3' })} />);
+    expect(screen.queryByText('Tap the court to mark the spot')).not.toBeInTheDocument();
+    expect(status).toHaveTextContent(/^2PT Made · Q3$/);
+  });
 });

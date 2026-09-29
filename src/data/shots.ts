@@ -6,7 +6,7 @@
  * three wherever it was tapped, and a 2PT attempt counts in the paint or mid-range
  * by where it was taken from.
  */
-import { isInPaint, type ShotZone } from '@/lib/court';
+import { clampToHalfCourt, isInPaint, type ShotZone } from '@/lib/court';
 import { isFieldGoalType, STAT_DEFS } from './stats';
 import type { CourtPoint, StatEvent } from './types';
 
@@ -41,6 +41,17 @@ export function shotsFromEvents(events: readonly Pick<StatEvent, 'type' | 'locat
 
 export function hasLocation(shot: Shot): shot is LocatedShot {
   return shot.location !== undefined;
+}
+
+/**
+ * Whether a shot stored with location `a` has spot `b` (both may be missing). Spots
+ * are compared as stored: moved onto the half court, like recordStat does.
+ */
+export function sameSpot(a: CourtPoint | undefined, b: CourtPoint | undefined): boolean {
+  if (!a || !b) return a === b;
+  const first = clampToHalfCourt(a);
+  const second = clampToHalfCourt(b);
+  return Math.abs(first.x - second.x) < 1e-9 && Math.abs(first.y - second.y) < 1e-9;
 }
 
 /** The zones in display order: closest to the basket first. */

@@ -63,4 +63,12 @@ describe('shotValueLabel and describeSpot', () => {
     expect(describeSpot({ x: 0, y: 1 })).toBe('2-pointer, 1 foot from the basket');
     expect(describeSpot({ x: 0, y: 0 })).toBe('2-pointer, 0 feet from the basket');
   });
+
+  it("goes by the shot's recorded value when it's given, wherever the spot is", () => {
+    expect(shotValueLabel(corner, 2)).toBe('2PT');
+    expect(shotValueLabel(elbow, 3)).toBe('3PT');
+    expect(shotValueLabel(topOfKey, 3)).toBe('3PT');
+    expect(describeSpot(corner, 2)).toBe('2-pointer, 22 feet from the basket');
+    expect(describeSpot(elbow, 3)).toBe('3-pointer, 14 feet from the basket');
+  });
 });

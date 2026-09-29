@@ -14,6 +14,7 @@ import { Dexie } from 'dexie';
 import { clampToHalfCourt, isRealPoint } from '@/lib/court';
 import { newId } from '@/lib/id';
 import { db, eventsOfGame, META_KEYS, nextTimestamp, touchLastChange } from './db';
+import { removePendingSpot } from './pendingSpots';
 import { forgetPendingStat, forgetPendingStats } from './pendingStats';
 import { isFieldGoalType } from './stats';
 import {
@@ -289,12 +290,13 @@ export function reopenGame(gameId: string): Promise<Game> {
 }
 
 /**
- * Deletes a game and all of its stats, and forgets its taps not saved yet (see
- * forgetPendingStats). Does nothing else if the game doesn't exist.
+ * Deletes a game and all of its stats, and forgets its taps not saved yet and the spots
+ * kept for its stats (the shot chart; see forgetPendingStats). Does nothing else if the
+ * game doesn't exist.
  */
 export function deleteGame(gameId: string): Promise<void> {
-  // First: then no retry can save one of its taps once it's gone (e.g. into the game
-  // restored from a backup later).
+  // First: then no retry can save one of its taps (or spots) once it's gone, e.g. into
+  // the game restored from a backup later.
   const keepAgain = forgetPendingStats(gameId);
   return db
     .transaction('rw', [db.games, db.events, db.meta], async () => {
@@ -500,16 +502,21 @@ export function undoLastStat(gameId: string): Promise<StatEvent | undefined> {
 
 /**
  * Removes one event (e.g. from the event log), and forgets its tap if one is still
- * kept, so it can't be saved again. Resolves to it, or undefined if missing.
+ * kept, so it can't be saved again, and the spot kept for it (the shot chart). Resolves
+ * to it, or undefined if missing.
  */
-export function deleteStat(eventId: string): Promise<StatEvent | undefined> {
+export async function deleteStat(eventId: string): Promise<StatEvent | undefined> {
   // First: then no retry can save it once it's gone.
   forgetPendingStat(eventId);
-  return db.transaction('rw', [db.games, db.events, db.meta], async () => {
-    const event = await db.events.get(eventId);
-    if (event) await removeEvent(event, Date.now());
-    return event;
+  const event = await db.transaction('rw', [db.games, db.events, db.meta], async () => {
+    const found = await db.events.get(eventId);
+    if (found) await removeEvent(found, Date.now());
+    return found;
   });
+  // Its spot goes only once it's gone: a spot never brings back its stat, and a stat
+  // that stays (the delete failed) still gets it.
+  removePendingSpot(eventId);
+  return event;
 }
 
 // ---------------------------------------------------------------------------

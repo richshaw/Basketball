@@ -16,6 +16,8 @@ export interface DemoOptions {
    * earlier demo data without it (a fresh Playwright context starts empty).
    */
   force?: boolean;
+  /** Keep the device's own settings (e.g. Shot chart off) instead of the demo's. */
+  keepSettings?: boolean;
 }
 
 /** The parts of an export file that tests look at (see ExportFile in src/data/transfer.ts). */
@@ -23,7 +25,13 @@ export interface ExportedData {
   exportedAt: string;
   players: { id: string; name: string; jerseyNumber?: string }[];
   games: { id: string; opponent: string; date: string; status: 'live' | 'final' }[];
-  events: { id: string; gameId: string; type: string; period: number }[];
+  events: {
+    id: string;
+    gameId: string;
+    type: string;
+    period: number;
+    location?: { x: number; y: number };
+  }[];
 }
 
 interface HoopStatsWindow {

@@ -9,13 +9,18 @@ import {
   lastAction,
   notSaved,
   readFailedNote,
+  setShotChart,
+  shotCourt,
   startGame,
   stats,
+  tapCourt,
+  type CourtSpot,
 } from './support/tracking';
 
 // Screenshots of the live game screen in its main states, at the typical iPhone size
 // and the smallest and largest ones (as installed apps: the status bar is above the
-// page). Run with `npm run screenshots` (SCREENSHOT_DIR picks the folder).
+// page), with the Shot chart setting on (the default: the court above the buttons)
+// and off. Run with `npm run screenshots` (SCREENSHOT_DIR picks the folder).
 
 interface Device {
   width: number;
@@ -31,23 +36,32 @@ const IPHONE_PRO_MAX: Device = { width: 430, height: 932 - 59, safeBottom: IPHON
 /** Stands for a tap on "Next" (period) in GAME_TAPS. */
 const NEXT_PERIOD = 'Next period';
 
-/** A realistic first three quarters, as the parent would tap it: stat buttons and Next. */
-const GAME_TAPS: readonly string[] = [
+/**
+ * A realistic first three quarters, as the parent would tap it: stat buttons, Next,
+ * and (spots, in feet from the basket) where most shots were taken, marked on the
+ * court right after the shot's button when the court is shown.
+ */
+const GAME_TAPS: readonly (string | CourtSpot)[] = [
   '2PT Made',
+  { x: 1.5, y: 3 },
   'Def Reb',
   'Assist',
   '2PT Miss',
+  { x: -9, y: 11 },
   'Off Reb',
   '2PT Made',
+  { x: -0.5, y: 1.5 },
   'Foul',
   'FT Made',
   'FT Miss',
   'Steal',
   NEXT_PERIOD,
   '3PT Made',
+  { x: 16, y: 15 },
   'Turnover',
   'Def Reb',
   '2PT Miss',
+  { x: 7, y: 13 },
   'Block',
   'Deflection',
   'Foul',
@@ -56,8 +70,10 @@ const GAME_TAPS: readonly string[] = [
   'FT Made',
   NEXT_PERIOD,
   '2PT Made',
+  { x: -4, y: 8 },
   'Def Reb',
   '3PT Miss',
+  { x: -22.5, y: -2 },
   'Charge Taken',
   'Steal',
   '2PT Made',
@@ -79,6 +95,13 @@ async function openTracking(page: Page, gameId: string) {
   await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toBeVisible();
 }
 
+function tapStat(page: Page, name: string) {
+  return page
+    .getByRole('group', { name: 'Record a stat' })
+    .getByRole('button', { name, exact: true })
+    .tap();
+}
+
 /** A game just started from the New game form. */
 async function freshGame(page: Page) {
   await startGame(page);
@@ -87,16 +110,16 @@ async function freshGame(page: Page) {
 
 async function midGame(page: Page) {
   await startGame(page);
+  const withCourt = (await shotCourt(page).count()) > 0;
   for (const tap of GAME_TAPS) {
-    if (tap === NEXT_PERIOD) {
+    if (typeof tap !== 'string') {
+      if (withCourt) await tapCourt(page, tap);
+    } else if (tap === NEXT_PERIOD) {
       // Clear of the double-tap guard on Next.
       await page.waitForTimeout(450);
       await page.getByRole('button', { name: 'Next period' }).tap();
     } else {
-      await page
-        .getByRole('group', { name: 'Record a stat' })
-        .getByRole('button', { name: tap, exact: true })
-        .tap();
+      await tapStat(page, tap);
     }
   }
   await expect(stats(page).getByText('Points: 14')).toBeAttached();
@@ -122,20 +145,35 @@ async function readFailed(page: Page) {
 /** A finished game being corrected: one more foul puts her in foul trouble (4). */
 async function finishedGame(page: Page) {
   await page.goto('./');
-  await seedDemoData(page);
+  // (The device's own Shot chart setting, not the demo's.)
+  await seedDemoData(page, { keepSettings: true });
   await openTracking(page, demoGameId(10));
   await expect(page.getByText('Editing a finished game')).toBeVisible();
-  await page
-    .getByRole('group', { name: 'Record a stat' })
-    .getByRole('button', { name: 'Foul' })
-    .tap();
+  await tapStat(page, 'Foul');
   await expect(stats(page).getByText('Fouls: 4 (foul trouble)')).toBeAttached();
+  await expectAllSaved(page);
+}
+
+/** Mid-game, the shot just tapped: the court is outlined and the line says to tap it. */
+async function spotToMark(page: Page) {
+  await midGame(page);
+  await tapStat(page, '3PT Miss');
+  await expect(lastAction(page)).toContainText('Tap the court to mark the spot');
+}
+
+/** Mid-game, a shot's spot just marked: the pick and its value, and "Spot marked". */
+async function spotMarked(page: Page) {
+  await spotToMark(page);
+  await tapCourt(page, { x: 19, y: 14.5 });
+  await expect(lastAction(page)).toContainText('Spot marked');
   await expectAllSaved(page);
 }
 
 interface Shot {
   name: string;
   device: Device;
+  /** The Shot chart setting: on (the default) shows the court. */
+  shotChart?: boolean;
   capture: (page: Page) => Promise<void>;
 }
 
@@ -144,6 +182,38 @@ const shots: Shot[] = [
   { name: 'mid-game', device: IPHONE, capture: midGame },
   { name: 'mid-game-se', device: IPHONE_SE, capture: midGame },
   { name: 'mid-game-pro-max', device: IPHONE_PRO_MAX, capture: midGame },
+  { name: 'mid-game-no-court', device: IPHONE, shotChart: false, capture: midGame },
+  { name: 'mid-game-se-no-court', device: IPHONE_SE, shotChart: false, capture: midGame },
+  {
+    name: 'mid-game-pro-max-no-court',
+    device: IPHONE_PRO_MAX,
+    shotChart: false,
+    capture: midGame,
+  },
+  { name: 'spot-to-mark', device: IPHONE, capture: spotToMark },
+  { name: 'spot-marked', device: IPHONE, capture: spotMarked },
+  { name: 'spot-marked-se', device: IPHONE_SE, capture: spotMarked },
+  { name: 'spot-marked-pro-max', device: IPHONE_PRO_MAX, capture: spotMarked },
+  {
+    name: 'spot-beyond-arc',
+    device: IPHONE,
+    capture: async (page) => {
+      await midGame(page);
+      await tapStat(page, '2PT Made');
+      await tapCourt(page, { x: -17, y: 17 });
+      await expect(lastAction(page)).toContainText('Spot marked · beyond the arc');
+    },
+  },
+  {
+    name: 'court-hint',
+    device: IPHONE,
+    capture: async (page) => {
+      await midGame(page);
+      // The last stat was a foul: no shot to mark.
+      await tapCourt(page, { x: 3, y: 12 });
+      await expect(page.getByText('Tap 2PT or 3PT first')).toBeVisible();
+    },
+  },
   {
     name: 'not-saved',
     device: IPHONE,
@@ -151,18 +221,26 @@ const shots: Shot[] = [
       await midGame(page);
       // The database keeps failing: two taps wait on screen to be saved.
       await failNextSaves(page, 1000);
-      for (const name of ['Steal', 'Assist']) {
-        await page
-          .getByRole('group', { name: 'Record a stat' })
-          .getByRole('button', { name })
-          .tap();
-      }
+      for (const name of ['Steal', 'Assist']) await tapStat(page, name);
       await expect(notSaved(page)).toContainText('2 stats not saved');
       await expect(notSaved(page)).toContainText('kept on this phone');
     },
   },
   { name: 'read-failed', device: IPHONE, capture: readFailed },
   { name: 'read-failed-se', device: IPHONE_SE, capture: readFailed },
+  {
+    name: 'not-saved-se',
+    device: IPHONE_SE,
+    capture: async (page) => {
+      await midGame(page);
+      // A shot that can't be saved keeps its spot with it, on the phone.
+      await failNextSaves(page, 1000);
+      await tapStat(page, '2PT Miss');
+      await tapCourt(page, { x: 5, y: 16 });
+      await expect(notSaved(page)).toContainText('2PT Miss not saved');
+      await expect(lastAction(page)).toContainText('Spot marked');
+    },
+  },
   {
     name: 'log',
     device: IPHONE,
@@ -191,10 +269,7 @@ const shots: Shot[] = [
     capture: async (page) => {
       await midGame(page);
       await failNextSaves(page, 1000);
-      await page
-        .getByRole('group', { name: 'Record a stat' })
-        .getByRole('button', { name: 'Steal' })
-        .tap();
+      await tapStat(page, 'Steal');
       await expect(notSaved(page)).toContainText('Steal not saved');
       await page.getByRole('button', { name: 'End game' }).tap();
       const sheet = page.getByRole('dialog', { name: 'Final score' });
@@ -207,16 +282,14 @@ const shots: Shot[] = [
   },
   { name: 'finished', device: IPHONE, capture: finishedGame },
   { name: 'finished-se', device: IPHONE_SE, capture: finishedGame },
+  { name: 'finished-se-no-court', device: IPHONE_SE, shotChart: false, capture: finishedGame },
   {
     name: 'done-not-saved',
     device: IPHONE,
     capture: async (page) => {
       await finishedGame(page);
       await failNextSaves(page, 1000);
-      await page
-        .getByRole('group', { name: 'Record a stat' })
-        .getByRole('button', { name: 'Turnover' })
-        .tap();
+      await tapStat(page, 'Turnover');
       await expect(notSaved(page)).toContainText('Turnover not saved');
       await page.getByRole('button', { name: 'Done' }).tap();
       const sheet = page.getByRole('dialog', { name: "1 stat isn't saved yet" });
@@ -234,7 +307,12 @@ for (const colorScheme of ['light', 'dark'] as const) {
     for (const shot of shots) {
       test(shot.name, async ({ page }) => {
         await emulateDevice(page, shot.device);
+        await setShotChart(page, shot.shotChart ?? true);
         await shot.capture(page);
+        // (By the DOM: an open sheet hides the page, court and all, from role queries.)
+        await expect(page.locator('main svg[aria-label^="Shot spot"]')).toHaveCount(
+          shot.shotChart === false ? 0 : 1,
+        );
         await page.evaluate(() => document.fonts.ready);
         await page.screenshot({
           path: `${outputDir}/track-game-${shot.name}-${colorScheme}.png`,

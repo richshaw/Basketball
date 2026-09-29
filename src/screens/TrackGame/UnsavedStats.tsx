@@ -1,3 +1,4 @@
+import { cx } from '@/lib/cx';
 import type { Tap } from './session';
 import { statLabel, unsavedNote } from './tracking';
 import styles from './UnsavedStats.module.css';
@@ -10,6 +11,8 @@ export interface UnsavedStatsProps {
   /** They're being saved again right now. */
   retrying: boolean;
   onRetry: () => void;
+  /** Laid over the compact stat strip (see StatStrip): smaller type to fit it. */
+  compact?: boolean;
 }
 
 /**
@@ -18,7 +21,13 @@ export interface UnsavedStatsProps {
  * down, so nothing moves under a finger. Retry is off while a retry runs, so a
  * double tap can't start a second one.
  */
-export function UnsavedStats({ unsaved, kept, retrying, onRetry }: UnsavedStatsProps) {
+export function UnsavedStats({
+  unsaved,
+  kept,
+  retrying,
+  onRetry,
+  compact = false,
+}: UnsavedStatsProps) {
   const [first] = unsaved;
   if (!first) return null;
   const message =
@@ -27,7 +36,7 @@ export function UnsavedStats({ unsaved, kept, retrying, onRetry }: UnsavedStatsP
       : `${unsaved.length} stats not saved`;
 
   return (
-    <div className={styles.row}>
+    <div className={cx(styles.row, compact && styles.compact)}>
       <p role="alert" className={styles.message}>
         {/* The space keeps the two apart when read out: "Steal not saved It's kept…". */}
         <span className={styles.title}>{message}</span>{' '}

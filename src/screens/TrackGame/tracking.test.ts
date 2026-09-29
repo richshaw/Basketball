@@ -9,6 +9,7 @@ import {
   notSavedTitle,
   parseScore,
   periodChoices,
+  spotNote,
   statKind,
   statLabel,
   unsavedNote,
@@ -78,6 +79,26 @@ describe('not saved yet', () => {
     expect(notSavedMessage(2, true)).toBe(
       "2 stats aren't saved yet. They're kept on this phone and will be saved automatically.",
     );
+  });
+});
+
+describe('spotNote', () => {
+  const inside = { x: -6, y: 13.75 };
+  const beyond = { x: 0, y: 22 };
+  const corner = { x: 22, y: -3 };
+
+  it("says how to mark a shot's spot while the court takes it, then that it's marked", () => {
+    expect(spotNote('fg2_made', undefined, true)).toBe('Tap the court to mark the spot');
+    expect(spotNote('fg2_made', undefined, false)).toBeUndefined();
+    expect(spotNote('fg2_made', inside, true)).toBe('Spot marked');
+    expect(spotNote('fg3_miss', beyond, false)).toBe('Spot marked');
+    expect(spotNote('fg3_made', corner, true)).toBe('Spot marked');
+  });
+
+  it('notes a spot on the other side of the arc from the button tapped', () => {
+    expect(spotNote('fg2_miss', beyond, true)).toBe('Spot marked · beyond the arc');
+    expect(spotNote('fg2_made', corner, false)).toBe('Spot marked · beyond the arc');
+    expect(spotNote('fg3_made', inside, true)).toBe('Spot marked · inside the arc');
   });
 });
 
