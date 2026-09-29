@@ -134,6 +134,12 @@ interface TapRecord {
   hasFailed: boolean;
   /** It's in the journal, so it outlives the page. */
   kept: boolean;
+  /**
+   * Its journal entry has its spot, if one was marked on the court: false while a spot
+   * marked for it couldn't be written there (localStorage full), so a reload would save
+   * it without the spot. Kept again with the next save that fails.
+   */
+  spotKept: boolean;
   /** Tried again on its own already (that happens once). */
   autoRetried: boolean;
   /**
@@ -323,6 +329,7 @@ export class TrackingSession implements UnsavedTapHolder {
         status: 'failed',
         hasFailed: false,
         kept: true,
+        spotKept: true,
         autoRetried: false,
         quiet: false,
         settled: Promise.resolve(),
@@ -343,6 +350,7 @@ export class TrackingSession implements UnsavedTapHolder {
         status: 'failed',
         hasFailed: false,
         kept: false,
+        spotKept: true,
         autoRetried: false,
         quiet: false,
         settled: Promise.resolve(),
@@ -478,6 +486,7 @@ export class TrackingSession implements UnsavedTapHolder {
       status: 'saving',
       hasFailed: false,
       kept,
+      spotKept: true,
       autoRetried: false,
       quiet: false,
       settled: Promise.resolve(),
@@ -523,8 +532,12 @@ export class TrackingSession implements UnsavedTapHolder {
         record.hasFailed = true;
         // (Unless it was taken back, or has shown up among the saved stats meanwhile.)
         if (!record.undone && this.taps.includes(record)) {
-          // The journal may have been full at the tap: try to keep it now.
-          record.kept ||= addPendingStat(record.stat);
+          // The journal may have been full at the tap (or when its spot was marked): try
+          // to keep it now, spot and all.
+          if ((!record.kept || !record.spotKept) && addPendingStat(record.stat)) {
+            record.kept = true;
+            record.spotKept = true;
+          }
           if (!record.autoRetried) {
             record.autoRetried = true;
             this.scheduleRetry();
@@ -615,8 +628,9 @@ export class TrackingSession implements UnsavedTapHolder {
 
   /**
    * Whether reloading the page now would lose nothing it holds: every tap that isn't
-   * confirmed saved is kept in the journal (which outlives the page), and every spot not
-   * on its stat yet in the spots journal; every tap taken back has its removal kept in
+   * confirmed saved is kept in the journal (which outlives the page), with the spot
+   * marked for it, and every spot not on its stat yet in the spots journal; every tap
+   * taken back has its removal kept in
    * the removals journal (after a reload, that still removes a stat whose tap's save
    * landed after all; the line has said it's removed), which it can't be while a save of
    * it is under way; no saved stat is being removed (it has stopped counting); and no
@@ -632,7 +646,9 @@ export class TrackingSession implements UnsavedTapHolder {
       [...this.removals.keys()].every((id) => keptRemovals.has(id)) &&
       this.movesInFlight === 0 &&
       this.taps.every((record) =>
-        record.undone ? record.removalKept : record.kept || record.status === 'saved',
+        record.undone
+          ? record.removalKept
+          : record.status === 'saved' || (record.kept && record.spotKept),
       ) &&
       [...this.spotSaves.values()].every((spotSave) => spotSave.kept)
     );
@@ -977,8 +993,11 @@ export class TrackingSession implements UnsavedTapHolder {
     if (record) record.stat = { ...record.stat, location: point };
     if (record && record.status !== 'saved') {
       // Not saved yet: its journal entry takes the spot, and so does its next save. (A
-      // save already under way puts the spot on once it lands; see save.)
-      record.kept = addPendingStat(record.stat) || record.kept;
+      // save already under way puts the spot on once it lands; see save.) If the entry
+      // can't take it (localStorage full), the spot lives only in memory until it can.
+      const kept = addPendingStat(record.stat);
+      record.kept ||= kept;
+      record.spotKept = kept;
     } else {
       this.saveSpot(id, point);
     }

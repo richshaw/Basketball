@@ -1821,6 +1821,42 @@ describe('TrackingSession spots (the shot chart)', () => {
       expect(reloadSafe()).toBe(true);
     });
 
+    it("says a reload would lose the spot of a shot not saved yet while its tap's entry can't take it", async () => {
+      const { session, fail, save, saves, stored } = setUp();
+      const reloadSafe = () => session.getSnapshot().reloadSafe;
+      const shot = session.record('fg2_made');
+      fail(0);
+      await flush();
+      expect(reloadSafe()).toBe(true);
+
+      // localStorage is (nearly) full: the tap's entry can't be written again with its
+      // spot. The tap is kept, but a reload would save it without the spot.
+      const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      });
+      expect(session.markSpot(ELBOW)).toBe(true);
+      expect(session.getSnapshot().pending).toEqual([{ ...shot, location: ELBOW }]);
+      expect(keptTaps()).toEqual([[shot.id, undefined]]);
+      expect(keptSpots()).toEqual([]);
+      expect(reloadSafe()).toBe(false);
+      expect(session.reloadSafe()).toBe(false);
+
+      // Room again: the next save that fails keeps the spot with its tap.
+      full.mockRestore();
+      session.retry();
+      fail(1);
+      await flush();
+      expect(keptTaps()).toEqual([[shot.id, ELBOW]]);
+      expect(reloadSafe()).toBe(true);
+      // And one that lands saves it with its spot.
+      session.retry();
+      expect(saves[2]?.stat.location).toEqual(ELBOW);
+      save(2);
+      await flush();
+      expect(stored().map((each) => each.location)).toEqual([ELBOW]);
+      expect(keptTaps()).toEqual([]);
+    });
+
     it('forgets its spots and closes the court when its data goes, and holds them again if that fails', async () => {
       const { session, spots, saveSpot, stored } = await savedShotWithFailedSpot(CORNER);
       expect(session.getSnapshot().spotShot).not.toBeNull();
@@ -1963,6 +1999,39 @@ describe('TrackingSession spots (the shot chart)', () => {
       expect(await getGameEvents(game.id)).toEqual([]);
       expect(keptRemovalIds()).toEqual([]);
       expect(keptTaps()).toEqual([]);
+    });
+
+    it('never calls a reload safe while a spot lives only in memory, and saves it with its tap once kept', async () => {
+      const game = await newGame();
+      const saves = vi
+        .spyOn(repo, 'recordStat')
+        .mockRejectedValue(new DOMException('Connection lost.', 'UnknownError'));
+      const session = newSession(game.id, 1);
+      const shot = session.record('fg2_made');
+      await vi.waitFor(() => expect(session.getSnapshot().unsaved).toHaveLength(1));
+
+      // localStorage is (nearly) full: the spot is only in memory.
+      const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      });
+      expect(session.markSpot(ELBOW)).toBe(true);
+      expect(keptTaps()).toEqual([[shot.id, undefined]]);
+      expect(keptSpots()).toEqual([]);
+      expect(session.reloadSafe()).toBe(false);
+
+      // Room again: the next try (which fails too) keeps the spot with its tap.
+      full.mockRestore();
+      session.retry();
+      await vi.waitFor(() => expect(keptTaps()).toEqual([[shot.id, ELBOW]]));
+      expect(session.reloadSafe()).toBe(true);
+
+      // A reload: the app's start saves the tap, spot and all.
+      session.forget();
+      saves.mockRestore();
+      await replayPendingStats();
+      expect((await getGameEvents(game.id)).map((event) => [event.id, event.location])).toEqual([
+        [shot.id, ELBOW],
+      ]);
     });
 
     it('saves a tap kept with its spot when the game screen opens again, once', async () => {
