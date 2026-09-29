@@ -9,6 +9,16 @@
  * what a reload would forget.
  */
 
+/** How many entries have been kept or forgotten through this module, on this page. */
+let changes = 0;
+/** When each key was last kept or forgotten (its number in `changes`). */
+const changedAt = new Map<string, number>();
+
+function changed(key: string): void {
+  changes += 1;
+  changedAt.set(key, changes);
+}
+
 /**
  * Keeps `entry` under `key`, replacing what was kept there. Returns false if it
  * couldn't be kept (no localStorage, or it's full).
@@ -16,6 +26,7 @@
 export function writeJournalEntry(key: string, entry: object): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(entry));
+    changed(key);
     return true;
   } catch {
     return false;
@@ -24,6 +35,7 @@ export function writeJournalEntry(key: string, entry: object): boolean {
 
 /** Forgets what's kept under `key`, if anything. */
 export function removeJournalEntry(key: string): void {
+  changed(key);
   try {
     localStorage.removeItem(key);
   } catch {
@@ -77,7 +89,11 @@ function entryGameId(text: string): unknown {
 export interface RemovedEntries {
   /** How many were taken out. */
   readonly count: number;
-  /** Puts them back, as far as localStorage lets it (for when the write they went for fails). */
+  /**
+   * Puts them back, as far as localStorage lets it (for when the write they went for
+   * fails): all but those kept or forgotten since. One dealt with meanwhile (its removal
+   * given up as its stat stays, say) mustn't come back as it was.
+   */
   putBack(): void;
 }
 
@@ -87,6 +103,7 @@ export interface RemovedEntries {
  * behind).
  */
 export function removeJournalEntries(prefix: string, gameId?: string): RemovedEntries {
+  const takenAt = changes;
   const removed: [key: string, text: string][] = [];
   try {
     const keys: string[] = [];
@@ -107,7 +124,9 @@ export function removeJournalEntries(prefix: string, gameId?: string): RemovedEn
     count: removed.length,
     putBack: () => {
       try {
-        for (const [key, text] of removed) localStorage.setItem(key, text);
+        for (const [key, text] of removed) {
+          if ((changedAt.get(key) ?? 0) <= takenAt) localStorage.setItem(key, text);
+        }
       } catch {
         // Full or blocked since: those entries can't be kept any more.
       }

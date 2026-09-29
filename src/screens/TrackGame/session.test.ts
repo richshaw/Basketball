@@ -2194,6 +2194,34 @@ describe('TrackingSession spots (the shot chart)', () => {
       expect(isReloadSafe()).toBe(true);
     });
 
+    it('never removes a stat that stays once deleting its game failed while its Undo failed', async () => {
+      const game = await newGame();
+      const session = trackingSession(game.id, 1);
+      const steal = session.record('stl');
+      await vi.waitFor(async () => expect(await getGameEvents(game.id)).toHaveLength(1));
+      // Undo, once its save is confirmed: its removal is kept, and hangs.
+      await flush();
+      const removal = deferred<StatEvent | undefined>();
+      vi.spyOn(repo, 'deleteStat').mockReturnValueOnce(removal.promise);
+      const taking = session.undo(steal);
+      expect(keptRemovalIds()).toEqual([steal.id]);
+
+      // Its game is being deleted meanwhile (its kept removal is taken out)...
+      const deleting = deferred<never>();
+      vi.spyOn(db, 'transaction').mockImplementationOnce(() => deleting.promise as never);
+      const deleted = deleteGame(game.id);
+      // ...the removal fails: the stat stays, and counts again...
+      removal.reject(new Error('Disk full'));
+      expect(await taking.removal).toBe('failed');
+      // ...and so does deleting the game: what it took out is put back, but not the
+      // removal the session has let go of since.
+      deleting.reject(new Error('Disk full'));
+      await expect(deleted).rejects.toThrow('Disk full');
+      expect(keptRemovalIds()).toEqual([]);
+      await retryPendingStats();
+      expect((await getGameEvents(game.id)).map((event) => event.id)).toEqual([steal.id]);
+    });
+
     describe("a spot set aside by an Undo that fails while its game's data is going", () => {
       /**
        * A saved shot of trackingSession()'s whose spot is kept but not on it yet, being

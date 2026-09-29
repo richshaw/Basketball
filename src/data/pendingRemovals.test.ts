@@ -72,6 +72,22 @@ describe('the pending-removals journal', () => {
     expect(Object.keys(localStorage)).toEqual([]);
   });
 
+  it('keeps again only what nothing kept or forgot since it was forgotten', () => {
+    addPendingRemoval(removal({ id: 'a', at: T0 }));
+    addPendingRemoval(removal({ id: 'b', at: T0 + 1 }));
+    addPendingRemoval(removal({ id: 'c', at: T0 + 2 }));
+    const forgotten = forgetPendingRemovals('game-1');
+    // Meanwhile: one given up (its stat stays after all), one kept again as it is now.
+    removePendingRemoval('a');
+    addPendingRemoval(removal({ id: 'b', at: T0 + 1, period: 3 }));
+    // The write they were forgotten for fails.
+    forgotten.putBack();
+    expect(listPendingRemovals()).toEqual([
+      removal({ id: 'b', at: T0 + 1, period: 3 }),
+      removal({ id: 'c', at: T0 + 2 }),
+    ]);
+  });
+
   it("skips entries it can't read, and leaves them (and other keys) alone", () => {
     const unreadable = {
       [`${KEY_PREFIX}junk`]: '{not json',
