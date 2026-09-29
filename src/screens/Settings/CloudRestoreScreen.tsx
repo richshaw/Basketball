@@ -202,30 +202,34 @@ export function CloudRestoreScreen() {
   /**
    * Right after the import: this phone carries on backing up with the code. It needs no
    * signal (the newest version is known), and nothing waits for it but going to Games.
+   * If it fails while the parent is still here, she's told instead of what the sheet
+   * said, which closes if it stayed open (after an Add that found nothing new).
    */
   const turnOnBackup = (): string | undefined => {
     if (!found) return undefined;
     const { code, backup, newestVersion } = found;
-    turningOn.current = enableCloudBackupWithCode(code, { backup, newestVersion }).catch(
-      (error: unknown) => {
+    const turning = enableCloudBackupWithCode(code, { backup, newestVersion }).catch(
+      (error: unknown): CloudResult<void> => {
         console.error('Turning on cloud backup after a restore failed', error);
         return { ok: false, error: { kind: 'unexpected', message: 'Try restoring again.' } };
       },
     );
+    turningOn.current = turning;
+    void turning.then((result) => {
+      if (result.ok || !mounted.current) return;
+      setSheetOpen(false);
+      toast.show({
+        message: `Cloud backup couldn't be turned on. ${result.error.message}`,
+        duration: MESSAGE_TOAST_MS,
+      });
+    });
     return NOW_BACKS_UP;
   };
 
   /** The restore is done and its sheet closed: on to Games, if the parent is still here. */
   const restored = async () => {
-    const result = await turningOn.current;
-    if (!mounted.current) return;
-    if (result && !result.ok) {
-      toast.show({
-        message: `Cloud backup couldn't be turned on. ${result.error.message}`,
-        duration: MESSAGE_TOAST_MS,
-      });
-    }
-    void navigate(paths.home, { replace: true });
+    await turningOn.current;
+    if (mounted.current) void navigate(paths.home, { replace: true });
   };
 
   const olderBackups = versions?.slice(1) ?? [];

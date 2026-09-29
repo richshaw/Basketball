@@ -12,7 +12,7 @@ import {
   type CloudBackup,
 } from '@/data/backup/cloudBackup';
 import { BackupCodeError, generateBackupCode, parseBackupCode } from '@/data/backup/code';
-import { errorMessage } from '@/data/backup/errors';
+import { cloudFailure, errorMessage } from '@/data/backup/errors';
 import { deriveBackupKeys } from '@/data/backup/keys';
 import type { DemoOptions } from '@/data/demo';
 import type { ExportFile } from '@/data/transfer';
@@ -479,6 +479,55 @@ describe('Restore from a backup code: after the restore', () => {
     await finish();
     expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
     expect(view.router.state.location.pathname).toBe(paths.trackGame(REAL_LIVE_GAME_ID));
+  });
+
+  it('says so when backup then fails to turn on', async () => {
+    const { code } = await backUpThenNewPhone();
+    const view = await renderRestore(paths.restoreBackup('games'));
+    await find(view, code);
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    // This phone's storage fails as backup is turned on.
+    vi.mocked(enableCloudBackupWithCode).mockResolvedValueOnce(
+      cloudFailure('unexpected', 'restore'),
+    );
+    await view.user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
+
+    await expectToast(
+      `Cloud backup couldn't be turned on. ${errorMessage('unexpected', 'restore')}`,
+    );
+    await expectGames(view);
+    expect(await listGames()).toHaveLength(10);
+    expect(await getBackupCode()).toBeUndefined();
+  });
+
+  it('says so, instead of what the sheet said, after an Add that found nothing new', async () => {
+    await seedOwnGames();
+    const own = await turnOnCloudBackup();
+    await disableCloudBackup();
+    const partner = generateBackupCode();
+    await backUpFromAnotherPhone(cloud.server, partner, buildRealData());
+    const view = await renderRestore();
+    await waitFor(() => {
+      expect(view.field).toHaveValue(own);
+    });
+    await find(view, partner);
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    vi.mocked(enableCloudBackupWithCode).mockResolvedValueOnce(
+      cloudFailure('unexpected', 'restore'),
+    );
+    await view.user.click(
+      within(sheet).getByRole('button', { name: /Add to what's on this phone/ }),
+    );
+
+    await expectToast(
+      `Cloud backup couldn't be turned on. ${errorMessage('unexpected', 'restore')}`,
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    // Still here, to try again; the phone kept its own code.
+    expect(view.router.state.location.pathname).toBe(paths.restoreBackup());
+    expect(await getBackupCode()).toBe(own);
   });
 
   it('restores an older backup without asking the server for the newest', async () => {
