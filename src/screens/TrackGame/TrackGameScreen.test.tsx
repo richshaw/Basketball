@@ -8,6 +8,7 @@ import { READ_RETRY_DELAYS_MS, READ_WATCHDOG_MS } from '@/data/hooks';
 import { replayPendingStats, retryPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
 import { listPendingSpots } from '@/data/pendingSpots';
 import { addPendingStat, listPendingStats, newPendingStat } from '@/data/pendingStats';
+import { setReopenDelaysForTests } from '@/data/reopen';
 import * as repo from '@/data/repo';
 import {
   createGame,
@@ -1255,6 +1256,79 @@ describe('TrackGameScreen', () => {
           { timeout: (READ_RETRY_DELAYS_MS[0] ?? 0) + 2000 },
         ),
       ).toBeInTheDocument();
+    });
+
+    describe("when the database can't be opened again (WebKit lost its connection)", () => {
+      /**
+       * Dexie closes the database (as its onclose handler does when WebKit loses the
+       * connection), and every open fails until `restore()`: the next read or write that
+       * opens it fails, and Dexie gives up on it for good.
+       */
+      function loseConnection() {
+        const open = vi.spyOn(indexedDB, 'open').mockImplementation(() => {
+          throw lost();
+        });
+        db.close({ disableAutoOpen: false });
+        return { restore: () => open.mockRestore() };
+      }
+
+      beforeEach(() => {
+        // Dexie warns as it works around a failed open; that's expected here.
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+      });
+
+      it('says so, with Reload, and carries on once it opens again, without a reload', async () => {
+        setReopenDelaysForTests([100]);
+        const game = await newGame();
+        await recordStat(game.id, 'stl');
+        await renderTracking(game);
+        await expectStrip('Steals: 1');
+        const connection = loseConnection();
+
+        // A tap still counts, and is kept. Its save can't open the database: the screen
+        // says it can't read the saved stats, calmly, and offers Reload (the Block is kept).
+        fireEvent.click(statButton('Block'));
+        await expectStrip('Steals: 1', 'Blocks: 1');
+        expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+        expect(screen.getByText('Your taps are kept on this phone.')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+        expect(listPendingStats().map((stat) => stat.type)).toEqual(['blk']);
+        expect(lastAction()).toHaveTextContent('Block not saved');
+
+        // The connection is back: the database opens again on its own, the stats are read
+        // again, and the Block is saved. No reload, and nothing for the parent to do.
+        connection.restore();
+        await waitFor(() => expect(readNote()).not.toBeInTheDocument());
+        await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl', 'blk']));
+        await waitFor(() => expect(notSaved()).not.toBeInTheDocument());
+        await expectStrip('Steals: 1', 'Blocks: 1');
+        expect(listPendingStats()).toEqual([]);
+        fireEvent.click(statButton('Assist'));
+        await waitFor(async () => expect(await eventTypes(game.id)).toEqual(['stl', 'blk', 'ast']));
+      });
+
+      it('says so when the app comes back into view, though nothing was tapped', async () => {
+        const game = await newGame();
+        await recordStat(game.id, 'stl');
+        await renderTracking(game);
+        const connection = loseConnection();
+        // The screen reads again as the app comes back into view: that read opens the
+        // database, which fails.
+        act(() => {
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+        expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+        await expectStrip('Steals: 1');
+
+        // Shown again once the connection is back: it opens again at once.
+        connection.restore();
+        act(() => {
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+        await waitFor(() => expect(readNote()).not.toBeInTheDocument());
+        await expectStrip('Steals: 1');
+      });
     });
 
     it("stays up if the Shot chart setting can't be read again", async () => {

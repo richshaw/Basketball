@@ -1,13 +1,15 @@
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import { watchDatabase } from '@/data/reopen';
 import type { StatEvent } from '@/data/types';
 import { trackingSession, type SessionSnapshot, type TrackingSession } from './session';
 
 /**
  * The game's tracking session (see session.ts) and what it shows. Keeps it in step
  * with the saved game (its stats and period), and saves the taps not saved yet when
- * the screen opens (including those an earlier page kept) and whenever the page is
- * shown again (e.g. the app comes back from the background, when a first write is the
- * one most likely to fail).
+ * the screen opens (including those an earlier page kept), whenever the page is shown
+ * again (e.g. the app comes back from the background, when a first write is the one
+ * most likely to fail), and when the database is open again after closing for good
+ * (src/data/reopen.ts).
  */
 export function useTrackingSession(
   gameId: string,
@@ -29,8 +31,12 @@ export function useTrackingSession(
       if (document.visibilityState === 'visible') session.retry();
     };
     document.addEventListener('visibilitychange', retryWhenShown);
+    const unwatchDatabase = watchDatabase((change) => {
+      if (change === 'reopened') session.retry();
+    });
     return () => {
       document.removeEventListener('visibilitychange', retryWhenShown);
+      unwatchDatabase();
       // Whatever shows the game next reads the stats it saved afresh, and the court
       // there marks no spot until the next shot.
       session.forgetSaved();

@@ -8,6 +8,7 @@
 import { liveQuery } from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useRef, useState } from 'react';
+import { isDatabaseClosedError, watchDatabase } from './reopen';
 import {
   getAllEvents,
   getGame,
@@ -109,10 +110,16 @@ export const READ_RETRY_DELAYS_MS: readonly number[] = [1000, 3000, 10_000];
  * How long a read may go unanswered before it's read again (twice as long each time in
  * a row, up to READ_WATCHDOG_MAX_MS). Dexie's liveQuery drops some failures without a
  * word (an AbortError or a DatabaseClosedError: neither a result nor an error comes
- * back), which would otherwise leave the screen blank, or out of date, for good.
+ * back), which would otherwise leave the screen blank, or out of date, for good. Once
+ * there's a result on screen, a read that doesn't answer in time is a failed read too.
  */
 export const READ_WATCHDOG_MS = 3000;
 const READ_WATCHDOG_MAX_MS = 30_000;
+
+/** The error of a read that didn't answer in time (see READ_WATCHDOG_MS). */
+function unansweredRead(): DOMException {
+  return new DOMException('Reading saved data did not answer in time.', 'TimeoutError');
+}
 
 interface SteadyState<K, T> {
   key: K;
@@ -128,9 +135,12 @@ interface SteadyState<K, T> {
  * throws (useLiveQuery rethrows it while rendering, so the route's error screen would
  * replace the screen, e.g. once WebKit loses its IndexedDB connection in the
  * background). The last good result stays, with `failed` set, and the read is tried
- * again when the app comes back into view and on a timer (Dexie reopens a lost
- * connection on the next query), never by reloading the page. A read that doesn't
- * answer at all is read again too (READ_WATCHDOG_MS).
+ * again on a timer, never by reloading the page. It's read again at once, failing or
+ * not, when the app comes back into view (WebKit may have lost its connection in the
+ * background) and when the database closes for good or opens again (reopen.ts). A read
+ * that doesn't answer at all is read again too (READ_WATCHDOG_MS), and counts as a
+ * failed read once there's a result on screen; so does a DatabaseClosedError, which
+ * liveQuery itself drops without a word.
  */
 function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): SteadyRead<T> {
   // Moves on to read again after a failure, or a read that never answered (a new live
@@ -145,11 +155,21 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
   const unanswered = useRef(0);
 
   useEffect(() => {
+    let active = true;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     const answered = () => {
       clearTimeout(watchdog);
       watchdog = undefined;
       unanswered.current = 0;
+    };
+    const failed = (error: unknown) => {
+      if (!active) return;
+      answered();
+      setState((current) =>
+        Object.is(current.key, key)
+          ? { ...current, error, failures: current.failures + 1 }
+          : { key, hasValue: false, error, failures: 1 },
+      );
     };
     const subscription = liveQuery(() => {
       // Each run (the first, and again whenever its data changes) must answer in time,
@@ -158,24 +178,38 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
       const wait = Math.min(READ_WATCHDOG_MS * 2 ** unanswered.current, READ_WATCHDOG_MAX_MS);
       watchdog = setTimeout(() => {
         unanswered.current += 1;
+        // A failed read, once there's something on screen to keep (a first read that
+        // never answers is simply read again: there's nothing to show yet).
+        setState((current) =>
+          Object.is(current.key, key) && current.hasValue
+            ? { ...current, error: unansweredRead(), failures: current.failures + 1 }
+            : current,
+        );
         setAttempt((count) => count + 1);
       }, wait);
-      return query(key);
+      // (Not query(key).catch(): inside liveQuery's zone that would turn the error into
+      // one of Dexie's.)
+      const read = query(key);
+      return (async () => {
+        try {
+          return await read;
+        } catch (error) {
+          // liveQuery drops this one without a word: the database is closed (reopen.ts
+          // is opening it again), and this read failed like any other.
+          if (isDatabaseClosedError(error)) failed(error);
+          throw error;
+        }
+      })();
     }).subscribe({
       next: (value) => {
+        if (!active) return;
         answered();
         setState({ key, hasValue: true, value, failures: 0 });
       },
-      error: (error: unknown) => {
-        answered();
-        setState((current) =>
-          Object.is(current.key, key)
-            ? { ...current, error, failures: current.failures + 1 }
-            : { key, hasValue: false, error, failures: 1 },
-        );
-      },
+      error: failed,
     });
     return () => {
+      active = false;
       clearTimeout(watchdog);
       subscription.unsubscribe();
     };
@@ -191,18 +225,23 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
 
   useEffect(() => {
     if (failures === 0) return;
-    const readAgain = () => setAttempt((count) => count + 1);
     const delay = READ_RETRY_DELAYS_MS[Math.min(failures, READ_RETRY_DELAYS_MS.length) - 1];
-    const timer = setTimeout(readAgain, delay);
+    const timer = setTimeout(() => setAttempt((count) => count + 1), delay);
+    return () => clearTimeout(timer);
+  }, [failures]);
+
+  useEffect(() => {
+    const readAgain = () => setAttempt((count) => count + 1);
     const readAgainWhenShown = () => {
       if (document.visibilityState === 'visible') readAgain();
     };
     document.addEventListener('visibilitychange', readAgainWhenShown);
+    const unwatch = watchDatabase(readAgain);
     return () => {
-      clearTimeout(timer);
       document.removeEventListener('visibilitychange', readAgainWhenShown);
+      unwatch();
     };
-  }, [failures]);
+  }, []);
 
   return {
     value: current?.hasValue ? current.value : undefined,

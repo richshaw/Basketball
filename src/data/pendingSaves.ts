@@ -17,6 +17,7 @@ import {
   watchPendingStats,
   type PendingStat,
 } from './pendingStats';
+import { watchDatabase } from './reopen';
 import { getGame, recordStat, setStatLocation } from './repo';
 import { sameSpot } from './shots';
 import type { StatEvent } from './types';
@@ -159,7 +160,8 @@ export interface PendingStatsRetryOptions {
  * it once, after the first render). It tries at once (what an earlier page kept), then,
  * while anything isn't saved (kept in a journal, or held by a tracking session even if
  * it couldn't be kept), again when the app is shown again, when the connection comes
- * back and on a timer that backs off. It stops as soon as nothing is pending, runs
+ * back, when the database is open again after closing for good (reopen.ts) and on a
+ * timer that backs off. It stops as soon as nothing is pending, runs
  * whether or not the live game screen is open, and never shows anything: saved stats
  * simply appear. Returns a function that stops it.
  */
@@ -222,6 +224,11 @@ export function startPendingStatsRetry({
   window.addEventListener('online', runIfPending);
   // A tap's save failed (or a tap was left unsaved): make sure a try is coming.
   const unwatch = watchPendingStats(schedule);
+  // The database is open again after closing for good (reopen.ts): what failed meanwhile
+  // can be saved now.
+  const unwatchDatabase = watchDatabase((change) => {
+    if (change === 'reopened') runIfPending();
+  });
   void run();
 
   return () => {
@@ -231,5 +238,6 @@ export function startPendingStatsRetry({
     document.removeEventListener('visibilitychange', onVisibilityChange);
     window.removeEventListener('online', runIfPending);
     unwatch();
+    unwatchDatabase();
   };
 }

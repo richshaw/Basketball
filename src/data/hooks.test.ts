@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { db } from './db';
 import {
   READ_RETRY_DELAYS_MS,
   READ_WATCHDOG_MS,
@@ -14,6 +15,7 @@ import {
   useSteadyGame,
   useSteadyGameEvents,
 } from './hooks';
+import { setReopenDelaysForTests } from './reopen';
 import * as repo from './repo';
 import {
   createGame,
@@ -34,6 +36,8 @@ function newGame(overrides: Partial<NewGame> = {}): Promise<Game> {
     ...overrides,
   });
 }
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('data hooks', () => {
   it('return undefined while loading, then the data', async () => {
@@ -196,6 +200,73 @@ describe('steady reads (the live game screen)', () => {
     });
     expect(result.current.failed).toBe(false);
     expect(reads).toHaveBeenCalledTimes(2);
+  });
+
+  it('read again when the app comes back into view, failing or not, so a lost connection shows', async () => {
+    const game = await newGame();
+    const { result } = renderHook(() => useSteadyGame(game.id));
+    await waitFor(() => expect(result.current.value?.id).toBe(game.id));
+
+    // The connection was lost in the background. Nothing changed, so nothing read again.
+    vi.spyOn(repo, 'getGame').mockRejectedValue(lost());
+    await sleep(50);
+    expect(result.current.failed).toBe(false);
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    expect(result.current.value?.id).toBe(game.id);
+  });
+
+  it('count a read that never answers as failed, once there is something on screen', async () => {
+    const game = await newGame();
+    const { result } = renderHook(() => useSteadyGame(game.id));
+    await waitFor(() => expect(result.current.value?.id).toBe(game.id));
+
+    // Reading hangs from now on: no result, and no error either.
+    const reads = vi.spyOn(repo, 'getGame').mockReturnValue(new Promise(() => {}));
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await waitFor(() => expect(result.current.failed).toBe(true), {
+      timeout: READ_WATCHDOG_MS + 1000,
+    });
+    expect(result.current.error).toMatchObject({ name: 'TimeoutError' });
+    expect(result.current.value?.id).toBe(game.id);
+
+    reads.mockRestore();
+    await waitFor(() => expect(result.current.failed).toBe(false), {
+      timeout: (READ_RETRY_DELAYS_MS[0] ?? 0) + 2000,
+    });
+    expect(result.current.value?.id).toBe(game.id);
+  }, 15_000);
+
+  it('count a closed database as a failed read (liveQuery drops that one), until it is open again', async () => {
+    // Dexie warns as it works around a failed open; that's expected here.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setReopenDelaysForTests([30]);
+    const game = await newGame();
+    await recordStat(game.id, 'stl');
+    const { result } = renderHook(() => useSteadyGameEvents(game.id));
+    await waitFor(() => expect(result.current.value?.map((e) => e.type)).toEqual(['stl']));
+
+    // WebKit loses the connection: Dexie closes the database, and can't open it again.
+    const open = vi.spyOn(indexedDB, 'open').mockImplementation(() => {
+      throw lost();
+    });
+    db.close({ disableAutoOpen: false });
+    // The next write (a tap, say) tries to, and fails: closed for good.
+    await expect(recordStat(game.id, 'ast')).rejects.toThrow();
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    expect(result.current.error).toMatchObject({ name: 'DatabaseClosedError' });
+    expect(result.current.value?.map((e) => e.type)).toEqual(['stl']);
+
+    // The connection is back: the database opens again, and it's read again.
+    open.mockRestore();
+    await waitFor(() => expect(result.current.failed).toBe(false));
+    expect(result.current.value?.map((e) => e.type)).toEqual(['stl']);
+    await act(() => recordStat(game.id, 'ast'));
+    await waitFor(() => expect(result.current.value?.map((e) => e.type)).toEqual(['stl', 'ast']));
   });
 
   it('say "loading" (and not the other game) after switching games, and "not found" as null', async () => {

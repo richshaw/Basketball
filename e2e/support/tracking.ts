@@ -166,6 +166,60 @@ export async function failStatReads(page: Page, fail = true) {
   }, fail);
 }
 
+/** What the page keeps for loseDatabaseConnection(), from before the app loads. */
+interface DatabaseConnections {
+  /** The IndexedDB connections the page opened. */
+  databaseConnections?: IDBDatabase[];
+  /** Opening a connection fails while set. */
+  databaseLost?: boolean;
+}
+
+/**
+ * Lets loseDatabaseConnection() cut the page off from IndexedDB: call it before the
+ * page loads (e.g. before startGame). From then on, every page this test loads keeps the
+ * connections it opens.
+ */
+export async function canLoseDatabaseConnection(page: Page) {
+  await page.addInitScript(() => {
+    const state = window as unknown as DatabaseConnections;
+    const connections: IDBDatabase[] = [];
+    state.databaseConnections = connections;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound by apply() below
+    const open = IDBFactory.prototype.open;
+    IDBFactory.prototype.open = function (this: IDBFactory, ...args) {
+      if (state.databaseLost) {
+        throw new DOMException(
+          'Connection to Indexed Database server lost. Refresh the page to try again',
+          'UnknownError',
+        );
+      }
+      const request = open.apply(this, args);
+      request.addEventListener('success', () => connections.push(request.result));
+      return request;
+    };
+  });
+}
+
+/**
+ * Makes the page lose its IndexedDB connection the way WebKit does in the background,
+ * until it's called again with `lost` false (see canLoseDatabaseConnection): each open
+ * connection is closed from the server's side (its `close` event), and opening one again
+ * fails. Dexie then closes the database, and gives up on it once the next read or write
+ * can't open it again: until the app opens it again itself (src/data/reopen.ts), every
+ * read and write fails, the page's exportAll() too.
+ */
+export async function loseDatabaseConnection(page: Page, lost = true) {
+  await page.evaluate((losing) => {
+    const state = window as unknown as DatabaseConnections;
+    if (!state.databaseConnections) throw new Error('Call canLoseDatabaseConnection() first');
+    state.databaseLost = losing;
+    if (!losing) return;
+    for (const connection of state.databaseConnections.splice(0)) {
+      connection.dispatchEvent(new Event('close'));
+    }
+  }, lost);
+}
+
 /** The note the live game screen shows while it can't read the saved stats. */
 export const readFailedNote = (page: Page) => page.getByText("Can't read saved stats right now.");
 

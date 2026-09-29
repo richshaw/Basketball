@@ -3,6 +3,7 @@ import { paths } from '../src/routes';
 import { appUrl, emulateIPhoneSafeArea, expectRoute, IPHONE_SAFE_BOTTOM } from './support/app';
 import { DEMO_LIVE_GAME_ID, demoGameId, exportAll, seedDemoData } from './support/data';
 import {
+  canLoseDatabaseConnection,
   doubleTap,
   expectStats,
   failNextSaves,
@@ -10,6 +11,7 @@ import {
   keptTaps,
   lastAction,
   lineButton,
+  loseDatabaseConnection,
   notSaved,
   readFailedNote,
   setShotChart,
@@ -376,6 +378,36 @@ test('Reload, offered while the stats cannot be read, loses no tap', async ({ pa
   await expectStats(page, 'Steals: 1', 'Blocks: 1');
   await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['stl', 'blk']);
   await expect.poll(() => keptTaps(page)).toEqual([]);
+});
+
+test('a lost database connection: a calm note with Reload, then it carries on by itself, no reload', async ({
+  page,
+}) => {
+  await canLoseDatabaseConnection(page);
+  const gameId = await startGame(page);
+  await tapStats(page, ['Steal']);
+  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['stl']);
+
+  // WebKit loses the connection in the background: the next tap's save can't open the
+  // database again. The tap still counts and is kept, and the screen says it can't read
+  // the saved stats, with Reload (a reload would lose nothing).
+  await loseDatabaseConnection(page);
+  await tapStats(page, ['Block']);
+  await expectStats(page, 'Steals: 1', 'Blocks: 1');
+  await expect(readFailedNote(page)).toBeVisible();
+  await expect(page.getByText('Your taps are kept on this phone.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reload' })).toBeVisible();
+  expect(await keptTaps(page)).toHaveLength(1);
+
+  // The connection is back: the app opens the database again on its own, reads the
+  // stats again and saves the Block. Nothing reloaded, and nothing for the parent to do.
+  await loseDatabaseConnection(page, false);
+  await expect(readFailedNote(page)).toHaveCount(0, { timeout: 10_000 });
+  await expect.poll(() => keptTaps(page)).toEqual([]);
+  await expectStats(page, 'Steals: 1', 'Blocks: 1');
+  expect(await gameEventTypes(page, gameId)).toEqual(['stl', 'blk']);
+  await tapStats(page, ['Assist']);
+  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['stl', 'blk', 'ast']);
 });
 
 test('the log deletes a stat once confirmed', async ({ page }) => {
