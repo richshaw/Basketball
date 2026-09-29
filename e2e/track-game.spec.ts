@@ -395,6 +395,68 @@ test('the log deletes a stat once confirmed', async ({ page }) => {
   expect(await gameEventTypes(page, gameId)).toEqual(['stl', 'blk']);
 });
 
+test('a stat tapped just after a sheet closes counts: the sheet takes no taps as it slides away', async ({
+  page,
+}) => {
+  const gameId = await startGame(page);
+  const periodButton = page.getByRole('button', { name: /^Period Q\d$/ });
+  /** Each way she closes a sheet on this screen, from opening it to the tap that closes it. */
+  const ways: [string, () => Promise<void>][] = [
+    [
+      'picking a period',
+      async () => {
+        const next = (await periodButton.getAttribute('aria-label')) === 'Period Q1' ? 'Q2' : 'Q1';
+        await periodButton.tap();
+        const sheet = page.getByRole('dialog', { name: 'Period' });
+        await sheet.getByRole('button', { name: next, exact: true }).tap();
+      },
+    ],
+    [
+      "the log's X",
+      async () => {
+        await page.getByRole('button', { name: 'Log' }).tap();
+        const log = page.getByRole('dialog', { name: 'Stat log' });
+        await log.getByRole('button', { name: 'Close' }).tap();
+      },
+    ],
+    [
+      'a tap outside the log',
+      async () => {
+        await page.getByRole('button', { name: 'Log' }).tap();
+        await expect(page.getByRole('dialog', { name: 'Stat log' })).toBeVisible();
+        // The dimmed strip above the sheet.
+        await page.touchscreen.tap(195, 8);
+      },
+    ],
+    [
+      'Keep tracking, after End game',
+      async () => {
+        await page.getByRole('button', { name: 'End game' }).tap();
+        const sheet = page.getByRole('dialog', { name: 'Final score' });
+        await sheet.getByRole('button', { name: 'Keep tracking' }).tap();
+      },
+    ],
+  ];
+
+  let assists = 0;
+  for (const [way, closeSheet] of ways) {
+    for (const delayMs of [0, 50, 150]) {
+      await closeSheet();
+      // Well within the sheet's 200 ms slide-out.
+      if (delayMs > 0) await page.waitForTimeout(delayMs);
+      await tapStats(page, ['Assist']);
+      assists += 1;
+      // Counted, and nothing else: the tap that closed the sheet hit nothing under it.
+      await expect
+        .poll(() => gameEventTypes(page, gameId), {
+          message: `${way}, then Assist ${delayMs} ms later`,
+        })
+        .toEqual(Array<string>(assists).fill('ast'));
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+    }
+  }
+});
+
 // Installed-app viewports: the screen minus the status bar (the page starts below it).
 const DEVICES = [
   { name: 'iPhone', width: 390, height: 797, safeBottom: IPHONE_SAFE_BOTTOM },

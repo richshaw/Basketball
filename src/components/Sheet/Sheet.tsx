@@ -63,7 +63,8 @@ export interface SheetProps {
 
 /**
  * `closing`: the dialog has already closed (focus is back and the page works again)
- * but stays on screen, swallowing taps, while its exit animation plays.
+ * but stays on screen while its exit animation plays, taking no taps: they reach the
+ * page under it (see Sheet.module.css).
  */
 type Phase = 'closed' | 'open' | 'closing';
 
@@ -247,7 +248,7 @@ export function Sheet({
       onClick={handleClick}
     >
       <div ref={panelRef} className={cx(styles.panel, className)}>
-        {/* The content goes inert while closing, so a second tap can't fire an action twice. */}
+        {/* Inert while closing (it takes no taps either), so none of its actions can fire twice. */}
         <div className={styles.header} inert={closing}>
           <div className={styles.headings}>
             {/*

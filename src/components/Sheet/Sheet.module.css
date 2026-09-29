@@ -142,12 +142,16 @@
 
 /*
  * Closing: the dialog has already closed, so focus is back and the page works again.
- * It stays on screen (above the page, below toasts) only to slide away, and swallows
- * taps meanwhile so a double tap can't reach the page underneath.
+ * It stays on screen (above the page, below toasts) only to slide away, and takes no
+ * taps meanwhile, the panel and the dimmed page alike: a tap right after closing (a
+ * stat on the live game screen) goes to what's underneath, instead of being lost on a
+ * sheet that's leaving. The tap that closed it has ended by then: its click, which
+ * closes it, is the last event a tap sends.
  */
 .dialog[data-closing] {
   z-index: var(--z-sheet-exit);
   display: block;
+  pointer-events: none;
   animation: fadeOut var(--duration-normal) var(--ease-in) forwards;
 }
 

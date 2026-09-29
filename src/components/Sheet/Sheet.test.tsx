@@ -1,11 +1,13 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef, useState, type ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Button } from '@/components/Button/Button';
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { TextField } from '@/components/TextField/TextField';
+import { restoreStubs, stubProperties } from '@/test/browser';
 import { Sheet, type SheetProps } from './Sheet';
+import sheetCss from './Sheet.module.css?raw';
 
 type DemoProps = Partial<Omit<SheetProps, 'open' | 'onClose'>> & {
   /** Called on every close request; the demo also closes unless `keepOpen`. */
@@ -345,5 +347,64 @@ describe('Sheet in a tall layout', () => {
     await openDemo({ children: rows, footer: <Button>Done</Button> });
     expect(screen.getByText('Row 40').parentElement).toHaveClass('body');
     expect(screen.getByRole('button', { name: 'Done' }).parentElement).toHaveClass('footer');
+  });
+});
+
+describe('Sheet sliding away', () => {
+  let removeStyles = () => {};
+
+  beforeEach(() => {
+    // Its real styles (tests stub CSS otherwise), so a tap meets what it would on a phone.
+    const style = document.createElement('style');
+    style.textContent = sheetCss;
+    document.head.append(style);
+    removeStyles = () => style.remove();
+  });
+
+  afterEach(() => {
+    removeStyles();
+    restoreStubs();
+  });
+
+  /** Keeps the exit animation running (jsdom has none) until the returned function ends it. */
+  function holdExitAnimation(): () => void {
+    let end = () => {};
+    const finished = new Promise<void>((resolve) => {
+      end = resolve;
+    });
+    const exit = { effect: { getTiming: () => ({ iterations: 1 }) }, finished };
+    stubProperties(Element.prototype, { getAnimations: () => [exit] });
+    return end;
+  }
+
+  it('takes no taps once it starts closing, so the next one reaches the page', async () => {
+    const endExit = holdExitAnimation();
+    const onAssist = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <>
+        <Button onClick={onAssist}>Assist</Button>
+        <SheetDemo footer={<Button>Save</Button>} />
+      </>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit game' });
+    expect(getComputedStyle(dialog).pointerEvents).not.toBe('none');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+
+    // Still on screen, sliding away: neither the dimmed page nor the panel takes a tap...
+    expect(dialog).toHaveAttribute('data-closing');
+    expect(getComputedStyle(dialog).pointerEvents).toBe('none');
+    await expect(user.click(dialog)).rejects.toThrow(/pointer-events: none/);
+    await expect(user.click(screen.getByText('Save', { selector: 'button' }))).rejects.toThrow(
+      /pointer-events: none/,
+    );
+    // ...so the tap goes to the page under it, which already works again.
+    await user.click(screen.getByRole('button', { name: 'Assist' }));
+    expect(onAssist).toHaveBeenCalledTimes(1);
+
+    endExit();
+    await waitForClosed();
   });
 });
