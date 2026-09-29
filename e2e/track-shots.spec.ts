@@ -9,6 +9,8 @@ import {
   keptTaps,
   keptTapSpots,
   lastAction,
+  lastActionFits,
+  lineButton,
   notSaved,
   shotCourt,
   startGame,
@@ -313,6 +315,13 @@ for (const device of DEVICES) {
       expect(line.y).toBeGreaterThanOrEqual(lastButton.y + lastButton.height);
       expect(bottom.y).toBeGreaterThanOrEqual(line.y + line.height);
       expect(bottom.y + bottom.height).toBeLessThanOrEqual(device.height - device.safeBottom);
+
+      // The line says all of a stat's longest note, fouled out (five fouls or more), next
+      // to Undo.
+      await tapStats(page, Array<string>(5).fill('Foul'));
+      await expect(lastAction(page)).toHaveText(/^Foul · Q\d · fouled out$/);
+      await expect(lineButton(page)).toBeInViewport({ ratio: 1 });
+      expect(await lastActionFits(page)).toBe(true);
     });
   }
 }

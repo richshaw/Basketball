@@ -748,12 +748,12 @@ describe('TrackGameScreen', () => {
     await renderTracking(game);
     await expectStrip('Fouls: 3');
 
-    // Two quick fouls, the second before anything is saved: each says its own count.
+    // Two quick fouls, the second before anything is saved: each says where she stands.
     fireEvent.click(statButton('Foul'));
-    expect(lastAction()).toHaveTextContent('Foul · Q1 · 4 fouls');
-    expect(lastAction()).not.toHaveTextContent('fouled out');
+    expect(lastAction()).toHaveTextContent(/^Foul · Q1 · 4 fouls$/);
     fireEvent.click(statButton('Foul'));
-    expect(lastAction()).toHaveTextContent('Foul · Q1 · 5 fouls, fouled out');
+    // Short enough to fit the line whole on an iPhone SE (the strip has the count).
+    expect(lastAction()).toHaveTextContent(/^Foul · Q1 · fouled out$/);
     expect(statButton('Foul')).toHaveAccessibleDescription('5 this game');
     await expectStrip('Fouls: 5 (fouled out)');
     await waitFor(async () => expect(await eventTypes(game.id)).toHaveLength(5));
