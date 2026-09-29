@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { addPendingSpot, listPendingSpots } from '@/data/pendingSpots';
 import {
   listPendingStats,
   replayPendingStats,
   savePendingStat,
   type PendingStat,
 } from '@/data/pendingStats';
+import * as repo from '@/data/repo';
 import { createGame, deleteStat, getGameEvents, setCurrentPeriod } from '@/data/repo';
 import type { CourtPoint, StatEvent, StatType } from '@/data/types';
 import {
   AUTO_RETRY_MS,
+  disposeTrackingSessions,
   SPOT_WINDOW_MS,
+  trackingSession,
   TrackingSession,
   type SessionDeps,
   type TakingBack,
@@ -658,8 +662,10 @@ describe('TrackingSession spots (the shot chart)', () => {
   const CORNER: CourtPoint = { x: 23, y: -3 };
   const LAYUP: CourtPoint = { x: 1, y: 2 };
 
-  /** The kept taps' spots (see src/data/pendingStats.ts): [id, spot or undefined]. */
-  const keptSpots = () => listPendingStats().map((stat) => [stat.id, stat.location]);
+  /** The taps kept on the phone (src/data/pendingStats.ts), with their spots. */
+  const keptTaps = () => listPendingStats().map((stat) => [stat.id, stat.location]);
+  /** The spots kept for saved stats (src/data/pendingSpots.ts). */
+  const keptSpots = () => listPendingSpots().map((spot) => [spot.id, spot.location]);
 
   it("opens the court to a 2PT/3PT tap's spot until the next stat, never to a free throw's", async () => {
     const { session, saves, spots } = setUp();
@@ -688,7 +694,8 @@ describe('TrackingSession spots (the shot chart)', () => {
       undefined,
     ]);
     expect(spots).toEqual([]);
-    expect(keptSpots().every(([, spot]) => spot === undefined)).toBe(true);
+    expect(keptTaps().every(([, spot]) => spot === undefined)).toBe(true);
+    expect(keptSpots()).toEqual([]);
   });
 
   it('keeps the spot of a shot not saved yet with the tap, and saves them together, once', async () => {
@@ -700,8 +707,9 @@ describe('TrackingSession spots (the shot chart)', () => {
 
     expect(session.markSpot(ELBOW)).toBe(true);
     expect(session.getSnapshot().spotShot?.spot).toEqual(ELBOW);
-    // In the journal at once, so a reload saves it with the tap.
-    expect(keptSpots()).toEqual([[shot.id, ELBOW]]);
+    // In the tap's journal entry at once, so a reload saves it with the tap.
+    expect(keptTaps()).toEqual([[shot.id, ELBOW]]);
+    expect(keptSpots()).toEqual([]);
     // Counted as the same tap, now with its spot.
     expect(session.getSnapshot().pending).toEqual([{ ...shot, location: ELBOW }]);
     expect(pendingTypes()).toEqual(['fg2_made']);
@@ -722,27 +730,30 @@ describe('TrackingSession spots (the shot chart)', () => {
     ]);
     // Saved with the tap: no separate write, and nothing left to keep.
     expect(spots).toEqual([]);
-    expect(keptIds()).toEqual([]);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
   });
 
-  it('puts the spot of a saved shot on its stat, keeping the tap until that is done', async () => {
+  it('puts the spot of a saved shot on its stat, keeping the spot (never the tap) until then', async () => {
     const { session, save, sync, stored, spots, saveSpot } = setUp();
     const shot = session.record('fg3_made');
     save(0);
     await flush();
     sync();
-    expect(keptIds()).toEqual([]);
+    expect(keptTaps()).toEqual([]);
 
     expect(session.markSpot(CORNER)).toBe(true);
     expect(spots.map(({ id, location }) => [id, location])).toEqual([[shot.id, CORNER]]);
-    // Kept (with its spot) until the spot is saved, in case the page closes first.
+    // Kept until it's saved, in case the page closes first: as a spot, which never
+    // brings back its stat (a kept tap is saved again, even if its stat was deleted).
     expect(keptSpots()).toEqual([[shot.id, CORNER]]);
+    expect(keptTaps()).toEqual([]);
     expect(session.getSnapshot().unsaved).toEqual([]);
 
     saveSpot(0);
     await flush();
     expect(stored().map((event) => [event.id, event.location])).toEqual([[shot.id, CORNER]]);
-    expect(keptIds()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
   });
 
   it("puts a spot marked while its shot's save is under way on the stat once it lands", async () => {
@@ -750,19 +761,20 @@ describe('TrackingSession spots (the shot chart)', () => {
     const shot = session.record('fg2_miss');
     // The save under way started before the spot: it saves the shot without it.
     expect(session.markSpot(ELBOW)).toBe(true);
-    expect(keptSpots()).toEqual([[shot.id, ELBOW]]);
+    expect(keptTaps()).toEqual([[shot.id, ELBOW]]);
     save(0);
     await flush();
     expect(stored().map((event) => event.location)).toEqual([undefined]);
-    // So the spot is put on it next, and the tap kept until it is.
+    // So the spot is put on it next: the tap is saved, and only its spot is kept now.
     expect(spots.map(({ id, location }) => [id, location])).toEqual([[shot.id, ELBOW]]);
+    expect(keptTaps()).toEqual([]);
     expect(keptSpots()).toEqual([[shot.id, ELBOW]]);
 
     saveSpot(0);
     await flush();
     expect(stored().map((event) => [event.id, event.location])).toEqual([[shot.id, ELBOW]]);
     expect(saves).toHaveLength(1);
-    expect(keptIds()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
   });
 
   it('gives a shot whose failed save landed after all its spot, once', async () => {
@@ -773,7 +785,7 @@ describe('TrackingSession spots (the shot chart)', () => {
     fail(0);
     await flush();
     expect(session.markSpot(LAYUP)).toBe(true);
-    expect(keptSpots()).toEqual([[shot.id, LAYUP]]);
+    expect(keptTaps()).toEqual([[shot.id, LAYUP]]);
 
     // The retry takes the spot along, but finds the stat saved already, as it was.
     session.retry();
@@ -781,12 +793,14 @@ describe('TrackingSession spots (the shot chart)', () => {
     save(1);
     await flush();
     expect(spots.map(({ id, location }) => [id, location])).toEqual([[shot.id, LAYUP]]);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([[shot.id, LAYUP]]);
     saveSpot(0);
     await flush();
     expect(stored().map((event) => [event.id, event.type, event.location])).toEqual([
       [shot.id, 'fg2_made', LAYUP],
     ]);
-    expect(keptIds()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
   });
 
   it('moves the spot with another tap, and saves the last one', async () => {
@@ -797,7 +811,7 @@ describe('TrackingSession spots (the shot chart)', () => {
     session.markSpot(ELBOW);
     session.markSpot(LAYUP);
     expect(session.getSnapshot().spotShot?.spot).toEqual(LAYUP);
-    expect(keptSpots()).toEqual([[first.id, LAYUP]]);
+    expect(keptTaps()).toEqual([[first.id, LAYUP]]);
     save(0);
     await flush();
     sync();
@@ -823,7 +837,8 @@ describe('TrackingSession spots (the shot chart)', () => {
       [first.id, LAYUP],
       [second.id, CORNER],
     ]);
-    expect(keptIds()).toEqual([]);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
   });
 
   it('writes a spot again if it moved while the last one was being saved', async () => {
@@ -842,7 +857,7 @@ describe('TrackingSession spots (the shot chart)', () => {
     saveSpot(1);
     await flush();
     expect(stored().map((event) => event.location)).toEqual([ELBOW]);
-    expect(keptIds()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
   });
 
   it('closes the court once its time is up, even if its timer is late', async () => {
@@ -858,7 +873,7 @@ describe('TrackingSession spots (the shot chart)', () => {
     expect(session.getSnapshot().spotShot).toBeNull();
     expect(listener).toHaveBeenCalledOnce();
     expect(session.markSpot(LAYUP)).toBe(false);
-    expect(keptSpots().map(([, spot]) => spot)).toEqual([ELBOW]);
+    expect(keptTaps().map(([, spot]) => spot)).toEqual([ELBOW]);
 
     // The page was in the background: the clock moved on, but no timer ran yet.
     session.record('fg3_made');
@@ -893,7 +908,7 @@ describe('TrackingSession spots (the shot chart)', () => {
     await flush();
     session.markSpot(ELBOW);
     expect(await outcome(session.undo(unsaved))).toEqual(['fg2_made', 'removed']);
-    expect(keptIds()).toEqual([]);
+    expect(keptTaps()).toEqual([]);
     session.retry();
     expect(saves).toHaveLength(1);
 
@@ -903,15 +918,66 @@ describe('TrackingSession spots (the shot chart)', () => {
     await flush();
     sync();
     session.markSpot(CORNER);
-    expect(keptIds()).toEqual([saved.id]);
+    expect(keptSpots()).toEqual([[saved.id, CORNER]]);
     const taking = session.undoLatest();
-    expect(keptIds()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
     saveSpot(0);
     expect(await outcome(taking)).toEqual(['fg3_miss', 'removed']);
     expect(stored()).toEqual([]);
     expect(deletes).toEqual([unsaved.id, saved.id]);
     session.retry();
     expect(spots).toHaveLength(1);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('keeps the spot of a stat that could not be undone, and still saves it', async () => {
+    const { session, save, sync, stored, spots, saveSpot, failSpot, failDeletes } = setUp();
+    // Two saved shots whose spots couldn't be put on them yet: one the screen shows
+    // among the saved stats, one saved a moment ago (still held as a tap).
+    const shown = session.record('fg3_made');
+    save(0);
+    await flush();
+    sync();
+    session.markSpot(CORNER);
+    failSpot(0);
+    const held = session.record('fg2_made');
+    save(1);
+    await flush();
+    session.markSpot(ELBOW);
+    failSpot(1);
+    await flush();
+    expect(keptSpots()).toEqual([
+      [shown.id, CORNER],
+      [held.id, ELBOW],
+    ]);
+
+    // Undo can't remove them: each counts again, and so does its spot.
+    failDeletes(true);
+    expect(await outcome(session.undo(held))).toEqual(['fg2_made', 'failed']);
+    expect(await outcome(session.undo(shown))).toEqual(['fg3_made', 'failed']);
+    expect(keptSpots().sort()).toEqual(
+      [
+        [shown.id, CORNER],
+        [held.id, ELBOW],
+      ].sort(),
+    );
+
+    // The next retry puts them on their stats (in the order they came back).
+    failDeletes(false);
+    session.retry();
+    expect(spots.slice(2).map(({ id, location }) => [id, location])).toEqual([
+      [held.id, ELBOW],
+      [shown.id, CORNER],
+    ]);
+    saveSpot(2);
+    saveSpot(3);
+    await flush();
+    expect(stored().map((event) => [event.id, event.location])).toEqual([
+      [shown.id, CORNER],
+      [held.id, ELBOW],
+    ]);
+    expect(keptSpots()).toEqual([]);
   });
 
   it("tries a spot that couldn't be saved again with the taps, and keeps it meanwhile", async () => {
@@ -941,7 +1007,43 @@ describe('TrackingSession spots (the shot chart)', () => {
       ['fg2_made', ELBOW],
       ['stl', undefined],
     ]);
-    expect(keptIds()).toEqual([]);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('counts a spot not on its stat yet as not saved when the game ends', async () => {
+    const { session, save, sync, saveSpot, failSpot } = setUp();
+    session.record('fg3_miss');
+    save(0);
+    await flush();
+    sync();
+    session.markSpot(CORNER);
+    // End game waits for the spot's write too: it fails.
+    const ending = session.saveAll();
+    failSpot(0);
+    expect(await ending).toEqual({ count: 1, kept: true });
+    // Trying again retries it: saved.
+    const again = session.saveAll();
+    saveSpot(1);
+    expect(await again).toEqual({ count: 0, kept: true });
+  });
+
+  it('starts with the spots an earlier page kept, and puts them on their stats, never as taps', async () => {
+    const { deps, spots, store, saveSpot, stored } = fakeDeps();
+    store(event('three', 'fg3_made', 5));
+    addPendingSpot({ id: 'three', gameId: 'g', location: CORNER });
+    addPendingSpot({ id: 'elsewhere', gameId: 'other', location: ELBOW });
+    const session = new TrackingSession('g', 1, deps);
+    // Not a tap: it isn't counted, listed as not saved, or undone.
+    expect(session.getSnapshot()).toMatchObject({ pending: [], unsaved: [] });
+    session.syncSavedEvents(stored());
+    session.retry();
+    expect(spots.map(({ id, location }) => [id, location])).toEqual([['three', CORNER]]);
+    saveSpot(0);
+    await flush();
+    expect(stored().map((each) => [each.id, each.location])).toEqual([['three', CORNER]]);
+    // (Another game's spot is that game's session's to save.)
+    expect(keptSpots()).toEqual([['elsewhere', ELBOW]]);
   });
 
   it('counts, lists and undoes a shot as one tap, spot or not', async () => {
@@ -965,20 +1067,27 @@ describe('TrackingSession spots (the shot chart)', () => {
       createGame({ opponent: 'Central', date: '2026-09-27', periodFormat: 'quarters' });
     const broken = () => Promise.reject(new DOMException('Connection lost.', 'UnknownError'));
 
-    it('saves a spot the page could not save when the app starts again, once', async () => {
+    /** A saved shot whose spot couldn't be put on it (nor by the retry after a second). */
+    async function shotWithKeptSpot(spot: CourtPoint) {
       const game = await newGame();
-      const before = new TrackingSession(game.id, 1, {
+      const session = new TrackingSession(game.id, 1, {
         recordStat: savePendingStat,
         deleteStat,
         setCurrentPeriod,
         setStatLocation: broken,
       });
-      const shot = before.record('fg3_made');
+      const shot = session.record('fg3_made');
       await vi.waitFor(async () => expect(await getGameEvents(game.id)).toHaveLength(1));
-      before.syncSavedEvents(await getGameEvents(game.id));
-      before.markSpot(CORNER);
-      await flush();
-      expect(keptSpots()).toEqual([[shot.id, CORNER]]);
+      session.syncSavedEvents(await getGameEvents(game.id));
+      session.markSpot(spot);
+      await new Promise((resolve) => setTimeout(resolve, AUTO_RETRY_MS + 50));
+      expect(keptSpots()).toEqual([[shot.id, spot]]);
+      expect(keptTaps()).toEqual([]);
+      return { game, shot, session };
+    }
+
+    it('saves a spot the page could not save when the app starts again, once', async () => {
+      const { game, shot } = await shotWithKeptSpot(CORNER);
 
       // The page reloads, and the app's start saves what was kept.
       expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
@@ -992,7 +1101,41 @@ describe('TrackingSession spots (the shot chart)', () => {
           location: CORNER,
         },
       ]);
-      expect(keptIds()).toEqual([]);
+      expect(keptSpots()).toEqual([]);
+      expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+    });
+
+    it('never brings back a shot deleted after its spot was kept: at app start', async () => {
+      const { game, shot } = await shotWithKeptSpot(ELBOW);
+      // The game ends and the parent deletes that shot on the game report: its kept spot
+      // goes with it.
+      expect(await deleteStat(shot.id)).toBeDefined();
+      expect(keptSpots()).toEqual([]);
+      expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+      expect(await getGameEvents(game.id)).toEqual([]);
+
+      // Even a spot kept for a stat deleted some other way (a backup restored over it,
+      // say) is only ever put on its stat: the replay drops it, and adds nothing.
+      addPendingSpot({ id: shot.id, gameId: game.id, location: ELBOW });
+      expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 1, failed: 0 });
+      expect(await getGameEvents(game.id)).toEqual([]);
+      expect(keptSpots()).toEqual([]);
+    });
+
+    it('never brings back a shot deleted after its spot was kept: on the game screen', async () => {
+      const { game, shot } = await shotWithKeptSpot(CORNER);
+      await deleteStat(shot.id);
+      addPendingSpot({ id: shot.id, gameId: game.id, location: CORNER });
+
+      // A relaunch that opens the game screen: its new session starts with the kept
+      // spot, but not as a stat to save (nothing is listed as not saved).
+      const after = new TrackingSession(game.id, 1);
+      after.syncSavedEvents(await getGameEvents(game.id));
+      expect(after.getSnapshot()).toMatchObject({ pending: [], unsaved: [] });
+      after.retry();
+      await vi.waitFor(() => expect(keptSpots()).toEqual([]));
+      expect(await getGameEvents(game.id)).toEqual([]);
+      expect(await after.saveAll()).toEqual({ count: 0, kept: true });
     });
 
     it('saves a tap kept with its spot when the game screen opens again, once', async () => {
@@ -1022,7 +1165,37 @@ describe('TrackingSession spots (the shot chart)', () => {
           location: ELBOW,
         },
       ]);
-      expect(keptIds()).toEqual([]);
+      expect(keptTaps()).toEqual([]);
+      expect(keptSpots()).toEqual([]);
     });
+  });
+});
+
+describe('disposeTrackingSessions', () => {
+  it("stops every game's session: no more retries, or journal writes, after a test", async () => {
+    const game = await createGame({
+      opponent: 'Central',
+      date: '2026-09-27',
+      periodFormat: 'quarters',
+    });
+    // A tap that can't be saved or kept: its session will try again in a second.
+    const save = vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Connection lost'));
+    const keep = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    const session = trackingSession(game.id, 1);
+    session.record('stl');
+    await vi.waitFor(() => expect(session.getSnapshot().unsaved).toHaveLength(1));
+    const saves = save.mock.calls.length;
+
+    // The test ends here (src/test/setup.ts does this after each one), and the next one
+    // can keep taps again: a retry of this session's would fail and keep its tap there.
+    disposeTrackingSessions();
+    keep.mockRestore();
+    await new Promise((resolve) => setTimeout(resolve, AUTO_RETRY_MS + 300));
+    expect(save.mock.calls.length).toBe(saves);
+    expect(listPendingStats()).toEqual([]);
+    // And the next test gets a new session for the game.
+    expect(trackingSession(game.id, 1)).not.toBe(session);
   });
 });

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { courtToSvg, courtViewBox } from '@/components/Court/courtGeometry';
 import { courtBox, mockScreenBox, svgToClient } from '@/components/Court/courtTestUtils';
 import { db } from '@/data/db';
+import { listPendingSpots } from '@/data/pendingSpots';
 import { listPendingStats, replayPendingStats } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
 import {
@@ -972,7 +973,8 @@ describe('TrackGameScreen shot chart', () => {
     // A second tap moves it: still one stat.
     tapCourt(LAYUP);
     await waitFor(async () => expect(await eventSpots(game.id)).toEqual([['fg2_made', LAYUP]]));
-    expect(listPendingStats(game.id)).toEqual([]);
+    expect(listPendingStats()).toEqual([]);
+    expect(listPendingSpots()).toEqual([]);
     await expectStrip('Points: 2', 'Field goals: 1 of 1');
 
     // The next stat closes the court: a tap on it then marks nothing, and says why.
@@ -1028,7 +1030,8 @@ describe('TrackGameScreen shot chart', () => {
     await waitFor(() => expect(lastAction()).toHaveTextContent('Removed 3PT Made'));
     expect(courtArea()).not.toHaveClass('open');
     await waitFor(async () => expect(await eventSpots(game.id)).toEqual([]));
-    expect(listPendingStats(game.id)).toEqual([]);
+    expect(listPendingStats()).toEqual([]);
+    expect(listPendingSpots()).toEqual([]);
     await expectStrip('Points: 0');
   });
 
@@ -1047,7 +1050,7 @@ describe('TrackGameScreen shot chart', () => {
     tapCourt(ELBOW);
     expect(lineNote()).toHaveTextContent('Spot marked');
     // On the phone with the tap until it's saved.
-    expect(listPendingStats(game.id).map((stat) => [stat.type, stat.location])).toEqual([
+    expect(listPendingStats().map((stat) => [stat.type, stat.location])).toEqual([
       ['fg2_made', ELBOW],
     ]);
 
@@ -1057,7 +1060,8 @@ describe('TrackGameScreen shot chart', () => {
     fireEvent.click(retry);
     await waitFor(() => expect(notSaved()).not.toBeInTheDocument());
     expect(await eventSpots(game.id)).toEqual([['fg2_made', ELBOW]]);
-    expect(listPendingStats(game.id)).toEqual([]);
+    expect(listPendingStats()).toEqual([]);
+    expect(listPendingSpots()).toEqual([]);
   });
 
   it('keeps the court while the screen is open, even if the setting changes meanwhile', async () => {
