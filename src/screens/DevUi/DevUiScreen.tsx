@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
+import { BackupBannerView } from '@/components/BackupBanner/BackupBanner';
 import { Badge } from '@/components/Badge/Badge';
 import { Button } from '@/components/Button/Button';
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
@@ -312,6 +313,14 @@ export function DevUiScreen() {
             onHow={() => setOpenSheet('install')}
             onDismiss={() => toast.show({ message: 'Banner dismissed' })}
           />
+        </Section>
+
+        <Section
+          title="BackupBanner"
+          note="At the top of the tab screens while cloud backup needs the parent; opens Settings at Cloud backup."
+        >
+          <BackupBannerView reason="paused" />
+          <BackupBannerView reason="stopped" />
         </Section>
 
         <Section title="Button">

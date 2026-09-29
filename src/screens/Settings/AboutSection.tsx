@@ -11,22 +11,43 @@ import type { Game, Player } from '@/data/types';
 import { paths } from '@/routes';
 import { ActionRow } from './ActionRow';
 import { APP_VERSION } from './appVersion';
+import { eraseCloudNote, type BackupCoverage } from './cloudBackupText';
 
 export interface AboutSectionProps {
   player: Player | null;
   games: readonly Game[];
+  /** How much of this phone's data its online backup has (see backupCoverage). */
+  cloudCoverage?: BackupCoverage;
 }
 
-/** What "Erase all data" will delete, spelled out. */
-function eraseMessage(gameCount: number): string {
+/**
+ * What "Erase all data" will delete, spelled out, what the online backup has of it (see
+ * eraseCloudNote), and, with games to lose, saving a backup file first.
+ */
+function eraseMessage(gameCount: number, coverage: BackupCoverage, now: number): string {
+  const cloud = eraseCloudNote(coverage, now);
+  const parts: string[] = [];
   if (gameCount === 0) {
-    return "The player's name and number and your settings will be deleted from this phone. This can't be undone.";
+    parts.push(
+      "The player's name and number and your settings will be deleted from this phone. This can't be undone.",
+    );
+    if (cloud) parts.push(cloud);
+  } else {
+    const games =
+      gameCount === 1
+        ? 'The game on this phone and its stats'
+        : `All ${gameCount} games and their stats`;
+    parts.push(
+      `${games}, the player's name and number, and your settings will be deleted from this phone. This can't be undone.`,
+    );
+    if (cloud) parts.push(cloud);
+    parts.push(
+      coverage.kind === 'complete'
+        ? 'For a copy of your own as well, save a backup file first.'
+        : 'If you might want them back, save a backup file first.',
+    );
   }
-  const games =
-    gameCount === 1
-      ? 'The game on this phone and its stats'
-      : `All ${gameCount} games and their stats`;
-  return `${games}, the player's name and number, and your settings will be deleted from this phone. This can't be undone. If you might want them back, save a backup file first.`;
+  return parts.join(' ');
 }
 
 /**
@@ -39,7 +60,11 @@ function isFreshPhone(player: Player | null | undefined, games: readonly Game[])
 }
 
 /** The version, sample data to look around with (and removing it), and erasing everything. */
-export function AboutSection({ player, games }: AboutSectionProps) {
+export function AboutSection({
+  player,
+  games,
+  cloudCoverage = { kind: 'none' },
+}: AboutSectionProps) {
   const confirm = useConfirm();
   const toast = useToast();
   const navigate = useNavigate();
@@ -95,7 +120,7 @@ export function AboutSection({ player, games }: AboutSectionProps) {
   const eraseAll = async () => {
     const confirmed = await confirm({
       title: 'Erase all data?',
-      message: eraseMessage(games.length),
+      message: eraseMessage(games.length, cloudCoverage, Date.now()),
       confirmLabel: 'Erase all data',
       destructive: true,
     });

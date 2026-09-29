@@ -1,0 +1,8 @@
+/* Why the online backup wasn't deleted: under the choices, lined up like a list footer. */
+.problem > p {
+  margin: var(--space-3) var(--space-4) 0;
+  color: var(--color-danger-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+}

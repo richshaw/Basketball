@@ -1,0 +1,52 @@
+/*
+ * Settings opened from the backup banner focuses the section, so screen readers start
+ * there. It isn't a control (not in the tab order), so no focus ring.
+ */
+.section:focus {
+  outline: none;
+}
+
+/* The status glyph fills the row's icon slot. */
+.statusRow {
+  --list-icon-size: var(--icon-size-md);
+}
+
+.statusTitle {
+  font-weight: var(--font-weight-semibold);
+}
+
+.statusIcon {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+  color: var(--color-text-muted);
+}
+
+.ok {
+  color: var(--color-made-text);
+}
+
+.attention {
+  color: var(--color-accent-text);
+}
+
+/* Backing up: a ring that turns (slowly with reduced motion). */
+.spinner {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+  border: var(--border-width-emphasis) solid var(--color-border);
+  border-top-color: var(--color-accent-text);
+  border-radius: var(--radius-full);
+  animation: spin var(--duration-spin) linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: calc(var(--duration-spin) * 3);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}

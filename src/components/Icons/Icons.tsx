@@ -115,6 +115,59 @@ export function PinIcon(props: IconProps) {
   );
 }
 
+/** Two overlapping pages: copy to the clipboard. */
+export function CopyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3" />
+    </Icon>
+  );
+}
+
+/** The outline of a cloud, shared by the cloud backup glyphs. */
+const CLOUD_PATH = 'M7 19h10a4 4 0 0 0 .5-7.97A5.5 5.5 0 0 0 6.62 10.4 4.3 4.3 0 0 0 7 19z';
+
+/** Cloud backup, not backed up yet. */
+export function CloudIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d={CLOUD_PATH} />
+    </Icon>
+  );
+}
+
+/** Cloud backup, backed up. */
+export function CloudCheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d={CLOUD_PATH} />
+      <path d="M9.25 14.75l2 2 3.75-3.75" />
+    </Icon>
+  );
+}
+
+/** Cloud backup, waiting for a connection. */
+export function CloudOffIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d={CLOUD_PATH} />
+      <path d="M4 4l16 16" />
+    </Icon>
+  );
+}
+
+/** Something needs the parent: an exclamation mark in a circle. */
+export function AlertIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7.5v5.25" />
+      <path d="M12 16.5h.01" strokeWidth={2.75} />
+    </Icon>
+  );
+}
+
 /** The share sheet's "Add to Home Screen" action: a plus in a rounded square. */
 export function AddToHomeScreenIcon(props: IconProps) {
   return (

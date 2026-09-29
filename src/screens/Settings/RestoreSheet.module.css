@@ -4,8 +4,14 @@
   line-height: var(--line-height-normal);
 }
 
-.noWrap {
-  white-space: nowrap;
+/* What the sheet says before the choices (see `children`). */
+.before {
+  margin-bottom: var(--space-4);
+}
+
+.part {
+  display: inline-block;
+  max-width: 100%;
 }
 
 .recommended {
