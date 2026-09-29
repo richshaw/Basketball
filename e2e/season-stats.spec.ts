@@ -70,6 +70,45 @@ test('shows the season, switches the chart and opens a game from the log', async
   await expectRoute(page, paths.gameReport(demoGameId(10)));
 });
 
+// The chart's readout shows a game's result in full, and every stat to chart is named
+// whole, down to 320 points wide (an iPhone SE with Display Zoom).
+for (const width of [375, 320]) {
+  test(`the chart reads a game's result in full at ${width} points wide`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 700 });
+    await seedDemoData(page);
+    await page.goto(appUrl(paths.stats));
+    const chart = page.getByRole('group', { name: 'Points by game' });
+    // The longest matchup of the season: "vs Central Catholic · L 36–43".
+    await chart.getByRole('button').nth(2).tap();
+    await expect(
+      page.getByRole('link', { name: /^Game report, vs Central Catholic/ }),
+    ).toBeVisible();
+    // The readout's line with the matchup and the result, in full: nothing on it is cut.
+    const meta = page.locator('p').filter({ hasText: /^vs Central Catholic\s· L \d+–\d+$/ });
+    await expect(meta).toBeVisible();
+
+    const cut = (locator: typeof meta) =>
+      locator.evaluateAll((elements) =>
+        elements
+          .filter((element) => element.scrollWidth > element.clientWidth + 1)
+          .map((element) => element.textContent),
+      );
+    expect(await cut(meta.locator('xpath=self::*|descendant::*'))).toEqual([]);
+
+    // "Rebounds" is whole too, picked (in bold) or not.
+    const radios = page.getByRole('radiogroup', { name: 'Stat to chart' }).getByRole('radio');
+    expect(await cut(radios)).toEqual([]);
+    await page.getByRole('radio', { name: 'Rebounds' }).tap();
+    await expect(page.getByRole('radio', { name: 'Rebounds' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(await cut(radios)).toEqual([]);
+    expect(await cut(meta.locator('xpath=self::*|descendant::*'))).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+  });
+}
+
 /** Moves all ten demo games into `season`, then opens the Stats screen afresh. */
 async function showSeason(page: Page, season: string) {
   await patchGames(
@@ -109,10 +148,11 @@ test('a long season name leaves the totals in view, and never widens the page', 
 });
 
 // The app's own season names, at 390 and 375 points and at 320 (an iPhone SE or mini
-// with Display Zoom), and the widths where they need a sheet instead of segments.
+// with Display Zoom), and the widths where they need a sheet instead of segments. (At
+// 320 the segments are tighter, so "Winter 2027" and "Spring 2027" fit.)
 const SEASON_PAIRS = [
   { newer: 'Fall 2026', older: 'Summer 2026', sheetAt: [] as number[] },
-  { newer: 'Winter 2027', older: 'Spring 2027', sheetAt: [320] },
+  { newer: 'Winter 2027', older: 'Spring 2027', sheetAt: [] },
   { newer: 'Summer 2027', older: 'Summer 2026', sheetAt: [320] },
 ];
 

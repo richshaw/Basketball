@@ -8,23 +8,25 @@
   background-color: var(--color-surface);
 }
 
-/* The number being read: the average, or the game under the finger. */
+/*
+ * The number being read: the average, or the game under the finger. The date and the
+ * number on the left with "Game report" beside them, then the meta line (a game's
+ * matchup and result) under both, the whole width.
+ */
 .readout {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.readoutText {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  display: grid;
+  grid-template-areas:
+    'label link'
+    'figure link'
+    'meta meta';
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-3);
+  align-items: end;
   min-width: 0;
 }
 
 .readoutLabel {
+  grid-area: label;
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
@@ -34,7 +36,11 @@
 }
 
 .readoutFigure {
+  grid-area: figure;
+  overflow: hidden;
   line-height: var(--line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .readoutValue {
@@ -49,18 +55,30 @@
   font-weight: var(--font-weight-semibold);
 }
 
+/* One line: its text gives way (cut at the end) to a game's result, which never does. */
 .readoutMeta {
-  overflow: hidden;
+  display: flex;
+  grid-area: meta;
+  min-width: 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-tight);
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.readoutMetaText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.readoutResult {
+  flex-shrink: 0;
 }
 
 .readoutLink {
   display: inline-flex;
-  flex-shrink: 0;
+  grid-area: link;
   align-items: center;
   min-height: var(--tap-target);
   margin-inline-end: calc(-1 * var(--space-2));

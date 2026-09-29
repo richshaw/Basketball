@@ -345,9 +345,12 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       const bar = within(chart).getAllByRole('button')[2] as HTMLElement;
       await user.click(bar);
       expect(bar).toHaveAttribute('aria-pressed', 'true');
-      expect(
-        screen.getByText(`${gameTitle(game)} · L ${game.teamScore}–${game.opponentScore}`),
-      ).toBeInTheDocument();
+      // The result in a part of its own, which never gives way to a long matchup.
+      const result = screen.getByText(`· L ${game.teamScore}–${game.opponentScore}`);
+      expect(result).toHaveClass('readoutResult');
+      expect(result.parentElement).toHaveTextContent(
+        `${gameTitle(game)} · L ${game.teamScore}–${game.opponentScore}`,
+      );
       const report = screen.getByRole('link', { name: /^Game report, / });
       expect(report).toHaveAttribute('href', paths.gameReport(game.id));
       expect(screen.queryByText('Average')).not.toBeInTheDocument();
