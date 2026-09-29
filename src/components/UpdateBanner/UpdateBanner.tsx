@@ -4,6 +4,29 @@ import { useReloadSafe } from '@/data/hooks';
 import { useServiceWorkerUpdate } from '@/pwa/serviceWorkerContext';
 import styles from './UpdateBanner.module.css';
 
+/** The banner's height as shown, which toasts rise above (see UpdateBanner.module.css). */
+const SHOWN_HEIGHT = '--update-banner-shown-height';
+
+/**
+ * Keeps SHOWN_HEIGHT on the root at the banner's real height while it's on screen (a
+ * ref callback): its text can take three lines on the smallest iPhone, taller than
+ * --update-banner-height. Without ResizeObserver, toasts rise by that token.
+ */
+function trackShownHeight(banner: HTMLElement | null): (() => void) | undefined {
+  if (!banner || typeof ResizeObserver === 'undefined') return undefined;
+  const root = document.documentElement;
+  const observer = new ResizeObserver(([entry]) => {
+    // (To the fraction of a pixel, which offsetHeight rounds away.)
+    const height = entry?.borderBoxSize[0]?.blockSize ?? banner.offsetHeight;
+    root.style.setProperty(SHOWN_HEIGHT, `${height}px`);
+  });
+  observer.observe(banner);
+  return () => {
+    observer.disconnect();
+    root.style.removeProperty(SHOWN_HEIGHT);
+  };
+}
+
 /**
  * Offers a new app version. Rendered only by AppShell (the tab screens), never on
  * the live game screen, because updating reloads the app. While a reload would lose a
@@ -24,7 +47,7 @@ export function UpdateBanner() {
 
   if (!reloadSafe) {
     return (
-      <aside className={styles.banner} aria-label="App update">
+      <aside ref={trackShownHeight} className={styles.banner} aria-label="App update">
         <p className={styles.message} role="status">
           New version available{' '}
           <span className={styles.detail}>Update once your taps are saved</span>
@@ -50,7 +73,7 @@ export function UpdateBanner() {
   };
 
   return (
-    <aside className={styles.banner} aria-label="App update">
+    <aside ref={trackShownHeight} className={styles.banner} aria-label="App update">
       <p className={styles.message} role="status">
         New version available
       </p>
