@@ -51,9 +51,10 @@ function playerInput(name: string, jerseyNumber: string, player: Player | null):
  * First run: asks who's being tracked before anything else. Games can still be
  * started without it; the name can be added any time later. Once the player has a
  * name, Games stops showing the card. Compact, so New game fits under it on an iPhone
- * SE, even below Safari's "Add to Home Screen" banner (the ways to restore a backup or
- * try sample data are under New game: FirstRunLinks, whose sample data first saves
- * what's typed here, through `ref`).
+ * SE, even in Safari (375x548) below its "Add to Home Screen" banner, where the card
+ * leaves out its message (the ways to restore a backup or try sample data are under
+ * New game: FirstRunLinks, whose sample data first saves what's typed here, through
+ * `ref`).
  */
 export function PlayerSetupCard({ player, saveVariant = 'primary', ref }: PlayerSetupCardProps) {
   const toast = useToast();

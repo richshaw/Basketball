@@ -40,6 +40,17 @@
   text-align: center;
 }
 
+/* As short as an iPhone SE in Safari, under the install banner: New game still fits. */
+@media (max-height: 599px) {
+  .body {
+    gap: var(--space-4);
+  }
+
+  .hurry {
+    display: none;
+  }
+}
+
 .plus {
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);

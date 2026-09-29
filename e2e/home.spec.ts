@@ -95,13 +95,26 @@ test('first run on an iPhone SE: Save and New game fit without scrolling', async
   await expectFirstRunInView(page);
 });
 
+/**
+ * Safari's viewport with its toolbars out: the screen less the status bar and Safari's
+ * own bars. An iPhone SE (375x667) leaves 375x548; an iPhone 15 (393x852) about 390x664.
+ */
+const SAFARI_VIEWPORTS = [
+  { name: 'an iPhone SE', width: 375, height: 548 },
+  { name: 'an iPhone', width: 390, height: 664 },
+];
+
 test.describe('first run in iPhone Safari', () => {
   test.use({ userAgent: IPHONE_SAFARI_UA });
 
-  test('Save and New game fit on an iPhone SE under the install banner', async ({ page }) => {
-    await page.setViewportSize(IPHONE_SE_VIEWPORT);
-    await page.goto('./');
-    await expect(page.getByRole('complementary', { name: 'Add to Home Screen' })).toBeVisible();
-    await expectFirstRunInView(page);
-  });
+  for (const viewport of SAFARI_VIEWPORTS) {
+    test(`Save and New game fit ${viewport.name} in Safari, under the install banner`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto('./');
+      await expect(page.getByRole('complementary', { name: 'Add to Home Screen' })).toBeVisible();
+      await expectFirstRunInView(page);
+    });
+  }
 });

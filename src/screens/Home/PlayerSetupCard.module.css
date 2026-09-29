@@ -75,3 +75,13 @@
     display: none;
   }
 }
+
+/*
+ * As short as an iPhone SE in Safari (548 points with its toolbars out, under the install
+ * banner): the title and the fields say it all, so New game still fits under the card.
+ */
+@media (max-height: 599px) {
+  .message {
+    display: none;
+  }
+}
