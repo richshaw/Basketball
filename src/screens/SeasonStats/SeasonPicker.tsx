@@ -19,16 +19,24 @@ export interface SeasonPickerProps {
 
 /**
  * Picks which games the stats cover: all of them, or one season. A segmented
- * control while the choices fit on one line; otherwise a row that opens a sheet.
+ * control while the choices fit on one line; otherwise a row that opens a sheet. They
+ * fit by their length (fitsSegments), unless the screen turns out to be narrower
+ * than that allows for (Display Zoom on an iPhone SE is 320 points wide): the control
+ * measures its labels, and the sheet takes over rather than cutting them (while the
+ * screen is open).
  */
 export function SeasonPicker({ seasons, value, onChange }: SeasonPickerProps) {
   const [open, setOpen] = useState(false);
+  // Labels that didn't fit this screen after all (SegmentedControl's onOverflow).
+  const [overflowed, setOverflowed] = useState<string | null>(null);
   const options: SegmentedOption<SeasonKey>[] = [
     { value: ALL_SEASONS, label: 'All' },
     ...seasons.map((season) => ({ value: seasonKey(season), label: season })),
   ];
+  const labels = options.map((option) => option.label);
+  const labelsKey = labels.join('\n');
 
-  if (fitsSegments(options.map((option) => option.label))) {
+  if (fitsSegments(labels) && overflowed !== labelsKey) {
     return (
       <SegmentedControl
         aria-label="Season"
@@ -36,6 +44,7 @@ export function SeasonPicker({ seasons, value, onChange }: SeasonPickerProps) {
         value={value}
         onChange={onChange}
         fitLabels
+        onOverflow={() => setOverflowed(labelsKey)}
       />
     );
   }

@@ -173,6 +173,54 @@ describe('SegmentedControl', () => {
     expect(thumb()?.style.gridColumn).toBe('3');
   });
 
+  it('cuts the labels after all when they need more room than it has, and says so', () => {
+    // jsdom does no layout: say the labels need 361 points, and the control has 320.
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(361);
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(320);
+    const onOverflow = vi.fn();
+    const { container } = render(
+      <SegmentedControl
+        aria-label="Season"
+        options={[
+          { value: 'all', label: 'All' },
+          { value: 'summer27', label: 'Summer 2027' },
+          { value: 'summer26', label: 'Summer 2026' },
+        ]}
+        value="summer27"
+        onChange={() => {}}
+        fitLabels
+        onOverflow={onOverflow}
+      />,
+    );
+    expect(onOverflow).toHaveBeenCalledTimes(1);
+    // Equal segments again, under a sliding thumb, so the page never widens.
+    expect(screen.getByRole('radiogroup', { name: 'Season' })).not.toHaveClass('fitLabels');
+    expect(container.querySelector('.thumb')).toHaveClass('sliding');
+    expect(segment('Summer 2027')).not.toHaveAttribute('data-label');
+    expect(segment('Summer 2027')).toBeChecked();
+  });
+
+  it('keeps fitting the labels while they have the room', () => {
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(320);
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(320);
+    const onOverflow = vi.fn();
+    render(
+      <SegmentedControl
+        aria-label="Season"
+        options={[
+          { value: 'all', label: 'All' },
+          { value: 'fall', label: 'Fall 2026' },
+        ]}
+        value="fall"
+        onChange={() => {}}
+        fitLabels
+        onOverflow={onOverflow}
+      />,
+    );
+    expect(onOverflow).not.toHaveBeenCalled();
+    expect(screen.getByRole('radiogroup', { name: 'Season' })).toHaveClass('fitLabels');
+  });
+
   it('slides one thumb under equal segments by default', () => {
     const { container } = render(<VenuePicker initial="away" />);
     expect(container.querySelector('.thumb')).toHaveClass('sliding');

@@ -34,7 +34,8 @@ export function seasonLabels(games: readonly Pick<Game, 'season'>[]): string[] {
  * all fit a 375-point iPhone in bold (the widest they get). The segments share the width
  * by what their labels need (SegmentedControl's fitLabels), so "All" leaves room for the
  * seasons: "All", "Fall 2026" and "Summer 2026" fit, even two names as long as
- * "Summer 2026".
+ * "Summer 2026". A narrower screen (320 points, with Display Zoom) may still not have
+ * the room: the control measures that, and SeasonPicker then shows its sheet.
  */
 const SEGMENTS_MAX_CHARS: Record<number, number> = { 2: 27, 3: 25 };
 

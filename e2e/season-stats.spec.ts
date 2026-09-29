@@ -108,39 +108,64 @@ test('a long season name leaves the totals in view, and never widens the page', 
   );
 });
 
-test("the season picker shows the app's own season names in full, also 375 points wide", async ({
+// The app's own season names, at 390 and 375 points and at 320 (an iPhone SE or mini
+// with Display Zoom), and the widths where they need a sheet instead of segments.
+const SEASON_PAIRS = [
+  { newer: 'Fall 2026', older: 'Summer 2026', sheetAt: [] as number[] },
+  { newer: 'Winter 2027', older: 'Spring 2027', sheetAt: [320] },
+  { newer: 'Summer 2027', older: 'Summer 2026', sheetAt: [320] },
+];
+
+test("the season picker shows the app's own season names in full, never widening the page", async ({
   page,
 }) => {
   await seedDemoData(page);
-  for (const [newer, older] of [
-    ['Fall 2026', 'Summer 2026'],
-    ['Winter 2027', 'Spring 2027'],
-  ] as const) {
+  for (const { newer, older, sheetAt } of SEASON_PAIRS) {
     // The five newest games in the newer season, the others in the older one.
     const seasons: Record<string, GamePatch> = {};
     for (let n = 1; n <= 10; n += 1) seasons[demoGameId(n)] = { season: n > 5 ? newer : older };
     await patchGames(page, seasons);
-    for (const width of [390, 375]) {
+    for (const width of [390, 375, 320]) {
+      const at = `${newer} / ${older} at ${width}`;
       await page.setViewportSize({ width, height: IPHONE_VIEWPORT.height });
       await page.goto('about:blank');
       await page.goto(appUrl(paths.stats));
-      const radios = page.getByRole('radiogroup', { name: 'Season' }).getByRole('radio');
-      await expect(radios).toHaveText(['All', newer, older]);
-      const positions = () =>
-        radios.evaluateAll((all) =>
-          all.map((radio) => Math.round(radio.getBoundingClientRect().x)),
-        );
-      const before = await positions();
-      for (const radio of await radios.all()) {
-        // Selected, in bold: the widest a label gets.
-        await radio.tap();
-        await expect(radio).toBeChecked();
-        expect(await radio.evaluate((el) => el.scrollWidth <= el.clientWidth), `${width}`).toBe(
-          true,
-        );
-        expect(await positions()).toEqual(before);
+      const group = page.getByRole('radiogroup', { name: 'Season' });
+      const picker = page.getByRole('button', { name: /^Season/ });
+      await expect(group.or(picker), at).toBeVisible();
+
+      if (sheetAt.includes(width)) {
+        // Too narrow for them after all: a sheet, with the names in full.
+        await expect(group, at).toHaveCount(0);
+        await picker.tap();
+        const sheet = page.getByRole('dialog', { name: 'Season' });
+        const choices = sheet.getByRole('list', { name: 'Seasons' }).getByRole('button');
+        // (The selected one says so, to screen readers.)
+        await expect(choices, at).toHaveText([
+          /^All/,
+          new RegExp(`^${newer}`),
+          new RegExp(`^${older}`),
+        ]);
+        await choices.last().tap();
+        await expect(sheet).toHaveCount(0);
+        await expect(picker, at).toContainText(older);
+      } else {
+        const radios = group.getByRole('radio');
+        await expect(radios, at).toHaveText(['All', newer, older]);
+        const positions = () =>
+          radios.evaluateAll((all) =>
+            all.map((radio) => Math.round(radio.getBoundingClientRect().x)),
+          );
+        const before = await positions();
+        for (const radio of await radios.all()) {
+          // Selected, in bold: the widest a label gets.
+          await radio.tap();
+          await expect(radio).toBeChecked();
+          expect(await radio.evaluate((el) => el.scrollWidth <= el.clientWidth), at).toBe(true);
+          expect(await positions(), at).toEqual(before);
+        }
       }
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth), at).toBe(width);
     }
   }
 });

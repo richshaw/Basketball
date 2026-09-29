@@ -602,6 +602,28 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
   });
 
   describe('with games of their own', () => {
+    it('uses the sheet when the seasons turn out not to fit a narrow screen', async () => {
+      await addFinalGame(
+        { opponent: 'Harbor', date: '2026-06-10', season: 'Summer 2026' },
+        ['fg2_made'],
+        [30, 20],
+      );
+      await addFinalGame(
+        { opponent: 'Bayside', date: '2027-06-10', season: 'Summer 2027' },
+        [],
+        [30, 20],
+      );
+      // They fit by their length, but not the screen: jsdom does no layout, so say the
+      // segments need 361 points and have 320 (Display Zoom on an iPhone SE).
+      vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(361);
+      vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(320);
+      renderRoute(paths.stats);
+      await waitForStats();
+
+      expect(screen.queryByRole('radiogroup', { name: 'Season' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Season/ })).toHaveTextContent('Summer 2027');
+    });
+
     it('uses the sheet for season names too long for a segment', async () => {
       await addFinalGame(
         { opponent: 'Harbor', date: '2026-06-10', season: 'Varsity Summer League' },
