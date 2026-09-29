@@ -159,10 +159,11 @@ export interface UnsavedTapHolder {
    */
   retryQuietly(): Promise<void>;
   /**
-   * Its game's data was deleted or replaced (no id), or one stat was deleted (its id):
-   * forgets those taps, never saving them.
+   * Its game's data is being deleted or replaced (no id), or one stat is (its id):
+   * forgets those taps, never saving them. Returns a function that holds them again,
+   * for when that write fails.
    */
-  forget(id?: string): void;
+  forget(id?: string): () => void;
 }
 
 const holders = new Set<UnsavedTapHolder>();
@@ -236,7 +237,7 @@ function entryGameId(text: string): unknown {
  * data: no retry may save one of its taps into it afterwards (say, into a game restored
  * or made again under the same id). Call it just before that write, so a save asked for
  * earlier lands first and goes with it. Returns a function that keeps the forgotten
- * entries again, for when the write fails.
+ * entries again and has the sessions hold their taps again, for when the write fails.
  */
 export function forgetPendingStats(gameId?: string): () => void {
   const forgotten: [key: string, text: string][] = [];
@@ -255,23 +256,28 @@ export function forgetPendingStats(gameId?: string): () => void {
   } catch {
     // Blocked storage: nothing could have been kept there.
   }
+  const holdAgain: (() => void)[] = [];
   for (const holder of [...holders]) {
-    if (gameId === undefined || holder.gameId === gameId) holder.forget();
+    if (gameId === undefined || holder.gameId === gameId) holdAgain.push(holder.forget());
   }
   return () => {
-    if (forgotten.length === 0) return;
+    if (forgotten.length === 0 && holdAgain.length === 0) return;
     try {
       for (const [key, text] of forgotten) localStorage.setItem(key, text);
     } catch {
       // Full or blocked since: those taps can't be kept any more.
     }
+    // After the entries: a session's kept taps are back in the journal by then.
+    for (const again of holdAgain) again();
+    // The app-wide retry wakes up for them.
     notifyPendingStats();
   };
 }
 
 /**
  * Forgets one tap by its stat's id, kept or held in memory, just before that stat is
- * deleted: no retry may save it again afterwards.
+ * deleted: no retry may save it again afterwards. Nothing needs to come back if that
+ * delete fails: the stat is saved (that's how it can be deleted), and it stays.
  */
 export function forgetPendingStat(id: string): void {
   removePendingStat(id);

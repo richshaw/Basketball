@@ -105,6 +105,11 @@ interface TapRecord {
    * the stat shows up among the saved ones.
    */
   orphan: boolean;
+  /**
+   * Let go of for good (see drop()): saved and shown, taken back, or no longer kept.
+   * Never held again, not even when a forget() is undone.
+   */
+  dropped: boolean;
 }
 
 /** How removing a stat went. */
@@ -229,6 +234,7 @@ export class TrackingSession implements UnsavedTapHolder {
         settled: Promise.resolve(),
         undone: false,
         orphan: false,
+        dropped: false,
       });
       this.lastAt = Math.max(this.lastAt ?? stat.at, stat.at);
     }
@@ -286,8 +292,9 @@ export class TrackingSession implements UnsavedTapHolder {
     for (const listener of this.listeners) listener();
   }
 
-  /** Stops holding a tap. */
+  /** Stops holding a tap, for good. */
   private drop(record: TapRecord): void {
+    record.dropped = true;
     this.taps = this.taps.filter((each) => each !== record);
     this.emit();
   }
@@ -335,6 +342,7 @@ export class TrackingSession implements UnsavedTapHolder {
       settled: Promise.resolve(),
       undone: false,
       orphan: false,
+      dropped: false,
     };
     this.taps.push(record);
     this.save(record);
@@ -431,11 +439,13 @@ export class TrackingSession implements UnsavedTapHolder {
   }
 
   /**
-   * Its game's data was deleted or replaced (no id): every tap is forgotten, never
-   * saved. With an id, that stat was deleted elsewhere: its tap, unless it's being taken
-   * back here, is forgotten and never saved again.
+   * Its game's data is being deleted or replaced (no id): every tap is forgotten, never
+   * saved. With an id, that stat is being deleted elsewhere: its tap, unless it's being
+   * taken back here, is forgotten and never saved again. Returns a function that holds
+   * the forgotten taps again, for when that write fails (less any dealt with since).
    */
-  forget(id?: string): void {
+  forget(id?: string): () => void {
+    const held = this.taps;
     if (id === undefined) {
       this.taps = [];
       this.removing.clear();
@@ -444,6 +454,21 @@ export class TrackingSession implements UnsavedTapHolder {
     } else {
       this.taps = this.taps.filter((record) => record.undone || record.stat.id !== id);
     }
+    const forgotten = held.filter((record) => !this.taps.includes(record));
+    this.emit();
+    return () => this.holdAgain(forgotten);
+  }
+
+  /**
+   * Holds taps that forget() let go of again: they count, and are saved (or taken back)
+   * by the next retry. Not ones dealt with since (dropped), nor ones held already.
+   */
+  private holdAgain(records: readonly TapRecord[]): void {
+    const back = records.filter((record) => !record.dropped && !this.taps.includes(record));
+    if (back.length === 0) return;
+    this.taps = [...this.taps, ...back].sort(
+      (a, b) => a.stat.at - b.stat.at || compareIds(a.stat.id, b.stat.id),
+    );
     this.emit();
   }
 
@@ -676,30 +701,41 @@ const registrations = new Map<TrackingSession, () => void>();
 /**
  * The session of a game, made on first use; it lasts as long as the page, holding its
  * taps not saved yet for the app-wide retry even after the screen closes, until its
- * game's data is deleted or replaced (the next screen for that game starts afresh).
+ * game's data is deleted or replaced (the next screen for that game starts afresh). If
+ * that write fails, it's held again, with its taps.
  */
 export function trackingSession(gameId: string, period: number): TrackingSession {
-  let session = sessions.get(gameId);
-  if (!session) {
-    const created = new TrackingSession(gameId, period);
-    const unregister = () => {
-      release();
-      registrations.delete(created);
-      if (sessions.get(gameId) === created) sessions.delete(gameId);
-    };
-    const release = holdUnsavedTaps({
+  const existing = sessions.get(gameId);
+  if (existing) return existing;
+  const session = new TrackingSession(gameId, period);
+  let release: (() => void) | undefined;
+  const unregister = () => {
+    release?.();
+    release = undefined;
+    registrations.delete(session);
+    if (sessions.get(gameId) === session) sessions.delete(gameId);
+  };
+  const register = () => {
+    if (release) return;
+    release = holdUnsavedTaps({
       gameId,
-      hasUnsaved: () => created.hasUnsaved(),
-      retryQuietly: () => created.retryQuietly(),
+      hasUnsaved: () => session.hasUnsaved(),
+      retryQuietly: () => session.retryQuietly(),
       forget: (id) => {
-        created.forget(id);
-        if (id === undefined) unregister();
+        const holdAgain = session.forget(id);
+        if (id !== undefined) return holdAgain;
+        unregister();
+        return () => {
+          holdAgain();
+          register();
+        };
       },
     });
-    registrations.set(created, unregister);
-    sessions.set(gameId, created);
-    session = created;
-  }
+    registrations.set(session, unregister);
+    // (Unless a new session for the game took its place meanwhile.)
+    if (!sessions.has(gameId)) sessions.set(gameId, session);
+  };
+  register();
   return session;
 }
 

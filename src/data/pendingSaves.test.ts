@@ -42,7 +42,7 @@ function startRetry(delaysMs: readonly number[]) {
 
 /** Taps held in memory by a (fake) tracking session, for this test only. */
 function holdTaps(holder: Omit<UnsavedTapHolder, 'forget'>) {
-  cleanups.push(holdUnsavedTaps({ forget: () => {}, ...holder }));
+  cleanups.push(holdUnsavedTaps({ forget: () => () => {}, ...holder }));
 }
 
 /** Makes every save fail, as when WebKit has lost its IndexedDB connection. */

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { savePendingStat } from '@/data/pendingSaves';
+import { db } from '@/data/db';
+import { retryPendingStats, savePendingStat } from '@/data/pendingSaves';
 import {
   addPendingStat,
   hasPendingStats,
@@ -8,7 +9,8 @@ import {
 } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
 import { createGame, deleteGame, deleteStat, getGameEvents, setCurrentPeriod } from '@/data/repo';
-import type { StatEvent, StatType } from '@/data/types';
+import { clearAllData, exportAll, importAll } from '@/data/transfer';
+import type { Game, StatEvent, StatType } from '@/data/types';
 import {
   AUTO_RETRY_MS,
   disposeTrackingSessions,
@@ -737,6 +739,43 @@ describe('TrackingSession', () => {
       expect(saves).toHaveLength(2);
     });
 
+    it('holds the taps it forgot again if that write fails, less any dealt with since', async () => {
+      const fake = setUp();
+      const { session, saves, save, fail, sync, holdDeletes, releaseDeletes } = fake;
+      const { pendingTypes, storedTypes } = fake;
+      session.record('stl');
+      const assist = session.record('ast');
+      fail(0);
+      await flush();
+      holdDeletes();
+      session.undo(assist); // taken back while it saves: removed once it's saved
+      const holdAgain = session.forget();
+      expect(pendingTypes()).toEqual([]);
+
+      // Meanwhile the Assist's save lands, and its removal after it: it's dealt with.
+      save(1);
+      await flush();
+      releaseDeletes();
+      await flush();
+      expect(storedTypes()).toEqual([]);
+
+      // The data wasn't deleted after all: the Steal counts again, and is saved. The
+      // Assist, taken back for good, isn't held again.
+      holdAgain();
+      sync();
+      expect(pendingTypes()).toEqual(['stl']);
+      expect(session.getSnapshot().takenBack).toEqual([]);
+      expect(session.hasUnsaved()).toBe(true);
+      session.retry();
+      expect(saves.map(({ stat }) => stat.type)).toEqual(['stl', 'ast', 'stl']);
+      save(2);
+      await flush();
+      expect(storedTypes()).toEqual(['stl']);
+      // Held again once only, however often it's asked.
+      holdAgain();
+      expect(pendingTypes()).toEqual(['stl']);
+    });
+
     it('forgets the tap of a stat deleted elsewhere, but not one being taken back here', async () => {
       const { session, fail, pendingTypes } = setUp();
       const steal = session.record('stl');
@@ -826,6 +865,66 @@ describe('TrackingSession', () => {
       expect(session.getSnapshot().pending).toEqual([]);
       expect(hasPendingStats()).toBe(false);
       expect(trackingSession(game.id, 1)).not.toBe(session);
+    });
+
+    describe("holds a tap kept only in memory again if deleting or replacing its game's data fails", () => {
+      const lost = () =>
+        new DOMException('Connection to Indexed Database server lost.', 'UnknownError');
+
+      /**
+       * A Steal held only in memory: localStorage is full and saves fail. Then the write
+       * fails, and the phone and the database come back: the Steal is still there, is
+       * saved, and counts.
+       */
+      async function expectStealHeldAgain(write: (game: Game) => Promise<unknown>) {
+        const game = await createGame({
+          opponent: 'Central',
+          date: '2026-09-27',
+          periodFormat: 'quarters',
+        });
+        const full = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+          throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+        });
+        const failing = vi.spyOn(repo, 'recordStat').mockRejectedValue(lost());
+        const session = trackingSession(game.id, 1);
+        session.record('stl');
+        await vi.waitFor(() => expect(session.getSnapshot().unsaved).toHaveLength(1));
+        expect(session.getSnapshot().unsavedKept).toBe(false);
+
+        await expect(write(game)).rejects.toThrow();
+        expect(session.getSnapshot().pending.map((tap) => tap.type)).toEqual(['stl']);
+        expect(trackingSession(game.id, 1)).toBe(session);
+        expect(hasPendingStats()).toBe(true);
+
+        full.mockRestore();
+        failing.mockRestore();
+        await retryPendingStats();
+        expect((await getGameEvents(game.id)).map((event) => event.type)).toEqual(['stl']);
+        expect(session.getSnapshot().pending.map((tap) => tap.type)).toEqual(['stl']);
+        expect(hasPendingStats()).toBe(false);
+      }
+
+      it('Erase all data', async () => {
+        await expectStealHeldAgain(() => {
+          vi.spyOn(db, 'transaction').mockRejectedValueOnce(lost());
+          return clearAllData();
+        });
+      });
+
+      it('a replace restore', async () => {
+        await expectStealHeldAgain(async () => {
+          const file = await exportAll();
+          vi.spyOn(db, 'transaction').mockRejectedValueOnce(lost());
+          return importAll(file, 'replace');
+        });
+      });
+
+      it('deleting the game', async () => {
+        await expectStealHeldAgain((game) => {
+          vi.spyOn(db, 'transaction').mockRejectedValueOnce(lost());
+          return deleteGame(game.id);
+        });
+      });
     });
   });
 
