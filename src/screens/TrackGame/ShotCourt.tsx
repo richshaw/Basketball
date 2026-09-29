@@ -2,6 +2,7 @@ import { memo, useEffect, useState } from 'react';
 import { CourtPicker } from '@/components/Court/CourtPicker';
 import { courtViewBox } from '@/components/Court/courtGeometry';
 import type { Shot } from '@/data/shots';
+import { statDefOf } from '@/data/stats';
 import type { CourtPoint } from '@/data/types';
 import { cx } from '@/lib/cx';
 import type { SpotShot } from './session';
@@ -35,7 +36,8 @@ export interface ShotCourtProps {
 /**
  * The shot chart on the live game screen: a half court above the stat buttons. After
  * a 2PT or 3PT tap it's outlined, and a tap on it marks where that shot was taken
- * (another tap moves the spot), with the spot's value beside it. The shot was saved at
+ * (another tap moves the spot), labeled with the shot's value: the button's, wherever
+ * the spot is (the last-action line notes a spot across the arc). The shot was saved at
  * its button's tap, so the court is never needed (VoiceOver gets an image it can skip).
  *
  * It's the whole width unless that would leave the buttons too short (see
@@ -59,6 +61,8 @@ export const ShotCourt = memo(function ShotCourt({
   const label = spotShot
     ? `Shot spot of the ${statLabel(spotShot.tap.type)} (optional)`
     : 'Shot spot (optional): tap 2PT or 3PT first';
+  // The picked spot is labeled with the shot's value as recorded (its button).
+  const three = spotShot !== null && statDefOf(spotShot.tap.type)?.shot === 'fg3';
 
   return (
     <div className={cx(styles.court, spotShot && styles.open)} style={{ aspectRatio }}>
@@ -68,6 +72,7 @@ export const ShotCourt = memo(function ShotCourt({
         touchAction="none"
         shots={shots}
         pending={spotShot?.spot ?? null}
+        pendingPoints={three ? 3 : 2}
         onPick={onPick}
         aria-label={label}
       />

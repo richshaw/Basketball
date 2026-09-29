@@ -58,14 +58,21 @@ export function describeShots(shots: readonly Shot[]): string {
   return sentences.join(' ');
 }
 
-/** "2PT" or "3PT": what a shot from `point` is worth. */
-export function shotValueLabel(point: CourtPoint): '2PT' | '3PT' {
-  return isThreePoint(point) ? '3PT' : '2PT';
+/**
+ * "2PT" or "3PT": what a shot from `point` is worth, or what it was recorded as
+ * (`points`, the 2PT or 3PT button tapped) when that's given, wherever the spot is.
+ */
+export function shotValueLabel(point: CourtPoint, points?: 2 | 3): '2PT' | '3PT' {
+  const three = points === undefined ? isThreePoint(point) : points === 3;
+  return three ? '3PT' : '2PT';
 }
 
-/** A picked spot for screen readers, e.g. "3-pointer, 23 feet from the basket". */
-export function describeSpot(point: CourtPoint): string {
+/**
+ * A picked spot for screen readers, e.g. "3-pointer, 23 feet from the basket": worth
+ * what a shot from there is, or what it was recorded as (`points`) when that's given.
+ */
+export function describeSpot(point: CourtPoint, points?: 2 | 3): string {
   const feet = Math.round(shotDistanceFt(point));
-  const value = isThreePoint(point) ? '3-pointer' : '2-pointer';
+  const value = shotValueLabel(point, points) === '3PT' ? '3-pointer' : '2-pointer';
   return `${value}, ${feet} ${feet === 1 ? 'foot' : 'feet'} from the basket`;
 }

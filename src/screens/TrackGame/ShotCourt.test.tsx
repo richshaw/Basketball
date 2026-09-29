@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Shot } from '@/data/shots';
 import type { SpotShot } from './session';
@@ -35,6 +35,23 @@ describe('ShotCourt', () => {
     update({ spotShot: { ...shot, spot: { x: 0, y: 22 } } });
     expect(court()).toHaveAccessibleName(
       'Shot spot of the 3PT Miss (optional). Picked: 3-pointer, 22 feet from the basket.',
+    );
+  });
+
+  it("labels the spot with the shot's value as tapped, wherever it is", () => {
+    const { court, update } = renderCourt({ spotShot: { ...shot, spot: { x: -6, y: 13.75 } } });
+    // A 3PT Miss marked inside the arc: still a 3PT (the line notes where it is).
+    expect(within(court()).getByText('3PT')).toBeInTheDocument();
+    expect(court()).toHaveAccessibleName(
+      'Shot spot of the 3PT Miss (optional). Picked: 3-pointer, 15 feet from the basket.',
+    );
+
+    const two: SpotShot = { ...shot, tap: { ...shot.tap, type: 'fg2_made' } };
+    update({ spotShot: { ...two, spot: { x: 23, y: -3 } } });
+    expect(within(court()).getByText('2PT')).toBeInTheDocument();
+    expect(within(court()).queryByText('3PT')).not.toBeInTheDocument();
+    expect(court()).toHaveAccessibleName(
+      'Shot spot of the 2PT Made (optional). Picked: 2-pointer, 23 feet from the basket.',
     );
   });
 

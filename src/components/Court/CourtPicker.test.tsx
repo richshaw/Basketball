@@ -178,6 +178,26 @@ describe('CourtPicker', () => {
     );
   });
 
+  it("labels the picked spot with the shot's own value when it's known", () => {
+    // A two, recorded with the 2PT button, from beyond the arc.
+    const { court, rerender, onPick } = renderPicker({
+      pending: { x: 22, y: -3 },
+      pendingPoints: 2,
+    });
+    expect(within(court).getByText('2PT')).toBeInTheDocument();
+    expect(within(court).queryByText('3PT')).not.toBeInTheDocument();
+    expect(court).toHaveAccessibleName(
+      'Shot location. Picked: 2-pointer, 22 feet from the basket.',
+    );
+
+    // A three, from inside it.
+    rerender(<CourtPicker onPick={onPick} pending={{ x: -8, y: 12 }} pendingPoints={3} />);
+    expect(within(court).getByText('3PT')).toBeInTheDocument();
+    expect(court).toHaveAccessibleName(
+      'Shot location. Picked: 3-pointer, 14 feet from the basket.',
+    );
+  });
+
   it('asks for a tap while no spot is picked', () => {
     const { court } = renderPicker({ pending: null });
     expect(court).toHaveAccessibleName('Shot location. Tap where the shot was taken.');

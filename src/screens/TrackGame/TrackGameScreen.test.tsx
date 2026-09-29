@@ -1010,13 +1010,22 @@ describe('TrackGameScreen shot chart', () => {
     fireEvent.click(statButton('2PT Miss'));
     tapCourt(CORNER);
     expect(lineNote()).toHaveTextContent('Spot marked · beyond the arc');
-    expect(within(court()).getByText('3PT')).toBeInTheDocument();
+    // The court names the shot as tapped: a 2PT, from beyond the arc.
+    expect(within(court()).getByText('2PT')).toBeInTheDocument();
+    expect(within(court()).queryByText('3PT')).not.toBeInTheDocument();
+    expect(court()).toHaveAccessibleName(
+      'Shot spot of the 2PT Miss (optional). Picked: 2-pointer, 23 feet from the basket.',
+    );
     await waitFor(async () => expect(await eventSpots(game.id)).toEqual([['fg2_miss', CORNER]]));
     await expectStrip('Field goals: 0 of 1', '3-pointers: 0 of 0');
 
     fireEvent.click(statButton('3PT Made'));
     tapCourt(LAYUP);
     expect(lineNote()).toHaveTextContent('Spot marked · inside the arc');
+    expect(within(court()).getByText('3PT')).toBeInTheDocument();
+    expect(court()).toHaveAccessibleName(
+      'Shot spot of the 3PT Made (optional). Picked: 3-pointer, 2 feet from the basket.',
+    );
   });
 
   it("the line's Undo takes the shot back, spot and all", async () => {
