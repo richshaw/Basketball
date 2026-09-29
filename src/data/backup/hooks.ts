@@ -4,15 +4,9 @@
  */
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useMemo, useSyncExternalStore } from 'react';
-import { getLastChangeAt } from '../repo';
 import { getBackupRuntime, isCloudBackupAvailable, subscribeToBackupRuntime } from './cloudBackup';
-import { loadBackupState } from './state';
+import { readStatusInputs } from './engine';
 import { deriveStatus, type CloudBackupStatus } from './status';
-
-async function readStatusInputs() {
-  const [stored, lastChangeAt] = await Promise.all([loadBackupState(), getLastChangeAt()]);
-  return { stored, lastChangeAt };
-}
 
 /**
  * `{ available, enabled, state, lastSuccessAt, lastError, nextAttemptAt, pendingChanges,
@@ -26,8 +20,7 @@ export function useCloudBackupStatus(): CloudBackupStatus | undefined {
       inputs &&
       deriveStatus({
         available: isCloudBackupAvailable(),
-        stored: inputs.stored,
-        lastChangeAt: inputs.lastChangeAt,
+        ...inputs,
         runtime,
       }),
     [inputs, runtime],

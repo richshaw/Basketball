@@ -51,6 +51,7 @@ export function DevUiScreen() {
   const [periodFormat, setPeriodFormat] = useState<demo.PeriodFormat>('quarters');
   const [venue, setVenue] = useState<demo.Venue>('home');
   const [filter, setFilter] = useState<demo.GameFilter>('all');
+  const [season, setSeason] = useState<demo.SeasonChoice>('fall');
   const [openSheet, setOpenSheet] = useState<OpenSheet>(null);
   const [opponent, setOpponent] = useState('Tigers');
   const [lastAnswer, setLastAnswer] = useState('none yet');
@@ -115,7 +116,10 @@ export function DevUiScreen() {
           directly.
         </p>
 
-        <Section title="SegmentedControl" note="Radio group: arrow keys move the selection.">
+        <Section
+          title="SegmentedControl"
+          note="Radio group: arrow keys move the selection. With fitLabels (Season), a long label takes the room it needs."
+        >
           <div className={styles.field}>
             <span id={periodsLabelId} className={styles.label}>
               Periods
@@ -139,6 +143,13 @@ export function DevUiScreen() {
             options={demo.gameFilters}
             value={filter}
             onChange={setFilter}
+          />
+          <SegmentedControl
+            aria-label="Season"
+            options={demo.seasons}
+            value={season}
+            onChange={setSeason}
+            fitLabels
           />
         </Section>
 

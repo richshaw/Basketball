@@ -1,11 +1,13 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import {
   emulateIPhoneSafeArea,
   expectRoute,
+  IPHONE_SAFARI_UA,
   IPHONE_SAFE_BOTTOM,
   IPHONE_VIEWPORT,
   screenHeading,
+  tabBar,
 } from './support/app';
 import { DEMO_LIVE_GAME_ID, demoGameId, seedDemoData } from './support/data';
 
@@ -68,4 +70,51 @@ test('the list opens a finished game’s report, or resumes the live game', asyn
   await page.goBack();
   await games.first().tap();
   await expectRoute(page, paths.trackGame(DEMO_LIVE_GAME_ID));
+});
+
+/** The iPhone SE as a Home Screen app: 375x667, less the 20-point status bar. */
+const IPHONE_SE_VIEWPORT = { width: 375, height: 647 };
+
+/** Asks who's being tracked with Save and New game both on screen, with no scrolling. */
+async function expectFirstRunInView(page: Page) {
+  await expect(page.getByRole('region', { name: 'Who are you tracking?' })).toBeVisible();
+  const tabBarTop = (await tabBar(page).boundingBox())?.y ?? 0;
+  for (const action of [
+    page.getByRole('button', { name: 'Save' }),
+    page.getByRole('link', { name: 'New game' }),
+  ]) {
+    const box = await action.boundingBox();
+    expect((box?.y ?? Infinity) + (box?.height ?? 0)).toBeLessThanOrEqual(tabBarTop);
+  }
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+}
+
+test('first run on an iPhone SE: Save and New game fit without scrolling', async ({ page }) => {
+  await page.setViewportSize(IPHONE_SE_VIEWPORT);
+  await page.goto('./');
+  await expectFirstRunInView(page);
+});
+
+/**
+ * Safari's viewport with its toolbars out: the screen less the status bar and Safari's
+ * own bars. An iPhone SE (375x667) leaves 375x548; an iPhone 15 (393x852) about 390x664.
+ */
+const SAFARI_VIEWPORTS = [
+  { name: 'an iPhone SE', width: 375, height: 548 },
+  { name: 'an iPhone', width: 390, height: 664 },
+];
+
+test.describe('first run in iPhone Safari', () => {
+  test.use({ userAgent: IPHONE_SAFARI_UA });
+
+  for (const viewport of SAFARI_VIEWPORTS) {
+    test(`Save and New game fit ${viewport.name} in Safari, under the install banner`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto('./');
+      await expect(page.getByRole('complementary', { name: 'Add to Home Screen' })).toBeVisible();
+      await expectFirstRunInView(page);
+    });
+  }
 });

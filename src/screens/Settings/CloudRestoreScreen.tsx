@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Button } from '@/components/Button/Button';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
@@ -10,6 +10,7 @@ import { useToast } from '@/components/Toast/toastContext';
 import {
   enableCloudBackupWithCode,
   fetchCloudBackup,
+  getCloudBackupStatus,
   isCloudBackupAvailable,
   listCloudVersions,
   type BackupVersion,
@@ -25,6 +26,7 @@ import { cloudBackupSummary, codeFromTyped, formatBackupTime } from './cloudBack
 import { RestoreCodeNote } from './RestoreCodeNote';
 import { RestoreSheet, type RestoreRequest } from './RestoreSheet';
 import { useBackupCode } from './useBackupCode';
+import { useStillHere } from './useStillHere';
 import styles from './CloudRestoreScreen.module.css';
 
 /** Failures that mean the code itself is wrong (or has nothing saved): shown on the field. */
@@ -47,6 +49,8 @@ interface Found {
   backup: CloudBackup;
   /** This phone's own code, when restoring switches it to `code` (see RestoreCodeNote). */
   switchingFrom?: string;
+  /** This phone backs up with `code` already: restoring changes nothing about that. */
+  alreadyBackingUp?: boolean;
   /**
    * The server's newest version as this screen saw it: `backup`'s own, or the first of
    * the older backups' list. Turning backup on with it needs no request (see
@@ -56,6 +60,15 @@ interface Found {
 }
 
 const NOW_BACKS_UP = 'This phone now backs up with this code.';
+const KEEPS_BACKING_UP = 'This phone keeps backing up with this code.';
+
+/** Whether cloud backup is on now (false if that can't be read). */
+function isBackupOn(): Promise<boolean> {
+  return getCloudBackupStatus().then(
+    (status) => status.enabled,
+    () => false,
+  );
+}
 
 /** Whether two typed or stored codes are the same code (however they're written). */
 function sameCode(a: string, b: string): boolean {
@@ -85,14 +98,9 @@ export function CloudRestoreScreen() {
   const phoneCode = useBackupCode();
   const available = isCloudBackupAvailable();
   const inputRef = useRef<HTMLInputElement>(null);
-  // Nothing happens here once the parent has left the screen (for the live game, say).
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  // Nothing happens here once the parent has left the screen (for the live game, say),
+  // even just a moment before: see useStillHere.
+  const stillHere = useStillHere();
   // Turning backup on after the last restore, which Games waits for (see `restored`).
   const turningOn = useRef<Promise<CloudResult<void>> | null>(null);
 
@@ -125,9 +133,11 @@ export function CloudRestoreScreen() {
     setVersions(null);
   };
 
-  const preview = (next: Found) => {
+  /** Opens the restore sheet for a backup found; `backupOn`: cloud backup was on as it was found. */
+  const preview = (next: Found, backupOn: boolean) => {
     // Checked as the sheet opens, so what it says stays put while it slides away.
     if (phoneCode && !sameCode(next.code, phoneCode)) next.switchingFrom = phoneCode;
+    else if (phoneCode && backupOn) next.alreadyBackingUp = true;
     setFound(next);
     setRequest({
       kind: 'preview',
@@ -149,12 +159,12 @@ export function CloudRestoreScreen() {
     setOlderFor(null);
     setVersions(null);
     // A mistyped code is caught here, before anything is sent.
-    const result = await fetchCloudBackup(code);
+    const [result, backupOn] = await Promise.all([fetchCloudBackup(code), isBackupOn()]);
     if (current !== attempt.current) return;
     setFinding(false);
     if (result.ok) {
       setOlderFor(code);
-      preview({ code, backup: result.value, newestVersion: result.value.version });
+      preview({ code, backup: result.value, newestVersion: result.value.version }, backupOn);
       return;
     }
     const { kind, message } = result.error;
@@ -185,18 +195,24 @@ export function CloudRestoreScreen() {
     const current = attempt.current;
     setLoading(version.version);
     setProblem(undefined);
-    const result = await fetchCloudBackup(olderFor, { version: version.version });
+    const [result, backupOn] = await Promise.all([
+      fetchCloudBackup(olderFor, { version: version.version }),
+      isBackupOn(),
+    ]);
     setLoading(null);
     if (current !== attempt.current) return;
     if (!result.ok) {
       setProblem(result.error.message);
       return;
     }
-    preview({
-      code: olderFor,
-      backup: result.value,
-      newestVersion: versions?.[0]?.version ?? result.value.version,
-    });
+    preview(
+      {
+        code: olderFor,
+        backup: result.value,
+        newestVersion: versions?.[0]?.version ?? result.value.version,
+      },
+      backupOn,
+    );
   };
 
   /**
@@ -207,7 +223,7 @@ export function CloudRestoreScreen() {
    */
   const turnOnBackup = (): string | undefined => {
     if (!found) return undefined;
-    const { code, backup, newestVersion } = found;
+    const { code, backup, newestVersion, alreadyBackingUp } = found;
     const turning = enableCloudBackupWithCode(code, { backup, newestVersion }).catch(
       (error: unknown): CloudResult<void> => {
         console.error('Turning on cloud backup after a restore failed', error);
@@ -216,20 +232,20 @@ export function CloudRestoreScreen() {
     );
     turningOn.current = turning;
     void turning.then((result) => {
-      if (result.ok || !mounted.current) return;
+      if (result.ok || !stillHere()) return;
       setSheetOpen(false);
       toast.show({
         message: `Cloud backup couldn't be turned on. ${result.error.message}`,
         duration: MESSAGE_TOAST_MS,
       });
     });
-    return NOW_BACKS_UP;
+    return alreadyBackingUp ? KEEPS_BACKING_UP : NOW_BACKS_UP;
   };
 
   /** The restore is done and its sheet closed: on to Games, if the parent is still here. */
   const restored = async () => {
     await turningOn.current;
-    if (mounted.current) void navigate(paths.home, { replace: true });
+    if (stillHere()) void navigate(paths.home, { replace: true });
   };
 
   const olderBackups = versions?.slice(1) ?? [];

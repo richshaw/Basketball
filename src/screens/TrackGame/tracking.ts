@@ -11,7 +11,7 @@ import {
   type StatType,
 } from '@/data/types';
 import { isThreePoint } from '@/lib/court';
-import { pad2 } from '@/lib/format';
+import type { NotSaved } from './session';
 
 export type StatCounts = Record<StatType, number>;
 
@@ -91,21 +91,22 @@ export function unsavedNote(count: number, kept: boolean): string {
     : `${starting} not kept on this phone. Keep the app open until ${inside} saved.`;
 }
 
-/** E.g. "1 stat isn't saved yet" or "2 stats aren't saved yet". */
-export function notSavedTitle(count: number): string {
-  return count === 1 ? "1 stat isn't saved yet" : `${count} stats aren't saved yet`;
+/**
+ * E.g. "1 stat isn't saved yet" or "2 stats aren't saved yet". A shot saved without
+ * the spot marked for it says so: "1 shot's spot isn't saved yet" (or, with a stat
+ * too, "1 stat and 1 shot's spot aren't saved yet").
+ */
+export function notSavedTitle({ count, spots }: Pick<NotSaved, 'count' | 'spots'>): string {
+  const stats = count - spots;
+  const parts: string[] = [];
+  if (stats > 0 || spots === 0) parts.push(stats === 1 ? '1 stat' : `${stats} stats`);
+  if (spots > 0) parts.push(spots === 1 ? "1 shot's spot" : `${spots} shots' spots`);
+  return `${parts.join(' and ')} ${count === 1 ? "isn't" : "aren't"} saved yet`;
 }
 
 /** E.g. "1 stat isn't saved yet. It's kept on this phone and will be saved automatically." */
-export function notSavedMessage(count: number, kept: boolean): string {
-  return `${notSavedTitle(count)}. ${unsavedNote(count, kept)}`;
-}
-
-/** Local clock time of a timestamp as 'h:mm:ss' (12-hour, no AM/PM), e.g. '7:42:05'. */
-export function formatClockTime(timestamp: number): string {
-  const time = new Date(timestamp);
-  const hours = time.getHours() % 12 || 12;
-  return `${hours}:${pad2(time.getMinutes())}:${pad2(time.getSeconds())}`;
+export function notSavedMessage(notSaved: NotSaved): string {
+  return `${notSavedTitle(notSaved)}. ${unsavedNote(notSaved.count, notSaved.kept)}`;
 }
 
 /** Overtimes the period picker always offers after regulation. */

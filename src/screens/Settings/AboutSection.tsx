@@ -4,13 +4,14 @@ import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { useToast } from '@/components/Toast/toastContext';
-import { isDemoGameId, seedDemoData } from '@/data/demo';
-import { deleteGame, getPlayer, listGames } from '@/data/repo';
+import { addSampleData, isDemoGameId, isDemoPlayer, removeDemoData } from '@/data/demo';
 import { clearAllData } from '@/data/transfer';
 import type { Game, Player } from '@/data/types';
+import { formatPlayerName } from '@/lib/format';
 import { paths } from '@/routes';
 import { ActionRow } from './ActionRow';
 import { APP_VERSION } from './appVersion';
+import { formatDayWithYear, type LastBackupFile } from './backupFiles';
 import { eraseCloudNote, type BackupCoverage } from './cloudBackupText';
 
 export interface AboutSectionProps {
@@ -18,13 +19,21 @@ export interface AboutSectionProps {
   games: readonly Game[];
   /** How much of this phone's data its online backup has (see backupCoverage). */
   cloudCoverage?: BackupCoverage;
+  /** The last backup file saved on this phone, while it has all of its data (see backupFileIsCurrent). */
+  currentBackupFile?: LastBackupFile;
 }
 
 /**
  * What "Erase all data" will delete, spelled out, what the online backup has of it (see
- * eraseCloudNote), and, with games to lose, saving a backup file first.
+ * eraseCloudNote), and, with games to lose, saving a backup file first, unless the last
+ * one saved here (`savedFile`) still has all of it: then it says so instead.
  */
-function eraseMessage(gameCount: number, coverage: BackupCoverage, now: number): string {
+function eraseMessage(
+  gameCount: number,
+  coverage: BackupCoverage,
+  now: number,
+  savedFile?: LastBackupFile,
+): string {
   const cloud = eraseCloudNote(coverage, now);
   const parts: string[] = [];
   if (gameCount === 0) {
@@ -41,22 +50,46 @@ function eraseMessage(gameCount: number, coverage: BackupCoverage, now: number):
       `${games}, the player's name and number, and your settings will be deleted from this phone. This can't be undone.`,
     );
     if (cloud) parts.push(cloud);
-    parts.push(
-      coverage.kind === 'complete'
-        ? 'For a copy of your own as well, save a backup file first.'
-        : 'If you might want them back, save a backup file first.',
-    );
+    if (savedFile) {
+      const day = formatDayWithYear(savedFile.savedAt);
+      const too = coverage.kind === 'complete' ? ' too' : '';
+      parts.push(`The backup file you saved on ${day} has all of it${too}.`);
+    } else {
+      parts.push(
+        coverage.kind === 'complete'
+          ? 'For a copy of your own as well, save a backup file first.'
+          : 'If you might want them back, save a backup file first.',
+      );
+    }
   }
   return parts.join(' ');
 }
 
 /**
- * No games, and nothing the parent entered: sample data may replace the player. A
- * player that a first game created and never named counts as nothing (the game may
- * have been a test, since deleted).
+ * What "Remove sample games" deletes: the sample games, and the sample player too while
+ * she's still as the sample data made her (`samplePlayer`); a player of the parent's own
+ * stays.
  */
-function isFreshPhone(player: Player | null | undefined, games: readonly Game[]): boolean {
-  return games.length === 0 && !player?.name.trim() && !player?.jerseyNumber;
+function removeSampleSubtitle(count: number, samplePlayer: Player | null): string {
+  const games = count === 1 ? 'sample game' : `${count} sample games`;
+  if (samplePlayer) {
+    const name = `${formatPlayerName(samplePlayer)} #${samplePlayer.jerseyNumber ?? ''}`;
+    return `Deletes just the ${games} and the sample player, ${name}. Your settings and any games of your own stay.`;
+  }
+  return `Deletes just the ${games}. The player, your settings and any games of your own stay.`;
+}
+
+/**
+ * What "Try it with sample data" adds: the sample games for the player the parent set up
+ * (a name or a number), else with a sample player (see addSampleData).
+ */
+function trySampleSubtitle(player: Player | null): string {
+  const later = 'You can remove them here any time.';
+  if (!player?.name.trim() && !player?.jerseyNumber) {
+    return `Adds a sample player with 10 finished games to look around. ${later}`;
+  }
+  const name = player.name.trim() || 'your player';
+  return `Adds 10 finished sample games for ${name} to look around. ${later}`;
 }
 
 /** The version, sample data to look around with (and removing it), and erasing everything. */
@@ -64,28 +97,28 @@ export function AboutSection({
   player,
   games,
   cloudCoverage = { kind: 'none' },
+  currentBackupFile,
 }: AboutSectionProps) {
   const confirm = useConfirm();
   const toast = useToast();
   const navigate = useNavigate();
   const [addingSample, setAddingSample] = useState(false);
   const [removingSample, setRemovingSample] = useState(false);
-  const canTrySample = isFreshPhone(player, games);
+  // Whenever there are no games (sample ones included), named player or not.
+  const canTrySample = games.length === 0;
   const sampleGameCount = games.filter((game) => isDemoGameId(game.id)).length;
+  // Still the sample player: removing the sample games takes her name and number too.
+  const samplePlayer = player && isDemoPlayer(player) ? player : null;
 
-  const addSampleData = async () => {
+  const trySampleData = async () => {
     if (addingSample) return;
     setAddingSample(true);
     try {
-      // Checked again against the database, as the sample data replaces the player
-      // (so `force`: seedDemoData refuses to replace even an unnamed player).
-      const [currentPlayer, currentGames] = await Promise.all([getPlayer(), listGames()]);
-      if (!isFreshPhone(currentPlayer, currentGames)) {
+      // Checked again against the database. The Game setup chosen here stays as it is.
+      if (!(await addSampleData())) {
         toast.show({ message: 'This phone has games of its own now, so nothing was added.' });
         return;
       }
-      // The Game setup chosen here stays as it is.
-      await seedDemoData({ force: true, keepSettings: true });
       toast.show({
         message: 'Sample games added',
         actionLabel: 'See games',
@@ -103,12 +136,9 @@ export function AboutSection({
     if (removingSample) return;
     setRemovingSample(true);
     try {
-      // Only the sample games: games of the parent's own, the player and the settings stay.
-      const sampleIds = (await listGames()).map((game) => game.id).filter(isDemoGameId);
-      for (const id of sampleIds) await deleteGame(id);
-      toast.show({
-        message: sampleIds.length === 1 ? 'Sample game removed' : 'Sample games removed',
-      });
+      // Games of the parent's own, a player she named and the settings stay.
+      const removed = await removeDemoData();
+      toast.show({ message: removed === 1 ? 'Sample game removed' : 'Sample games removed' });
     } catch (error) {
       console.error('Removing the sample games failed', error);
       toast.show({ message: "Couldn't remove the sample games. Try again." });
@@ -120,7 +150,7 @@ export function AboutSection({
   const eraseAll = async () => {
     const confirmed = await confirm({
       title: 'Erase all data?',
-      message: eraseMessage(games.length, cloudCoverage, Date.now()),
+      message: eraseMessage(games.length, cloudCoverage, Date.now(), currentBackupFile),
       confirmLabel: 'Erase all data',
       destructive: true,
     });
@@ -141,15 +171,15 @@ export function AboutSection({
         {canTrySample ? (
           <ActionRow
             title="Try it with sample data"
-            subtitle="Adds a sample player with 10 finished games to look around. You can remove the games here any time."
-            onClick={addSampleData}
+            subtitle={trySampleSubtitle(player)}
+            onClick={trySampleData}
             disabled={addingSample}
           />
         ) : null}
         {sampleGameCount > 0 ? (
           <ListRow
             title="Remove sample games"
-            subtitle={`Deletes just the ${sampleGameCount === 1 ? 'sample game' : `${sampleGameCount} sample games`}. The player, your settings and any games of your own stay.`}
+            subtitle={removeSampleSubtitle(sampleGameCount, samplePlayer)}
             destructive
             onClick={removeSampleGames}
             disabled={removingSample}

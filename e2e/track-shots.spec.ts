@@ -9,6 +9,8 @@ import {
   keptTaps,
   keptTapSpots,
   lastAction,
+  lastActionFits,
+  lineButton,
   notSaved,
   shotCourt,
   startGame,
@@ -143,11 +145,14 @@ test.describe('marking spots', () => {
     expectNear(kept?.location, CORNER);
     expect(await keptTaps(page)).toEqual([]);
 
-    // End game: the spot still can't be saved, so the sheet says so. End anyway.
+    // End game: the spot still can't be saved, so the sheet says so (the shot itself is
+    // saved). End anyway.
     await page.getByRole('button', { name: 'End game' }).tap();
     const sheet = page.getByRole('dialog', { name: 'Final score' });
     await sheet.getByRole('button', { name: 'End game' }).tap();
-    await expect(sheet.getByRole('alert')).toContainText("1 stat isn't saved yet");
+    await expect(sheet.getByRole('alert')).toHaveText(
+      "1 shot's spot isn't saved yet. It's kept on this phone and will be saved automatically.",
+    );
     await sheet.getByRole('button', { name: 'End anyway' }).tap();
     await expectRoute(page, paths.gameReport(gameId));
 
@@ -313,6 +318,13 @@ for (const device of DEVICES) {
       expect(line.y).toBeGreaterThanOrEqual(lastButton.y + lastButton.height);
       expect(bottom.y).toBeGreaterThanOrEqual(line.y + line.height);
       expect(bottom.y + bottom.height).toBeLessThanOrEqual(device.height - device.safeBottom);
+
+      // The line says all of a stat's longest note, fouled out (five fouls or more), next
+      // to Undo.
+      await tapStats(page, Array<string>(5).fill('Foul'));
+      await expect(lastAction(page)).toHaveText(/^Foul · Q\d · fouled out$/);
+      await expect(lineButton(page)).toBeInViewport({ ratio: 1 });
+      expect(await lastActionFits(page)).toBe(true);
     });
   }
 }

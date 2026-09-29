@@ -4,9 +4,13 @@ import { useSyncExternalStore } from 'react';
  * The sheets that are open right now, bottom to top. While any is open the page
  * behind can't scroll, and toasts render inside the top one: a modal dialog makes
  * everything outside it inert, so a toast anywhere else couldn't be seen or tapped.
+ * There a toast takes room of its own, under the sheet's header, so it never covers
+ * what the sheet holds; and a sheet that opens clears the toast shown before it (see
+ * ToastProvider.tsx).
  */
 
-let outlets: readonly HTMLElement[] = [];
+const NO_SHEETS: readonly HTMLElement[] = [];
+let outlets: readonly HTMLElement[] = NO_SHEETS;
 const listeners = new Set<() => void>();
 let pageOverflow = '';
 
@@ -39,11 +43,15 @@ function subscribe(listener: () => void) {
   };
 }
 
-function getTopOutlet(): HTMLElement | null {
-  return outlets.at(-1) ?? null;
+function getOutlets(): readonly HTMLElement[] {
+  return outlets;
 }
 
-/** The element toasts should render into: inside the top open sheet, or null when none is open. */
-export function useTopSheetOutlet(): HTMLElement | null {
-  return useSyncExternalStore(subscribe, getTopOutlet, () => null);
+/**
+ * The toast outlets of the open sheets, bottom to top: toasts render into the last one
+ * (the top sheet), or on the page when there's none. A new array each time a sheet opens
+ * or closes, the same one otherwise.
+ */
+export function useOpenSheets(): readonly HTMLElement[] {
+  return useSyncExternalStore(subscribe, getOutlets, () => NO_SHEETS);
 }

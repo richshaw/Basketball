@@ -253,7 +253,7 @@ describe('ToastProvider', () => {
     const dialog = screen.getByRole('dialog', { name: 'Share' });
     // The same element, now inside the sheet: never re-created, so announcements keep working.
     expect(within(dialog).getByRole('status', { name: 'Notifications' })).toBe(region);
-    expect(region).toHaveClass('overSheet');
+    expect(region).toHaveClass('inSheet');
     expect(region.closest('[inert]')).toBeNull();
 
     await user.click(within(dialog).getByRole('button', { name: 'Copy' }));
@@ -267,7 +267,130 @@ describe('ToastProvider', () => {
     );
     expect(dialog).not.toContainElement(region);
     expect(region).toBeInTheDocument();
-    expect(region).not.toHaveClass('overSheet');
+    expect(region).not.toHaveClass('inSheet');
+  });
+
+  it('takes room of its own in a sheet, under the header, so it covers none of the sheet', async () => {
+    const user = userEvent.setup();
+    function CodeSheet() {
+      const toast = useToast();
+      return (
+        <Sheet open onClose={() => {}} title="Your backup code" footer={<Button>Done</Button>}>
+          <Button onClick={() => toast.show({ message: 'Backup code copied' })}>Copy</Button>
+        </Sheet>
+      );
+    }
+    render(
+      <ToastProvider>
+        <CodeSheet />
+      </ToastProvider>,
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Your backup code' });
+    await user.click(within(dialog).getByRole('button', { name: 'Copy' }));
+
+    const region = within(dialog).getByRole('status', { name: 'Notifications' });
+    expect(region).toHaveTextContent('Backup code copied');
+    // In the sheet's own layout (not floating over it): after the title, before the
+    // content and the buttons.
+    expect(region).toHaveClass('inSheet');
+    const title = within(dialog).getByRole('heading', { name: 'Your backup code' });
+    expect(title.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const control of within(dialog).getAllByRole('button', { name: /Copy|Done/ })) {
+      expect(
+        region.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+  });
+
+  it('clears the toast shown before a sheet or dialog opens over it, and one waiting', () => {
+    vi.useFakeTimers();
+    function Screen({ open }: { open: boolean }) {
+      const toast = useToast();
+      return (
+        <>
+          <Button onClick={() => toast.show({ message: 'Backup file downloaded' })}>Save</Button>
+          <Button
+            onClick={() =>
+              toast.show({
+                message: 'Game deleted',
+                actionLabel: 'Undo',
+                onAction: () => toast.show({ message: 'Game back' }),
+              })
+            }
+          >
+            Delete
+          </Button>
+          <Sheet open={open} onClose={() => {}} title="Erase all data?" role="alertdialog" />
+        </>
+      );
+    }
+    const { rerender } = render(
+      <ToastProvider>
+        <Screen open={false} />
+      </ToastProvider>,
+    );
+    const region = screen.getByRole('status', { name: 'Notifications' });
+    tap('Save');
+    expect(region).toHaveTextContent('Backup file downloaded');
+
+    rerender(
+      <ToastProvider>
+        <Screen open />
+      </ToastProvider>,
+    );
+    // Gone at once: it would have sat over the dialog's buttons for up to 4 s.
+    expect(screen.getByRole('alertdialog', { name: 'Erase all data?' })).toContainElement(region);
+    expect(region).toBeEmptyDOMElement();
+
+    rerender(
+      <ToastProvider>
+        <Screen open={false} />
+      </ToastProvider>,
+    );
+    // A toast on its way out, and one waiting to follow it, go the same way.
+    tap('Delete');
+    fireEvent.click(within(region).getByRole('button', { name: 'Undo' }));
+    rerender(
+      <ToastProvider>
+        <Screen open />
+      </ToastProvider>,
+    );
+    expect(region).toBeEmptyDOMElement();
+    wait(TOAST_EXIT_MS);
+    expect(region).toBeEmptyDOMElement();
+  });
+
+  it('keeps a toast when the sheet it showed over closes, uncovering another', async () => {
+    const user = userEvent.setup();
+    function Sheets({ top }: { top: boolean }) {
+      const toast = useToast();
+      return (
+        <>
+          <Sheet open onClose={() => {}} title="Turn off cloud backup?" />
+          <Sheet open={top} onClose={() => {}} title="Delete your online backup?">
+            <Button onClick={() => toast.show({ message: "Couldn't delete it. Try again." })}>
+              Delete
+            </Button>
+          </Sheet>
+        </>
+      );
+    }
+    const { rerender } = render(
+      <ToastProvider>
+        <Sheets top />
+      </ToastProvider>,
+    );
+    const region = screen.getByRole('status', { name: 'Notifications' });
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(region).toHaveTextContent("Couldn't delete it. Try again.");
+
+    rerender(
+      <ToastProvider>
+        <Sheets top={false} />
+      </ToastProvider>,
+    );
+    expect(screen.getByRole('dialog', { name: 'Turn off cloud backup?' })).toContainElement(region);
+    expect(region).toHaveTextContent("Couldn't delete it. Try again.");
   });
 
   it('explains a missing provider', () => {

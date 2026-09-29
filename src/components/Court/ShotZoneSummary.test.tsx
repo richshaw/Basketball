@@ -85,6 +85,20 @@ describe('ShotZoneSummary', () => {
     expect(three?.detail).toBe('2/3');
     expect(three?.value).toBe('67%');
     expect(tiles()[1]?.detail).toBe('0/0');
+    // One of them isn't on the map: the tiles count 4 shots, the map 3.
+    expect(
+      screen.getByText('3PT counts every 3-point attempt, with a location or not.'),
+    ).toBeVisible();
+  });
+
+  it('says nothing more when the tiles count the same shots as the map', () => {
+    // Every 3 has a spot; a 2 without one counts in neither the map nor the tiles.
+    render(
+      <ShotZoneSummary
+        shots={[...shots, { location: { x: 20, y: 15 }, made: false, points: 3 }]}
+      />,
+    );
+    expect(screen.queryByText(/3PT counts every 3-point attempt/)).toBeNull();
   });
 
   it('is a named group of three tiles', () => {

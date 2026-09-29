@@ -102,7 +102,7 @@ export function EndGameSheet({
     >
       {notSaved ? (
         <p role="alert" className={styles.notSaved}>
-          {notSavedMessage(notSaved.count, notSaved.kept)}
+          {notSavedMessage(notSaved)}
         </p>
       ) : null}
       <form id={formId} className={styles.form} noValidate onSubmit={submit}>

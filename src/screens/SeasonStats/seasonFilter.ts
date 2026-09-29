@@ -29,6 +29,23 @@ export function seasonLabels(games: readonly Pick<Game, 'season'>[]): string[] {
   return [...seasons];
 }
 
+/**
+ * How many characters the picker's labels may have together, by number of segments, to
+ * all fit a 375-point iPhone in bold (the widest they get). The segments share the width
+ * by what their labels need (SegmentedControl's fitLabels), so "All" leaves room for the
+ * seasons: "All", "Fall 2026" and "Summer 2026" fit, even two names as long as
+ * "Summer 2026". A narrower screen (320 points, with Display Zoom) may still not have
+ * the room: the control measures that, and SeasonPicker then shows its sheet.
+ */
+const SEGMENTS_MAX_CHARS: Record<number, number> = { 2: 27, 3: 25 };
+
+/** Whether the season picker's choices fit on one line as segments (else, a sheet). */
+export function fitsSegments(labels: readonly string[]): boolean {
+  const maxChars = SEGMENTS_MAX_CHARS[labels.length];
+  const chars = labels.reduce((total, label) => total + label.length, 0);
+  return maxChars !== undefined && chars <= maxChars;
+}
+
 /** Whether a game belongs to the chosen season ('all' matches every game). */
 export function inSeason(game: Pick<Game, 'season'>, key: SeasonKey): boolean {
   return key === ALL_SEASONS || game.season === seasonOf(key);

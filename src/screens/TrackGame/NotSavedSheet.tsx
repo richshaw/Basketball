@@ -3,9 +3,12 @@ import { Sheet } from '@/components/Sheet/Sheet';
 import type { NotSaved } from './session';
 import { notSavedTitle, unsavedNote } from './tracking';
 
+/** Shown while the sheet has nothing to say (it's closed then). */
+const NOTHING_LEFT: NotSaved = { count: 0, spots: 0, kept: true };
+
 export interface NotSavedSheetProps {
   open: boolean;
-  /** The stats that weren't saved when Done was tapped. */
+  /** The stats (or shots' spots) that weren't saved when Done was tapped. */
   notSaved: NotSaved | null;
   /** Saving (or leaving) right now: its buttons are off meanwhile. */
   busy: boolean;
@@ -28,13 +31,13 @@ export function NotSavedSheet({
   onDoneAnyway,
   onClose,
 }: NotSavedSheetProps) {
-  const count = notSaved?.count ?? 0;
+  const { count, spots, kept } = notSaved ?? NOTHING_LEFT;
   return (
     <Sheet
       open={open}
       onClose={onClose}
-      title={notSavedTitle(count)}
-      description={unsavedNote(count, notSaved?.kept ?? true)}
+      title={notSavedTitle({ count, spots })}
+      description={unsavedNote(count, kept)}
       footer={
         <>
           <Button size="lg" disabled={busy} onClick={onTryAgain}>

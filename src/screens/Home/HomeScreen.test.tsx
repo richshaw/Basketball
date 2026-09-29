@@ -1,10 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
+import { isDemoPlayer, removeDemoData, seedDemoData } from '@/data/demo';
 import {
   createGame,
   endGame,
   getPlayer,
+  listGames,
   recordStat,
   savePlayer,
   setCurrentPeriod,
@@ -112,8 +114,10 @@ describe('HomeScreen', () => {
 
     it('points to Settings for restoring a backup file (in a build without cloud backup)', async () => {
       const { user, router } = renderRoute(paths.home);
-      const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
-      await user.click(within(card).getByRole('link', { name: 'Go to Settings' }));
+      await screen.findByRole('region', { name: 'Who are you tracking?' });
+      const settings = screen.getByRole('link', { name: 'Go to Settings' });
+      expect(settings.parentElement).toHaveTextContent('Restoring from a backup? Go to Settings');
+      await user.click(settings);
       expect(router.state.location.pathname).toBe(paths.settings);
     });
 
@@ -121,10 +125,15 @@ describe('HomeScreen', () => {
       vi.stubEnv('VITE_BACKUP_API_URL', 'https://backup.hoop-stats.test');
       try {
         const { user, router } = renderRoute(paths.home);
-        const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
-        expect(card).toHaveTextContent('Setting up a new phone? Restore from a backup');
+        await screen.findByRole('region', { name: 'Who are you tracking?' });
+        const restore = screen.getByRole('link', { name: 'Restore from a backup' });
+        expect(restore.parentElement).toHaveTextContent(
+          'Setting up a new phone? Restore from a backup',
+        );
+        // Quietly under New game, which comes first on a small screen.
+        expect(isBefore(newGameLink(), restore)).toBe(true);
 
-        await user.click(within(card).getByRole('link', { name: 'Restore from a backup' }));
+        await user.click(restore);
         expect(router.state.location.pathname).toBe(paths.restoreBackup());
         expect(router.state.location.search).toBe('?from=games');
         expect(
@@ -137,6 +146,74 @@ describe('HomeScreen', () => {
       } finally {
         vi.unstubAllEnvs();
       }
+    });
+
+    it('asks who is being tracked again once the sample games are removed', async () => {
+      await seedDemoData({ today: '2026-09-28' });
+      await removeDemoData();
+      renderRoute(paths.home);
+
+      expect(await screen.findByRole('region', { name: 'Who are you tracking?' })).toBeVisible();
+      expect(screen.queryByText('Ava · #12')).not.toBeInTheDocument();
+    });
+
+    it('offers a look around with sample data, quietly under New game', async () => {
+      const { user } = renderRoute(paths.home);
+      await screen.findByRole('region', { name: 'Who are you tracking?' });
+      const offer = screen.getByRole('button', { name: 'Try it with sample data' });
+      expect(offer.parentElement).toHaveTextContent('Just looking? Try it with sample data');
+      expect(isBefore(newGameLink(), offer)).toBe(true);
+
+      await user.click(offer);
+
+      await waitFor(() => {
+        expect(notifications()).toHaveTextContent(
+          'Sample games added. You can remove them in Settings.',
+        );
+      });
+      expect(await screen.findByText('Ava · #12')).toBeInTheDocument();
+      expect(await screen.findByRole('link', { name: /vs Eastlake/ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Try it with sample data' })).toBeNull();
+    });
+
+    it('saves a name and number typed but not saved first, and makes the sample games hers', async () => {
+      const { user } = renderRoute(paths.home);
+      const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
+      // She types her daughter's name and number, but doesn't tap Save...
+      await user.type(within(card).getByLabelText('Name'), 'Mia');
+      await user.type(within(card).getByLabelText('Number'), '7');
+      // ...and taps the link just below New game.
+      await user.click(screen.getByRole('button', { name: 'Try it with sample data' }));
+
+      await waitFor(() => {
+        expect(notifications()).toHaveTextContent(
+          'Sample games added. You can remove them in Settings.',
+        );
+      });
+      const player = await getPlayer();
+      expect(player).toMatchObject({ name: 'Mia', jerseyNumber: '7' });
+      expect(player && isDemoPlayer(player)).toBe(false);
+      const games = await listGames();
+      expect(games).toHaveLength(10);
+      expect(games.every((game) => game.playerId === player?.id)).toBe(true);
+      expect(await screen.findByText('Mia · #7')).toBeInTheDocument();
+      expect(await screen.findByRole('link', { name: /vs Eastlake/ })).toBeInTheDocument();
+      expect(setupCard()).not.toBeInTheDocument();
+    });
+
+    it('keeps a number typed on its own too, and still asks for her name', async () => {
+      const { user } = renderRoute(paths.home);
+      const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
+      await user.type(within(card).getByLabelText('Number'), '7');
+      await user.click(screen.getByRole('button', { name: 'Try it with sample data' }));
+
+      expect(await screen.findByRole('link', { name: /vs Eastlake/ })).toBeInTheDocument();
+      const player = await getPlayer();
+      expect(player).toMatchObject({ name: '', jerseyNumber: '7' });
+      expect((await listGames()).every((game) => game.playerId === player?.id)).toBe(true);
+      // The card still asks for the name, with her number in it.
+      expect(within(card).getByLabelText('Number')).toHaveValue('7');
+      expect(within(card).getByLabelText('Name')).toHaveValue('');
     });
 
     it('can start a game before the player is named', async () => {
@@ -198,6 +275,25 @@ describe('HomeScreen', () => {
 
       await user.click(newGameLink());
       expect(router.state.location.pathname).toBe(paths.newGame);
+    });
+
+    it('offers sample data for her while there are no games', async () => {
+      const player = await getPlayer();
+      const { user } = renderRoute(paths.home);
+      await screen.findByRole('heading', { name: 'No games yet' });
+
+      await user.click(screen.getByRole('button', { name: 'Try it with sample data' }));
+
+      expect(await screen.findByRole('link', { name: /vs Eastlake/ })).toBeInTheDocument();
+      expect(await getPlayer()).toEqual(player);
+      expect(screen.getByText('Ava · #12')).toBeInTheDocument();
+    });
+
+    it('offers no sample data once there is a game', async () => {
+      await addGame({ opponent: 'Central' });
+      renderRoute(paths.home);
+      await screen.findByRole('region', { name: 'Game in progress' });
+      expect(screen.queryByRole('button', { name: 'Try it with sample data' })).toBeNull();
     });
 
     it('lists every game newest first, with the player’s line and the result', async () => {

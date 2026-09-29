@@ -281,7 +281,7 @@ export function Sheet({
             </button>
           ) : null}
         </div>
-        {/* Toasts shown while this sheet is on top appear here, under the header. */}
+        {/* Toasts shown while this sheet is on top take their room here, under the header. */}
         <div ref={toastOutletRef} className={styles.toastOutlet} />
         {children === undefined || children === null ? null : (
           <div className={styles.body} inert={closing}>

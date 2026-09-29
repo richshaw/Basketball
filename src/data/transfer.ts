@@ -7,6 +7,7 @@
 import * as z from 'zod/mini';
 import { compareIds } from '@/lib/id';
 import { db, META_KEYS, touchLastChange } from './db';
+import { isDemoPlayer } from './demoIds';
 import { forgetPendingStats } from './pendingStats';
 import { getSettings, primaryPlayer } from './repo';
 import type { Game, Player, Settings, StatEvent } from './types';
@@ -128,18 +129,25 @@ function integrityProblems(file: ExportFile): string[] {
   return problems;
 }
 
+/** How every backup's text starts (its `app` comes first), however it ends. */
+const EXPORT_START = /^\uFEFF?\s*\{\s*"app"\s*:\s*"hoop-stats"/;
+
 /**
  * Checks that `input` is a Hoop Stats backup this version can restore, and returns
  * a clean copy. Accepts the parsed object or the JSON text. Throws ExportFileError
- * with a message for the parent ("This file isn't a Hoop Stats backup.", …).
+ * with a message for the parent ("This file isn't a Hoop Stats backup.", …). Text
+ * that can't be read at all is a damaged backup, not some other file, when it starts
+ * like one (cut off, say) or `ours` says it's one of ours (e.g. by the file's name).
  */
-export function parseExportFile(input: unknown): ExportFile {
+export function parseExportFile(input: unknown, { ours = false } = {}): ExportFile {
   let data = input;
   if (typeof data === 'string') {
+    const text = data;
     try {
-      data = JSON.parse(data) as unknown;
+      data = JSON.parse(text) as unknown;
     } catch {
-      throw new ExportFileError(NOT_A_BACKUP, ['Not JSON']);
+      const damaged = ours || EXPORT_START.test(text);
+      throw new ExportFileError(damaged ? DAMAGED : NOT_A_BACKUP, ['Not JSON']);
     }
   }
   if (!isRecord(data) || data.app !== EXPORT_APP) {
@@ -219,8 +227,16 @@ async function deviceMatches(file: ExportFile): Promise<boolean> {
   );
 }
 
-/** The player to keep when merging: details from whichever was set up most recently. */
+/**
+ * The player to keep when merging: details from whichever was set up most recently.
+ * The sample player, as the sample data made her (isDemoPlayer), never wins: the other
+ * player is kept as it is, dates and all, so trying the sample games first can't
+ * rename the parent's own player, however long ago she set her up.
+ */
 function mergePlayers(local: Player, incoming: Player): Player {
+  if (isDemoPlayer(incoming)) return local;
+  // Under this phone's id, which its games (the sample games, say) have.
+  if (isDemoPlayer(local)) return { ...incoming, id: local.id };
   const [newer, older] =
     incoming.updatedAt > local.updatedAt ? [incoming, local] : [local, incoming];
   // A player that was never named (e.g. created by a first game on a new phone)

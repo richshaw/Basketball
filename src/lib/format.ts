@@ -94,6 +94,24 @@ export function formatAvg(value: number): string {
   return Number.isFinite(value) ? (Math.round(value * 10) / 10).toFixed(1) : '–';
 }
 
+export interface ClockTimeOptions {
+  /** Adds the seconds: '6:05:09'. */
+  seconds?: boolean;
+}
+
+/**
+ * Local time on a 12-hour clock without AM/PM, e.g. '6:05' or '12:30' ('6:05:09' with
+ * `seconds`): when a stat was recorded during a game.
+ */
+export function formatClockTime(
+  epochMs: number,
+  { seconds = false }: ClockTimeOptions = {},
+): string {
+  const date = new Date(epochMs);
+  const time = `${date.getHours() % 12 || 12}:${pad2(date.getMinutes())}`;
+  return seconds ? `${time}:${pad2(date.getSeconds())}` : time;
+}
+
 /** Makes and attempts as '5/9'. */
 export function formatMadeAttempted(made: number, attempted: number): string {
   return `${made}/${attempted}`;

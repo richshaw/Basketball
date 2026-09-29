@@ -9,6 +9,7 @@ import {
   createSpreadsheetFile,
   describeBackup,
   describePlayer,
+  isBackupFileName,
   nothingNewMessage,
   readBackupFile,
   readLastBackupFile,
@@ -24,6 +25,16 @@ const demo = (): ExportFile => buildDemoData({ today: '2026-09-28' });
 
 afterEach(() => {
   localStorage.clear();
+});
+
+describe('isBackupFileName', () => {
+  it("knows this app's backup files, also once renamed as copies", () => {
+    expect(isBackupFileName(backupFileName(EVENING))).toBe(true);
+    expect(isBackupFileName('hoop-stats-backup-2026-09-28 (1).json')).toBe(true);
+    expect(isBackupFileName('Hoop-Stats-Backup-2026-09-28.json')).toBe(true);
+    expect(isBackupFileName('hoop-stats-games-2026-09-28.csv')).toBe(false);
+    expect(isBackupFileName('notes.json')).toBe(false);
+  });
 });
 
 describe('file names', () => {
@@ -62,6 +73,31 @@ describe('readBackupFile', () => {
     const file = createBackupFile(demo(), EVENING);
     const backup = await readBackupFile(file);
     expect(backup.games).toHaveLength(10);
+  });
+
+  const DAMAGED = "This backup is damaged, so it can't be restored.";
+  const NOT_A_BACKUP = "This file isn't a Hoop Stats backup.";
+  const failureOf = async (file: Blob) =>
+    ((await readBackupFile(file).catch((caught: unknown) => caught)) as ExportFileError).message;
+
+  it('calls a backup file that was cut off damaged, whatever it was renamed to', async () => {
+    const whole = await createBackupFile(demo(), EVENING).text();
+    for (const name of [backupFileName(EVENING), 'backup.json', 'download']) {
+      const cut = new File([whole.slice(0, 500)], name, { type: 'application/json' });
+      expect(await failureOf(cut)).toBe(DAMAGED);
+    }
+  });
+
+  it("calls a file with a backup's name that can't be read at all damaged", async () => {
+    for (const name of [backupFileName(EVENING), 'hoop-stats-backup-2026-09-28 (1).json']) {
+      expect(await failureOf(new File(['\u0000\u0001 garbled'], name))).toBe(DAMAGED);
+      expect(await failureOf(new File([''], name))).toBe(DAMAGED);
+    }
+    // Under any other name, the same bytes are some other file.
+    expect(await failureOf(new File(['\u0000\u0001 garbled'], 'notes.json'))).toBe(NOT_A_BACKUP);
+    // And a backup's name doesn't make another app's JSON a damaged backup.
+    const json = new File(['{"hello":"world"}'], backupFileName(EVENING));
+    expect(await failureOf(json)).toBe(NOT_A_BACKUP);
   });
 
   it("explains a file that isn't a backup", async () => {

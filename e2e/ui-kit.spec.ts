@@ -199,15 +199,20 @@ test("a double tap on a toast's action runs it once and can't reach the page", a
   await expect(page.getByText('Undos: 1')).toBeVisible();
 });
 
-test('a toast over a tall sheet sits under its header', async ({ page }) => {
+test('a toast in a tall sheet takes its own room under the header, covering nothing', async ({
+  page,
+}) => {
   await page.getByRole('button', { name: 'Pick opponent' }).tap();
   const sheet = page.getByRole('dialog', { name: 'Pick opponent' });
   await expect(sheet).toBeVisible();
+  const copy = sheet.getByRole('button', { name: 'Copy list' });
 
-  await sheet.getByRole('button', { name: 'Copy list' }).tap();
+  await copy.tap();
   const toast = sheet.getByRole('status', { name: 'Notifications' });
   await expect(toast).toContainText('Copied 24 teams');
-  const toastTop = (await toast.boundingBox())?.y ?? 0;
+  const toastBox = await toast.boundingBox();
+  const toastTop = toastBox?.y ?? 0;
+  const toastBottom = toastTop + (toastBox?.height ?? 0);
   for (const headerPart of [
     sheet.getByRole('heading', { name: 'Pick opponent' }),
     sheet.getByRole('button', { name: 'Close' }),
@@ -215,6 +220,22 @@ test('a toast over a tall sheet sits under its header', async ({ page }) => {
     const box = await headerPart.boundingBox();
     expect(toastTop).toBeGreaterThanOrEqual((box?.y ?? 0) + (box?.height ?? 0));
   }
+  // The content makes room for it: the toast covers none of it.
+  expect((await copy.boundingBox())?.y ?? 0).toBeGreaterThanOrEqual(toastBottom);
+  expect(await hitTest(page, await centerOf(copy))).toBe('page');
+});
+
+test('a toast shown before a sheet opens goes, instead of covering it', async ({ page }) => {
+  await page.getByRole('button', { name: 'Long toast' }).tap();
+  await expect(notifications(page)).toContainText('Saved.');
+
+  await page.getByRole('button', { name: 'Pick opponent' }).tap();
+  const sheet = page.getByRole('dialog', { name: 'Pick opponent' });
+  await expect(sheet).toBeVisible();
+  await expect(notifications(page)).toBeEmpty();
+  await sheet.getByRole('button', { name: 'Close' }).tap();
+  await expect(sheet).toBeHidden();
+  await expect(notifications(page)).toBeEmpty();
 });
 
 test('toasts stay clear of the tab bar on tab screens', async ({ page }) => {
