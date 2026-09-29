@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useLocation, useSearchParams } from 'react-router';
 import { isStandalone } from '@/components/InstallBanner/install';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
@@ -40,6 +40,8 @@ export function SettingsScreen() {
   const backupCode = useBackupCode();
   const { snapshot, fresh, currentSnapshot } = useBackupSnapshot();
   const [searchParams] = useSearchParams();
+  // Each visit to the section's link (a tap on the backup banner) is a new location.
+  const { key: locationKey } = useLocation();
   // Only changes when the app is relaunched from the Home Screen.
   const [standalone] = useState(() => isStandalone());
   // Wait for the data, so nothing appears and then vanishes (e.g. "Try it with sample data").
@@ -64,7 +66,9 @@ export function SettingsScreen() {
               <CloudBackupSection
                 status={cloudBackup}
                 code={backupCode}
-                focusOnShow={searchParams.get('section') === CLOUD_BACKUP_SECTION}
+                focusRequest={
+                  searchParams.get('section') === CLOUD_BACKUP_SECTION ? locationKey : undefined
+                }
               />
             ) : null}
             <BackupSection

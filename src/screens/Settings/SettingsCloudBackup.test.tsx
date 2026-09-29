@@ -560,6 +560,38 @@ describe('Settings: cloud backup paused or stopped', () => {
       expect(screen.getByRole('region', { name: 'Cloud backup' })).toHaveFocus();
     });
   });
+
+  it('goes back to the section at each tap on the banner', async () => {
+    await pauseForMissingGames();
+    const scrollIntoView = vi.fn();
+    stubProperties(Element.prototype, { scrollIntoView });
+    const { user } = await renderSettings();
+    const section = () => screen.getByRole('region', { name: 'Cloud backup' });
+
+    await user.click(screen.getByRole('link', { name: 'Cloud backup is paused. Tap to fix' }));
+    await waitFor(() => {
+      expect(section()).toHaveFocus();
+    });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    // She moves on (the Erase question takes focus, then gives it back), then taps the
+    // banner again: the same address, and it still takes her there.
+    await user.click(screen.getByRole('button', { name: 'Erase all data' }));
+    await user.click(
+      within(await screen.findByRole('alertdialog', { name: 'Erase all data?' })).getByRole(
+        'button',
+        { name: 'Cancel' },
+      ),
+    );
+    await waitFor(() => {
+      expect(section()).not.toHaveFocus();
+    });
+    await user.click(screen.getByRole('link', { name: 'Cloud backup is paused. Tap to fix' }));
+    await waitFor(() => {
+      expect(section()).toHaveFocus();
+    });
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('Settings: answers that come after the parent has left', () => {

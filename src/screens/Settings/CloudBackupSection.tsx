@@ -40,8 +40,11 @@ export interface CloudBackupSectionProps {
   status: CloudBackupStatus;
   /** This phone's backup code (while on, or kept after turning off), or null. */
   code: string | null;
-  /** Scroll here and take focus once shown (Settings opened from the backup banner). */
-  focusOnShow?: boolean;
+  /**
+   * Each new value scrolls here and takes focus: Settings opened at this section (a tap
+   * on the backup banner, every time, even on the same address).
+   */
+  focusRequest?: string;
 }
 
 function StatusIcon({ tone }: { tone: StatusTone }) {
@@ -82,7 +85,7 @@ function StatusRow({ status }: { status: CloudBackupStatus }) {
  * to save), its status, "Back up now", the code again, turning it off, and what to do
  * when it pauses. SettingsScreen shows it only in builds with a backup server.
  */
-export function CloudBackupSection({ status, code, focusOnShow = false }: CloudBackupSectionProps) {
+export function CloudBackupSection({ status, code, focusRequest }: CloudBackupSectionProps) {
   const confirm = useConfirm();
   const toast = useToast();
   const navigate = useNavigate();
@@ -112,10 +115,10 @@ export function CloudBackupSection({ status, code, focusOnShow = false }: CloudB
 
   useEffect(() => {
     const section = sectionRef.current;
-    if (!focusOnShow || !section) return;
+    if (focusRequest === undefined || !section) return;
     section.focus({ preventScroll: true });
     if (typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'center' });
-  }, [focusOnShow]);
+  }, [focusRequest]);
 
   /** Runs one action at a time; the rows are disabled meanwhile. */
   const run = async (task: () => Promise<void>) => {
