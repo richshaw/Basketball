@@ -28,8 +28,8 @@ createRoot(container).render(
   </StrictMode>,
 );
 
-// Stats not saved yet (see src/data/pendingSaves.ts): those an earlier page kept but
-// couldn't save before it closed are saved now, and any tap whose save fails is tried
-// again while the app is open, whatever screen is showing. Nothing waits on it, and it
-// never shows anything: the saved stats simply appear.
+// Stats (and shot spots) not saved yet (see src/data/pendingSaves.ts): those an earlier
+// page kept but couldn't save before it closed are saved now, and any whose save fails
+// is tried again while the app is open, whatever screen is showing. Nothing waits on
+// it, and it never shows anything: the saved stats simply appear.
 startPendingStatsRetry();
