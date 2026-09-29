@@ -48,6 +48,14 @@ describe('checksShrink', () => {
     expect(checksShrink({ ...backedUp, disabledAt: 5 }, 20)).toBe(false);
     expect(checksShrink(undefined, 20)).toBe(false);
   });
+
+  it('narrows nothing: a state it says no to is still a backup state', () => {
+    const waitingForAnotherPhone: StoredBackupState = { ...backedUp, paused: 'other-device' };
+    if (!checksShrink(waitingForAnotherPhone, 20)) {
+      // As a type guard, it would make this `never` (and this line wouldn't typecheck).
+      expect(waitingForAnotherPhone.code).toBe('TEST-CODE');
+    }
+  });
 });
 
 describe('shownBackupState', () => {

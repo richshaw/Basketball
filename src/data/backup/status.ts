@@ -74,12 +74,13 @@ export interface StatusInputs {
  * Whether the next automatic upload would run the shrink guard on the data as it is
  * now: backup is on and paused for nothing else (any other pause stops automatic
  * uploads first), there are changes to upload, and the guard hasn't looked at this very
- * data already. The same rules as the engine's (see tryUpload).
+ * data already. The same rules as the engine's (see tryUpload). A plain boolean, not a
+ * type guard: a state it says no to can still be a backup that's on.
  */
 export function checksShrink(
   stored: StoredBackupState | undefined,
   lastChangeAt: number | undefined,
-): stored is StoredBackupState {
+): boolean {
   if (!isBackupOn(stored)) return false;
   if (stored.paused !== undefined && stored.paused !== 'shrink') return false;
   if (stored.paused === 'shrink' && stored.shrink?.changeAt === lastChangeAt) return false;
