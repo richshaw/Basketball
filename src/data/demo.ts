@@ -21,7 +21,8 @@ import {
   isDemoGameId,
   isDemoPlayer,
 } from './demoIds';
-import { deleteGame, getPlayer, listGames, savePlayer } from './repo';
+import { forgetPendingStats } from './pendingStats';
+import { deleteGame, getPlayer, savePlayer } from './repo';
 import { isFieldGoalType } from './stats';
 import { EXPORT_APP, EXPORT_SCHEMA_VERSION, importAll, type ExportFile } from './transfer';
 import type { CourtPoint, Game, HomeAway, Player, StatEvent, StatType } from './types';
@@ -436,14 +437,25 @@ export async function addSampleData(): Promise<boolean> {
  * is still the sample player (isDemoPlayer), her name and number. Her record stays, so
  * games of the parent's own stay attached to it, and the app asks who's being tracked
  * again. A player the parent named or renamed, her games and the settings stay as they
- * are. All in one transaction: all or nothing. Resolves to how many games it removed.
+ * are. All or nothing, in one transaction, and so are the sample games' taps and spots
+ * not saved yet: all forgotten just before it, all kept again if it fails (as importAll
+ * does). Resolves to how many games it removed.
  */
-export function removeDemoData(): Promise<number> {
-  return db.transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
-    const sampleIds = (await listGames()).map((game) => game.id).filter(isDemoGameId);
-    for (const id of sampleIds) await deleteGame(id);
-    const player = await getPlayer();
-    if (player && isDemoPlayer(player)) await savePlayer({ name: '', jerseyNumber: null });
-    return sampleIds.length;
-  });
+export async function removeDemoData(): Promise<number> {
+  const sampleIds = (await db.games.toCollection().primaryKeys()).filter(isDemoGameId);
+  // Right before the write: then no retry can save one of their taps into a sample game
+  // added again later (it would have the same id). (deleteGame, below, then has none left
+  // to forget, and none to put back if the write fails: that's done here, for all of them.)
+  const keepAgain = sampleIds.map((id) => forgetPendingStats(id));
+  try {
+    return await db.transaction('rw', [db.players, db.games, db.events, db.meta], async () => {
+      for (const id of sampleIds) await deleteGame(id);
+      const player = await getPlayer();
+      if (player && isDemoPlayer(player)) await savePlayer({ name: '', jerseyNumber: null });
+      return sampleIds.length;
+    });
+  } catch (error) {
+    for (const again of keepAgain) again();
+    throw error;
+  }
 }

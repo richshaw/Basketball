@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { isOnHalfCourt, isThreePoint } from '@/lib/court';
 import { todayLocalISO } from '@/lib/format';
 import {
@@ -15,6 +15,7 @@ import {
 } from './demo';
 import { replayPendingStats } from './pendingSaves';
 import { addPendingStat, listPendingStats, newPendingStat } from './pendingStats';
+import * as repo from './repo';
 import {
   createGame,
   deleteGame,
@@ -323,5 +324,34 @@ describe('removeDemoData', () => {
     expect(await removeDemoData()).toBe(0);
 
     expect(await getPlayer()).toEqual(maya);
+  });
+
+  it('forgets the taps not saved yet of the sample games, and only theirs', async () => {
+    await seedDemoData({ today: TODAY });
+    const own = await createGame({ opponent: 'Westfield', date: TODAY, periodFormat: 'quarters' });
+    addPendingStat(newPendingStat({ gameId: demoGameId(1), type: 'blk', period: 4 }));
+    addPendingStat(newPendingStat({ gameId: own.id, type: 'stl', period: 1 }));
+
+    await removeDemoData();
+
+    expect(listPendingStats().map((stat) => stat.gameId)).toEqual([own.id]);
+  });
+
+  it('keeps the taps of the sample games too if they could not be removed', async () => {
+    await seedDemoData({ today: TODAY });
+    // Taps kept for two sample games (one reopened on the live game screen, say).
+    addPendingStat(newPendingStat({ gameId: demoGameId(1), type: 'blk', period: 4 }));
+    addPendingStat(newPendingStat({ gameId: demoGameId(10), type: 'stl', period: 4 }));
+    // The last step, clearing the sample player's name, fails.
+    vi.spyOn(repo, 'savePlayer').mockRejectedValue(new Error('Connection lost'));
+
+    await expect(removeDemoData()).rejects.toThrow('Connection lost');
+
+    // All or nothing: every sample game is still there, and so are the taps kept for them.
+    expect(await listGames()).toHaveLength(10);
+    expect(listPendingStats().map((stat) => stat.gameId)).toEqual(
+      expect.arrayContaining([demoGameId(1), demoGameId(10)]),
+    );
+    expect(listPendingStats()).toHaveLength(2);
   });
 });
