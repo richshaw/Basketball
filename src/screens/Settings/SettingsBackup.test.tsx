@@ -399,6 +399,23 @@ describe('Settings: restore from a backup file', () => {
     expect(games.find((game) => game.id === phoneGame.id)).toBeDefined();
   });
 
+  it('keeps her own player when the sample games were tried first', async () => {
+    // A new phone: she tries the sample games first. Their player's date (Sep 27) is
+    // after she set up Maya (Sep 1)...
+    await seedDemoData({ today: '2026-12-01' });
+    const { user } = await renderSettings();
+
+    // ...then adds her backup to what's on the phone.
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+
+    await expectToast('Restored 2 games');
+    const player = await getPlayer();
+    expect(player).toMatchObject({ name: 'Maya', jerseyNumber: '7' });
+    expect((await listGames()).every((game) => game.playerId === player?.id)).toBe(true);
+  });
+
   it('says how many games were restored and how many the phone already had', async () => {
     // This phone already has the fixture's first game.
     const fixture = parseExportFile(fixtureJson);

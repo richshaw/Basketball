@@ -14,8 +14,8 @@ import {
 import { BackupCodeError, generateBackupCode, parseBackupCode } from '@/data/backup/code';
 import { cloudFailure, errorMessage } from '@/data/backup/errors';
 import { deriveBackupKeys } from '@/data/backup/keys';
-import type { DemoOptions } from '@/data/demo';
-import { clearAllData, type ExportFile } from '@/data/transfer';
+import { seedDemoData, type DemoOptions } from '@/data/demo';
+import { clearAllData, importAll, type ExportFile } from '@/data/transfer';
 import { createGame, deleteGame, getPlayer, listGames } from '@/data/repo';
 import { paths } from '@/routes';
 import { buildRealData, REAL_LIVE_GAME_ID, realGameId, TEST_API_URL } from '@/test/backupHarness';
@@ -219,6 +219,38 @@ describe('Restore from a backup code', () => {
     expect(await listGames()).toHaveLength(11);
     expect(await getBackupCode()).toBe(code);
     expect(await settledStatus()).toMatchObject({ enabled: true, state: 'idle' });
+  });
+
+  it('keeps her own player when the sample games were tried first', async () => {
+    // Her phone backs up her season, with her player set up in June...
+    const real = buildRealData();
+    const mia = {
+      id: 'real-player',
+      name: 'Mia',
+      jerseyNumber: '7',
+      createdAt: Date.parse('2026-06-01T20:00:00Z'),
+      updatedAt: Date.parse('2026-06-01T20:00:00Z'),
+    };
+    await importAll(
+      { ...real, players: [mia], games: real.games.map((game) => ({ ...game, playerId: mia.id })) },
+      'replace',
+    );
+    const code = await turnOnCloudBackup();
+    // ...and on a new phone she tries the sample games first (their player dates from Sep 27).
+    await resetDatabase();
+    await seedDemoData({ today: '2026-12-01' });
+    const view = await renderRestore();
+
+    await find(view, code);
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    await view.user.click(
+      within(sheet).getByRole('button', { name: /Add to what's on this phone/ }),
+    );
+
+    await expectToast('Restored 10 games. This phone now backs up with this code.');
+    await expectGames(view);
+    expect(await getPlayer()).toMatchObject({ name: 'Mia', jerseyNumber: '7' });
+    expect(await screen.findByText('Mia · #7')).toBeInTheDocument();
   });
 
   it('replaces everything on the phone after asking', async () => {

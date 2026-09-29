@@ -7,6 +7,7 @@
 import * as z from 'zod/mini';
 import { compareIds } from '@/lib/id';
 import { db, META_KEYS, touchLastChange } from './db';
+import { isDemoPlayer } from './demoIds';
 import { forgetPendingStats } from './pendingStats';
 import { getSettings, primaryPlayer } from './repo';
 import type { Game, Player, Settings, StatEvent } from './types';
@@ -226,8 +227,16 @@ async function deviceMatches(file: ExportFile): Promise<boolean> {
   );
 }
 
-/** The player to keep when merging: details from whichever was set up most recently. */
+/**
+ * The player to keep when merging: details from whichever was set up most recently.
+ * The sample player, as the sample data made her (isDemoPlayer), never wins: the other
+ * player is kept as it is, dates and all, so trying the sample games first can't
+ * rename the parent's own player, however long ago she set her up.
+ */
 function mergePlayers(local: Player, incoming: Player): Player {
+  if (isDemoPlayer(incoming)) return local;
+  // Under this phone's id, which its games (the sample games, say) have.
+  if (isDemoPlayer(local)) return { ...incoming, id: local.id };
   const [newer, older] =
     incoming.updatedAt > local.updatedAt ? [incoming, local] : [local, incoming];
   // A player that was never named (e.g. created by a first game on a new phone)

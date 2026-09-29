@@ -12,27 +12,28 @@ import {
 } from '@/lib/court';
 import { parseLocalDate, todayLocalISO, toLocalISODate } from '@/lib/format';
 import { db } from './db';
+import {
+  DEMO_LIVE_GAME_ID,
+  DEMO_PLAYER_ID,
+  DEMO_PLAYER_NAME,
+  DEMO_PLAYER_NUMBER,
+  demoGameId,
+  isDemoGameId,
+  isDemoPlayer,
+} from './demoIds';
 import { deleteGame, getPlayer, listGames, savePlayer } from './repo';
 import { isFieldGoalType } from './stats';
 import { EXPORT_APP, EXPORT_SCHEMA_VERSION, importAll, type ExportFile } from './transfer';
 import type { CourtPoint, Game, HomeAway, Player, StatEvent, StatType } from './types';
 
-export const DEMO_PLAYER_ID = 'demo-player';
-const DEMO_PLAYER_NAME = 'Ava';
-const DEMO_PLAYER_NUMBER = '12';
+export {
+  DEMO_LIVE_GAME_ID,
+  DEMO_PLAYER_ID,
+  demoGameId,
+  isDemoGameId,
+  isDemoPlayer,
+} from './demoIds';
 export const DEMO_SEASON = 'Fall 2026';
-/** The optional live game's id (see `DemoOptions.liveGame`). */
-export const DEMO_LIVE_GAME_ID = 'demo-live';
-
-/** Id of the nth demo game, 1 (oldest) to 10 (newest), e.g. 'demo-game-10'. */
-export function demoGameId(n: number): string {
-  return `demo-game-${String(n).padStart(2, '0')}`;
-}
-
-/** Whether a game is demo data (e.g. to remove the sample games and nothing else). */
-export function isDemoGameId(id: string): boolean {
-  return id === DEMO_LIVE_GAME_ID || /^demo-game-\d{2}$/.test(id);
-}
 
 export interface DemoOptions {
   /** The local date ('YYYY-MM-DD') the games count back from. Defaults to today. */
@@ -428,15 +429,6 @@ export async function addSampleData(): Promise<boolean> {
   if (await hasOwnData({ keepPlayer: true })) return false;
   await seedDemoData({ keepPlayer: true, keepSettings: true });
   return true;
-}
-
-/** Whether `player` is the sample player just as the sample data made her: not renamed. */
-export function isDemoPlayer(player: Pick<Player, 'id' | 'name' | 'jerseyNumber'>): boolean {
-  return (
-    player.id === DEMO_PLAYER_ID &&
-    player.name === DEMO_PLAYER_NAME &&
-    player.jerseyNumber === DEMO_PLAYER_NUMBER
-  );
 }
 
 /**

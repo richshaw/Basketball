@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { db, META_KEYS } from './db';
-import { buildDemoData, demoGameId, seedDemoData } from './demo';
+import { buildDemoData, demoGameId, isDemoPlayer, removeDemoData, seedDemoData } from './demo';
 import { replayPendingStats } from './pendingSaves';
 import { addPendingStat, listPendingStats, newPendingStat } from './pendingStats';
 import {
@@ -339,6 +339,56 @@ describe('importAll merge', () => {
       'merge',
     );
     expect((await getPlayer())?.name).toBe('Ava Smith');
+  });
+
+  describe('the sample player never wins', () => {
+    /** Her own player, set up long before the sample player's date, as in a real backup. */
+    const mia: Player = {
+      id: 'real-player',
+      name: 'Mia',
+      jerseyNumber: '7',
+      createdAt: Date.parse('2026-06-01T20:00:00Z'),
+      updatedAt: Date.parse('2026-06-01T20:00:00Z'),
+    };
+    const miasGame = game({ id: 'real-game', playerId: mia.id });
+
+    it('over her own player, however long ago she set her up', async () => {
+      // A new phone: she tries the sample games (the sample player's date is Sep 27)...
+      await seedDemoData({ today: '2026-12-01' });
+      const sample = await getPlayer();
+      expect(sample && sample.updatedAt > mia.updatedAt).toBe(true);
+      // ...then adds her backup to what's on the phone.
+      await importAll(file({ players: [mia], games: [miasGame], events: [] }), 'merge');
+
+      const player = await getPlayer();
+      // Hers, dates and all, under the phone's player id, which the sample games have.
+      expect(player).toEqual({ ...mia, id: sample?.id });
+      expect(player && isDemoPlayer(player)).toBe(false);
+      expect((await getGame('real-game'))?.playerId).toBe(player?.id);
+
+      // Removing the sample games then leaves her and her game as they are.
+      await removeDemoData();
+      expect(await getPlayer()).toEqual(player);
+      expect((await listGames()).map((each) => each.id)).toEqual(['real-game']);
+    });
+
+    it('over a player never named, either', async () => {
+      await seedDemoData({ today: '2026-12-01' });
+      const unnamed = { ...mia, name: '' };
+      await importAll(file({ players: [unnamed], games: [], events: [] }), 'merge');
+      expect(await getPlayer()).toMatchObject({ name: '', jerseyNumber: '7' });
+    });
+
+    it('when a backup made while trying the samples comes to a phone with her own player', async () => {
+      await importAll(file({ players: [mia], games: [miasGame], events: [] }), 'replace');
+      const samples = buildDemoData({ today: '2026-12-01' });
+      await importAll(samples, 'merge');
+
+      expect(await getPlayer()).toEqual(mia);
+      // The sample games came in, as hers.
+      expect((await listGames()).every((each) => each.playerId === mia.id)).toBe(true);
+      expect(await db.games.count()).toBe(samples.games.length + 1);
+    });
   });
 
   it("keeps the device's settings, or fills them in if there are none", async () => {
