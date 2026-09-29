@@ -1,6 +1,9 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { courtToSvg, courtViewBox } from '@/components/Court/courtGeometry';
+import { courtBox, mockScreenBox, svgToClient } from '@/components/Court/courtTestUtils';
 import { db } from '@/data/db';
+import { listPendingSpots } from '@/data/pendingSpots';
 import { listPendingStats, replayPendingStats } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
 import {
@@ -11,12 +14,14 @@ import {
   getGameEvents,
   recordStat,
   setCurrentPeriod,
+  updateSettings,
   type NewGame,
 } from '@/data/repo';
-import { MAX_PERIOD, type Game, type StatType } from '@/data/types';
+import { MAX_PERIOD, type CourtPoint, type Game, type StatType } from '@/data/types';
 import { paths } from '@/routes';
 import { renderRoute } from '@/test/render';
 import { AUTO_RETRY_MS } from './session';
+import { COURT_DEPTH } from './ShotCourt';
 import { DOUBLE_TAP_MS } from './tracking';
 
 function newGame(overrides: Partial<NewGame> = {}): Promise<Game> {
@@ -849,5 +854,241 @@ describe('TrackGameScreen', () => {
     renderRoute(paths.trackGame('loading'));
     expect(screen.queryByRole('heading')).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Record a stat' })).not.toBeInTheDocument();
+  });
+});
+
+describe('TrackGameScreen shot chart', () => {
+  // Spots in feet from the basket: a 2 from the left elbow, a layup, a corner 3.
+  const ELBOW: CourtPoint = { x: -6, y: 13.75 };
+  const LAYUP: CourtPoint = { x: 1, y: 2 };
+  const CORNER: CourtPoint = { x: 23, y: -3 };
+
+  const court = () => screen.getByRole('img', { name: /^Shot spot/ });
+  const queryCourt = () => screen.queryByRole('img', { name: /^Shot spot/ });
+  /** The court's box: it's outlined while a tap on it marks a shot's spot. */
+  const courtArea = () => court().parentElement;
+  /** The last-action line's note under its message (e.g. "Spot marked"). */
+  const lineNote = () => lastAction().querySelector('[aria-hidden="true"]:not(.dot)');
+
+  /** Taps the court at `point` (feet). jsdom does no layout, so its box is made up. */
+  function tapCourt(point: CourtPoint) {
+    const svg = court();
+    const placement = { scale: 0.7, left: 8, top: 120, viewBox: courtViewBox(COURT_DEPTH) };
+    mockScreenBox(svg, courtBox(placement));
+    const pointer = {
+      pointerId: 1,
+      isPrimary: true,
+      button: 0,
+      ...svgToClient(courtToSvg(point), placement),
+    };
+    fireEvent.pointerDown(svg, pointer);
+    fireEvent.pointerUp(svg, pointer);
+  }
+
+  async function eventSpots(gameId: string) {
+    return (await getGameEvents(gameId)).map((event) => [event.type, event.location]);
+  }
+
+  it('shows the court only with Shot chart on, above the buttons, with the strip compact', async () => {
+    const game = await newGame();
+    await renderTracking(game);
+    const main = screen.getByRole('main');
+    // Between the stat strip and the grid, from the start.
+    expect(court().compareDocumentPosition(grid()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      court().compareDocumentPosition(strip()) & Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBeTruthy();
+    expect(main).toHaveClass('withCourt');
+    // One row of points, fouls and shooting: the other counts are on their buttons.
+    expect(strip()).toHaveClass('compact');
+    expect(court()).toHaveAccessibleName(
+      'Shot spot (optional): tap 2PT or 3PT first. Tap where the shot was taken.',
+    );
+    // Quick taps on it never scroll or zoom the page.
+    expect(court()).toHaveClass('touchNone');
+  });
+
+  it('with Shot chart off, keeps the layout exactly as it was', async () => {
+    await updateSettings({ shotChart: false });
+    const game = await newGame();
+    await renderTracking(game);
+    const main = screen.getByRole('main');
+
+    expect(queryCourt()).not.toBeInTheDocument();
+    expect(main).toHaveClass('screen', { exact: true });
+    expect(strip()).toHaveClass('strip', { exact: true });
+    expect(
+      within(strip())
+        .getAllByRole('listitem')
+        .map((item) => item.className),
+    ).toEqual([
+      'item points',
+      'item',
+      'item',
+      'item',
+      'item',
+      'item',
+      'item',
+      'item shooting',
+      'item shooting',
+      'item shooting',
+    ]);
+    // Top bar, stat strip, grid, last-action line and bottom bar: nothing else.
+    expect(Array.from(main.children, (child) => child.className || child.tagName)).toEqual([
+      'bar',
+      'stripArea',
+      'grid',
+      'line',
+      'bottomBar',
+    ]);
+
+    fireEvent.click(statButton('2PT Made'));
+    expect(lastAction()).toHaveTextContent(/^2PT Made · Q1$/);
+    expect(lineNote()).toBeNull();
+    await waitFor(async () => expect(await eventSpots(game.id)).toEqual([['fg2_made', undefined]]));
+  });
+
+  it('marks where a shot was taken: its button, then the court (again to move it)', async () => {
+    const game = await newGame();
+    await renderTracking(game);
+
+    fireEvent.click(statButton('2PT Made'));
+    // Saved at the tap, as always; the court is optional.
+    await waitFor(async () => expect(await eventSpots(game.id)).toEqual([['fg2_made', undefined]]));
+    expect(lastAction()).toHaveTextContent('2PT Made · Q1');
+    expect(lineNote()).toHaveTextContent('Tap the court to mark the spot');
+    expect(courtArea()).toHaveClass('open');
+    expect(court()).toHaveAccessibleName(
+      'Shot spot of the 2PT Made (optional). Tap where the shot was taken.',
+    );
+
+    tapCourt(ELBOW);
+    expect(lineNote()).toHaveTextContent('Spot marked');
+    expect(within(court()).getByText('2PT')).toBeInTheDocument();
+    expect(court()).toHaveAccessibleName(
+      'Shot spot of the 2PT Made (optional). Picked: 2-pointer, 15 feet from the basket.',
+    );
+    await waitFor(async () => expect(await eventSpots(game.id)).toEqual([['fg2_made', ELBOW]]));
+
+    // A second tap moves it: still one stat.
+    tapCourt(LAYUP);
+    await waitFor(async () => expect(await eventSpots(game.id)).toEqual([['fg2_made', LAYUP]]));
+    expect(listPendingStats()).toEqual([]);
+    expect(listPendingSpots()).toEqual([]);
+    await expectStrip('Points: 2', 'Field goals: 1 of 1');
+
+    // The next stat closes the court: a tap on it then marks nothing, and says why.
+    fireEvent.click(statButton('Def Reb'));
+    expect(lastAction()).toHaveTextContent(/^Def Reb · Q1$/);
+    expect(courtArea()).not.toHaveClass('open');
+    tapCourt(ELBOW);
+    expect(within(courtArea() as HTMLElement).getByText('Tap 2PT or 3PT first')).toBeVisible();
+    await waitFor(async () =>
+      expect(await eventSpots(game.id)).toEqual([
+        ['fg2_made', LAYUP],
+        ['dreb', undefined],
+      ]),
+    );
+    // The marked shot now shows faintly with the others.
+    expect(court().querySelectorAll('circle.made')).toHaveLength(1);
+  });
+
+  it('never gives a free throw a spot', async () => {
+    const game = await newGame();
+    await renderTracking(game);
+    fireEvent.click(statButton('FT Made'));
+    expect(lineNote()).toBeNull();
+    expect(courtArea()).not.toHaveClass('open');
+    tapCourt(LAYUP);
+    expect(within(courtArea() as HTMLElement).getByText('Tap 2PT or 3PT first')).toBeVisible();
+    await waitFor(async () => expect(await eventSpots(game.id)).toEqual([['ft_made', undefined]]));
+  });
+
+  it('notes a spot on the other side of the arc, and counts the button tapped', async () => {
+    const game = await newGame();
+    await renderTracking(game);
+    fireEvent.click(statButton('2PT Miss'));
+    tapCourt(CORNER);
+    expect(lineNote()).toHaveTextContent('Spot marked · beyond the arc');
+    // The court names the shot as tapped: a 2PT, from beyond the arc.
+    expect(within(court()).getByText('2PT')).toBeInTheDocument();
+    expect(within(court()).queryByText('3PT')).not.toBeInTheDocument();
+    expect(court()).toHaveAccessibleName(
+      'Shot spot of the 2PT Miss (optional). Picked: 2-pointer, 23 feet from the basket.',
+    );
+    await waitFor(async () => expect(await eventSpots(game.id)).toEqual([['fg2_miss', CORNER]]));
+    await expectStrip('Field goals: 0 of 1', '3-pointers: 0 of 0');
+
+    fireEvent.click(statButton('3PT Made'));
+    tapCourt(LAYUP);
+    expect(lineNote()).toHaveTextContent('Spot marked · inside the arc');
+    expect(within(court()).getByText('3PT')).toBeInTheDocument();
+    expect(court()).toHaveAccessibleName(
+      'Shot spot of the 3PT Made (optional). Picked: 3-pointer, 2 feet from the basket.',
+    );
+  });
+
+  it("the line's Undo takes the shot back, spot and all", async () => {
+    const game = await newGame();
+    await renderTracking(game);
+    fireEvent.click(statButton('3PT Made'));
+    tapCourt(CORNER);
+    await waitFor(async () => expect(await eventSpots(game.id)).toEqual([['fg3_made', CORNER]]));
+
+    await tapLineButton();
+    await waitFor(() => expect(lastAction()).toHaveTextContent('Removed 3PT Made'));
+    expect(courtArea()).not.toHaveClass('open');
+    await waitFor(async () => expect(await eventSpots(game.id)).toEqual([]));
+    expect(listPendingStats()).toEqual([]);
+    expect(listPendingSpots()).toEqual([]);
+    await expectStrip('Points: 0');
+  });
+
+  it('keeps the spot of a shot that could not be saved with it, and saves both, once', async () => {
+    const game = await newGame();
+    await renderTracking(game);
+    // The shot's save fails, and so does the retry the timer makes.
+    const { recordStat: save } = repo;
+    let failing = true;
+    vi.spyOn(repo, 'recordStat').mockImplementation((...args) =>
+      failing ? Promise.reject(new Error('Connection lost')) : save(...args),
+    );
+    fireEvent.click(statButton('2PT Made'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('2PT Made not saved');
+
+    tapCourt(ELBOW);
+    expect(lineNote()).toHaveTextContent('Spot marked');
+    // On the phone with the tap until it's saved.
+    expect(listPendingStats().map((stat) => [stat.type, stat.location])).toEqual([
+      ['fg2_made', ELBOW],
+    ]);
+
+    failing = false;
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() => expect(notSaved()).not.toBeInTheDocument());
+    expect(await eventSpots(game.id)).toEqual([['fg2_made', ELBOW]]);
+    expect(listPendingStats()).toEqual([]);
+    expect(listPendingSpots()).toEqual([]);
+  });
+
+  it('keeps the court while the screen is open, even if the setting changes meanwhile', async () => {
+    const game = await newGame();
+    await renderTracking(game);
+    await act(() => updateSettings({ shotChart: false }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(court()).toBeInTheDocument();
+  });
+
+  it('pins the shots with a spot in the log', async () => {
+    const game = await newGame();
+    await recordStat(game.id, 'fg2_made', ELBOW);
+    await recordStat(game.id, 'fg3_miss');
+    const { user } = await renderTracking(game);
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    const log = await screen.findByRole('dialog', { name: 'Stat log' });
+    expect(within(log).getByRole('button', { name: /^2PT Made, spot marked/ })).toBeInTheDocument();
+    expect(within(log).getByRole('button', { name: /^3PT Miss/ })).not.toHaveAccessibleName(/spot/);
   });
 });

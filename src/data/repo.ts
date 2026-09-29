@@ -14,6 +14,7 @@ import { Dexie } from 'dexie';
 import { clampToHalfCourt } from '@/lib/court';
 import { newId } from '@/lib/id';
 import { db, eventsOfGame, META_KEYS, nextTimestamp, touchLastChange } from './db';
+import { removeGamePendingSpots, removePendingSpot } from './pendingSpots';
 import { isFieldGoalType } from './stats';
 import {
   STAT_TYPES,
@@ -288,14 +289,16 @@ export function reopenGame(gameId: string): Promise<Game> {
 }
 
 /** Deletes a game and all of its stats. Does nothing if the game doesn't exist. */
-export function deleteGame(gameId: string): Promise<void> {
-  return db.transaction('rw', [db.games, db.events, db.meta], async () => {
+export async function deleteGame(gameId: string): Promise<void> {
+  await db.transaction('rw', [db.games, db.events, db.meta], async () => {
     const game = await db.games.get(gameId);
     const deletedEvents = await db.events.where('gameId').equals(gameId).delete();
     if (!game && deletedEvents === 0) return;
     await db.games.delete(gameId);
     await touchLastChange(Date.now());
   });
+  // Spots the live game screen kept to put on its stats (the shot chart) go with them.
+  removeGamePendingSpots(gameId);
 }
 
 // ---------------------------------------------------------------------------
@@ -475,12 +478,15 @@ export function undoLastStat(gameId: string): Promise<StatEvent | undefined> {
 }
 
 /** Removes one event (e.g. from the event log). Resolves to it, or undefined if missing. */
-export function deleteStat(eventId: string): Promise<StatEvent | undefined> {
-  return db.transaction('rw', [db.games, db.events, db.meta], async () => {
-    const event = await db.events.get(eventId);
-    if (event) await removeEvent(event, Date.now());
-    return event;
+export async function deleteStat(eventId: string): Promise<StatEvent | undefined> {
+  const event = await db.transaction('rw', [db.games, db.events, db.meta], async () => {
+    const found = await db.events.get(eventId);
+    if (found) await removeEvent(found, Date.now());
+    return found;
   });
+  // A spot the live game screen kept to put on it (the shot chart) goes with it.
+  removePendingSpot(eventId);
+  return event;
 }
 
 // ---------------------------------------------------------------------------

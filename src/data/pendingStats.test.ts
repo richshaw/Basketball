@@ -180,6 +180,28 @@ describe('replayPendingStats', () => {
     expect(journalKeys()).toEqual([]);
   });
 
+  it('gives a tap saved before its spot was marked that spot, once', async () => {
+    const game = await newGame();
+    const shot = stat({ gameId: game.id, type: 'fg2_made' });
+    // Its write landed without a spot (the page heard it failed); the spot was marked
+    // next, and kept with the tap.
+    await savePendingStat(shot);
+    const elbow = { x: -6, y: 13.75 };
+    addPendingStat({ ...shot, location: elbow });
+
+    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
+    expect(await getGameEvents(game.id)).toEqual([
+      { id: shot.id, gameId: game.id, type: 'fg2_made', period: 2, createdAt: T0, location: elbow },
+    ]);
+    expect(journalKeys()).toEqual([]);
+
+    // A spot moved since wins; a tap without one never clears it.
+    const layup = { x: 1, y: 2 };
+    expect((await savePendingStat({ ...shot, location: layup })).location).toEqual(layup);
+    expect((await savePendingStat(shot)).location).toEqual(layup);
+    expect(await getGameEvents(game.id)).toHaveLength(1);
+  });
+
   it('saves taps on a finished game too', async () => {
     const game = await newGame();
     await endGame(game.id, { teamScore: 40, opponentScore: 38 });

@@ -17,7 +17,15 @@
  *   already is skipped, and never reported as removed.
  * - The period moves on screen at once and is then saved; the saved period takes
  *   over again once no move is being saved (or a move couldn't be saved).
+ * - A 2PT/3PT tap can get its spot from a tap on the court (markSpot) for
+ *   SPOT_WINDOW_MS, until the next stat, Undo or period change. The spot goes where
+ *   the tap is: into its pending-stats entry while it isn't saved (its save takes the
+ *   spot along), else onto its saved stat (setStatLocation), kept in the pending-spots
+ *   journal (src/data/pendingSpots.ts, which never adds a stat) until that's done.
+ *   Either way it ends up on the stat once; it goes when the stat is undone, and comes
+ *   back if the stat couldn't be removed after all.
  */
+import { addPendingSpot, listPendingSpots, removePendingSpot } from '@/data/pendingSpots';
 import {
   addPendingStat,
   listPendingStats,
@@ -26,8 +34,10 @@ import {
   savePendingStat,
   type PendingStat,
 } from '@/data/pendingStats';
-import { deleteStat, setCurrentPeriod } from '@/data/repo';
-import type { StatEvent, StatType } from '@/data/types';
+import { deleteStat, setCurrentPeriod, setStatLocation } from '@/data/repo';
+import { sameSpot } from '@/data/shots';
+import { isFieldGoalType } from '@/data/stats';
+import type { CourtPoint, StatEvent, StatType } from '@/data/types';
 
 /** How long after a tap couldn't be saved it's tried again on its own. */
 export const AUTO_RETRY_MS = 1000;
@@ -35,19 +45,31 @@ export const AUTO_RETRY_MS = 1000;
 /** How long saveAll() waits for saves under way before counting them as not saved. */
 export const SAVE_ALL_WAIT_MS = 3000;
 
+/** How long after a 2PT/3PT tap a tap on the court marks where it was taken. */
+export const SPOT_WINDOW_MS = 10_000;
+
 /** The writes a session makes (the repository's, or fakes in tests). */
 export interface SessionDeps {
-  /** Saves a tap as its stat. Must be idempotent by the tap's id, like recordStat. */
+  /**
+   * Saves a tap as its stat, with its spot. Must be idempotent by the tap's id, like
+   * recordStat; a stat saved already gets the tap's spot (see savePendingStat).
+   */
   recordStat(stat: PendingStat): Promise<StatEvent>;
   deleteStat(eventId: string): Promise<StatEvent | undefined>;
   setCurrentPeriod(gameId: string, period: number): Promise<unknown>;
+  /**
+   * Puts a spot on a saved stat; resolves to undefined if the stat is gone. The
+   * repository's setStatLocation if left out.
+   */
+  setStatLocation?(eventId: string, location: CourtPoint): Promise<StatEvent | undefined>;
 }
 
 // Looked up on each call (not captured), so tests can spy on the repository.
-const repoDeps: SessionDeps = {
+const repoDeps: Required<SessionDeps> = {
   recordStat: (stat) => savePendingStat(stat),
   deleteStat: (eventId) => deleteStat(eventId),
   setCurrentPeriod: (gameId, period) => setCurrentPeriod(gameId, period),
+  setStatLocation: (eventId, location) => setStatLocation(eventId, location),
 };
 
 /** One tap of a stat button. */
@@ -59,10 +81,25 @@ export interface Tap {
   readonly period: number;
   /** When it was tapped (epoch ms): its stat's createdAt, however late it's saved. */
   readonly at: number;
+  /** Where the shot was taken, once marked on the court (2PT/3PT only). */
+  readonly location?: CourtPoint;
+}
+
+/**
+ * The 2PT/3PT tap whose spot a tap on the court marks (markSpot): the latest one, for
+ * SPOT_WINDOW_MS, until the next stat, Undo or period change.
+ */
+export interface SpotShot {
+  readonly tap: Tap;
+  /** When (epoch ms) the court stops taking its spot. */
+  readonly until: number;
+  /** Where it was taken, once marked. */
+  readonly spot?: CourtPoint;
 }
 
 interface TapRecord {
-  readonly stat: PendingStat;
+  /** The tap as kept in the journal: replaced (with its spot) when the spot is marked. */
+  stat: PendingStat;
   /** 'saving': a save is under way. 'failed': the last one failed. 'saved': one landed. */
   status: 'saving' | 'failed' | 'saved';
   /** A save of it has failed: it's listed as not saved until one lands. */
@@ -83,6 +120,22 @@ interface TapRecord {
    * the stat shows up among the saved ones.
    */
   orphan: boolean;
+}
+
+/** A spot being put on a saved stat (kept in the pending-spots journal until then). */
+interface SpotSave {
+  /** The spot wanted. */
+  location: CourtPoint;
+  /** It's in the pending-spots journal, so it outlives the page. */
+  kept: boolean;
+  /** A write is under way. */
+  saving: boolean;
+  /** The last write failed (or none was tried yet): it's tried with the taps (see retry). */
+  failed: boolean;
+  /** Tried again on its own already (that happens once). */
+  autoRetried: boolean;
+  /** Settles (never rejects) once the write under way is done. */
+  settled: Promise<void>;
 }
 
 /** How removing a stat went. */
@@ -106,10 +159,13 @@ export interface TakingBack {
   readonly removal: Promise<Removal>;
 }
 
-/** Stats that aren't saved yet when the game is ended (see saveAll). */
+/**
+ * Stats that aren't saved yet when the game is ended (see saveAll): taps, and shots
+ * whose spot isn't on them yet.
+ */
 export interface NotSaved {
   readonly count: number;
-  /** All of them are kept in the journal, so they'll be saved later even if the app closes. */
+  /** All of them are kept in the journals, so they'll be saved later even if the app closes. */
   readonly kept: boolean;
 }
 
@@ -127,6 +183,8 @@ export interface SessionSnapshot {
   readonly unsavedKept: boolean;
   /** Some of them are being saved again right now. */
   readonly retrying: boolean;
+  /** The shot whose spot a tap on the court marks now, if any (see markSpot). */
+  readonly spotShot: SpotShot | null;
 }
 
 /** Calls a write, turning a synchronous throw into a rejection. */
@@ -139,13 +197,23 @@ function attempt<T>(write: () => Promise<T>): Promise<T> {
 }
 
 function tapOf({ stat }: TapRecord): Tap {
-  return { id: stat.id, type: stat.type, period: stat.period, at: stat.at };
+  const tap = { id: stat.id, type: stat.type, period: stat.period, at: stat.at };
+  return stat.location ? { ...tap, location: stat.location } : tap;
 }
 
 function sameTaps(taps: readonly Tap[], records: readonly TapRecord[]): boolean {
   return (
-    taps.length === records.length && taps.every((tap, index) => tap.id === records[index]?.stat.id)
+    taps.length === records.length &&
+    taps.every((tap, index) => {
+      const stat = records[index]?.stat;
+      return tap.id === stat?.id && tap.location === stat.location;
+    })
   );
+}
+
+/** Whether a saved stat still lacks the spot its tap was given. */
+function lacksSpot(stat: PendingStat, saved: StatEvent | undefined): boolean {
+  return stat.location !== undefined && !sameSpot(saved?.location, stat.location);
 }
 
 function isTapRecord(item: TapRecord | StatEvent): item is TapRecord {
@@ -168,6 +236,12 @@ export class TrackingSession {
   private movesInFlight = 0;
   private undoInFlight = false;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private spotShot: SpotShot | null = null;
+  private spotTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Spots being put on saved stats, by stat id. */
+  private readonly spotSaves = new Map<string, SpotSave>();
+  /** Stopped for good (disposeTrackingSessions, in tests): no more timers or writes. */
+  private disposed = false;
   private snapshot: SessionSnapshot;
   readonly gameId: string;
   private readonly deps: SessionDeps;
@@ -191,6 +265,18 @@ export class TrackingSession {
       });
       this.lastAt = Math.max(this.lastAt ?? stat.at, stat.at);
     }
+    // Spots an earlier page kept for saved stats: put on them by the first retry (or
+    // dropped, if their stat is gone). Never taps: they don't count or show as unsaved.
+    for (const { id, location } of listPendingSpots(gameId)) {
+      this.spotSaves.set(id, {
+        location,
+        kept: true,
+        saving: false,
+        failed: true,
+        autoRetried: false,
+        settled: Promise.resolve(),
+      });
+    }
     this.snapshot = this.nextSnapshot();
   }
 
@@ -213,6 +299,7 @@ export class TrackingSession {
       previous?.period === this.period &&
       previous.unsavedKept === unsavedKept &&
       previous.retrying === retrying &&
+      previous.spotShot === this.spotShot &&
       sameTaps(previous.pending, pending) &&
       sameTaps(previous.unsaved, unsaved)
     ) {
@@ -224,6 +311,7 @@ export class TrackingSession {
       unsaved: unsaved.map(tapOf),
       unsavedKept,
       retrying,
+      spotShot: this.spotShot,
     };
   }
 
@@ -246,20 +334,33 @@ export class TrackingSession {
    */
   syncSavedEvents(events: readonly StatEvent[]): void {
     this.saved = events;
-    this.savedIds = new Set(events.map((event) => event.id));
+    const savedById = new Map(events.map((event) => [event.id, event]));
+    this.savedIds = new Set(savedById.keys());
     const newest = events.at(-1)?.createdAt;
     if (newest !== undefined) this.lastAt = Math.max(this.lastAt ?? newest, newest);
     for (const id of this.removing) {
       if (!this.savedIds.has(id)) this.removing.delete(id);
     }
     for (const record of this.taps) {
-      if (!this.savedIds.has(record.stat.id)) continue;
+      const saved = savedById.get(record.stat.id);
+      if (!saved) continue;
       if (!record.undone) {
-        // Saved, whatever its own write said: nothing left to keep.
-        removePendingStat(record.stat.id);
+        // Saved, whatever its own write said: nothing left to keep as a tap. A spot
+        // marked after that write started is still to be put on it.
+        const spot = record.stat.location;
+        if (spot && lacksSpot(record.stat, saved)) this.saveSpot(record.stat.id, spot);
+        else removePendingStat(record.stat.id);
       } else if (record.orphan) {
         // A tap taken back whose save landed after all: remove it again.
         void this.removeOrphan(record);
+      }
+    }
+    // Spots on their stats already (e.g. a write that seemed to fail landed).
+    for (const [id, spotSave] of this.spotSaves) {
+      const saved = savedById.get(id);
+      if (saved && !spotSave.saving && sameSpot(saved.location, spotSave.location)) {
+        this.spotSaves.delete(id);
+        removePendingSpot(id);
       }
     }
     this.taps = this.taps.filter((record) => record.undone || !this.savedIds.has(record.stat.id));
@@ -284,6 +385,10 @@ export class TrackingSession {
       orphan: false,
     };
     this.taps.push(record);
+    // A shot's spot can be marked next; any other stat ends the last shot's chance.
+    this.setSpotShot(
+      isFieldGoalType(type) ? { tap: tapOf(record), until: Date.now() + SPOT_WINDOW_MS } : null,
+    );
     this.save(record);
     return tapOf(record);
   }
@@ -291,9 +396,17 @@ export class TrackingSession {
   private save(record: TapRecord): void {
     record.status = 'saving';
     record.settled = attempt(() => this.deps.recordStat(record.stat)).then(
-      () => {
+      (saved: StatEvent | undefined) => {
         record.status = 'saved';
-        removePendingStat(record.stat.id);
+        if (this.disposed) return;
+        // Its spot was marked while this write was under way (or an earlier write saved
+        // it without one): the spot is put on it next. Either way the tap is saved.
+        const spot = record.stat.location;
+        if (!record.undone && spot && lacksSpot(record.stat, saved)) {
+          this.saveSpot(record.stat.id, spot);
+        } else {
+          removePendingStat(record.stat.id);
+        }
         // Shown among the saved stats already (e.g. an earlier write of it landed).
         if (!record.undone && this.savedIds.has(record.stat.id)) this.drop(record);
         this.emit();
@@ -301,6 +414,7 @@ export class TrackingSession {
       () => {
         record.status = 'failed';
         record.hasFailed = true;
+        if (this.disposed) return;
         // (Unless it was taken back, or has shown up among the saved stats meanwhile.)
         if (!record.undone && this.taps.includes(record)) {
           // The journal may have been full at the tap: try to keep it now.
@@ -317,7 +431,7 @@ export class TrackingSession {
   }
 
   private scheduleRetry(): void {
-    if (this.retryTimer !== undefined) return;
+    if (this.disposed || this.retryTimer !== undefined) return;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
       this.retry();
@@ -326,9 +440,11 @@ export class TrackingSession {
 
   /**
    * Tries again to save the taps that couldn't be saved (not ones being saved or taken
-   * back), and to remove taken-back taps whose removal failed.
+   * back) and the spots that couldn't be put on saved stats, and to remove taken-back
+   * taps whose removal failed.
    */
   retry(): void {
+    if (this.disposed) return;
     for (const record of this.taps) {
       if (record.undone) {
         if (record.orphan) void this.removeOrphan(record);
@@ -336,18 +452,26 @@ export class TrackingSession {
         this.save(record);
       }
     }
+    for (const [id, spotSave] of this.spotSaves) {
+      if (spotSave.failed) this.startSpotSave(id);
+    }
   }
 
   /**
-   * Saves every tap not saved yet (retrying those that failed), e.g. before the game
-   * ends, and resolves once they've all answered (or after `waitMs`) to those still
-   * not saved.
+   * Saves every tap not saved yet (retrying those that failed), and every spot not on
+   * its stat yet, e.g. before the game ends, and resolves once they've all answered
+   * (or after `waitMs`) to those still not saved.
    */
   async saveAll(waitMs = SAVE_ALL_WAIT_MS): Promise<NotSaved> {
     this.retry();
-    const saving = this.taps
-      .filter((record) => !record.undone && record.status === 'saving')
-      .map((record) => record.settled);
+    const saving = [
+      ...this.taps
+        .filter((record) => !record.undone && record.status === 'saving')
+        .map((record) => record.settled),
+      ...[...this.spotSaves.values()]
+        .filter((spotSave) => spotSave.saving)
+        .map((spotSave) => spotSave.settled),
+    ];
     if (saving.length > 0) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
@@ -358,17 +482,26 @@ export class TrackingSession {
       ]);
       clearTimeout(timer);
     }
-    const notSaved = this.taps.filter((record) => !record.undone && record.status !== 'saved');
-    return { count: notSaved.length, kept: notSaved.every((record) => record.kept) };
+    const notSaved = [
+      ...this.taps.filter((record) => !record.undone && record.status !== 'saved'),
+      // Spots still waiting to be put on their stats: kept like taps, and counted too.
+      ...this.spotSaves.values(),
+    ];
+    return { count: notSaved.length, kept: notSaved.every((item) => item.kept) };
   }
 
-  /** Removes a saved stat by id: 'removed', 'gone' if it wasn't there, or 'failed'. */
+  /**
+   * Removes a saved stat by id: 'removed', 'gone' if it wasn't there, or 'failed'. Its
+   * spot, if one is still being put on it, goes too, and comes back if it's 'failed'.
+   */
   private removeStat(id: string): Promise<Removal> {
     this.removing.add(id);
+    const spot = this.setSpotAside(id);
     return attempt(() => this.deps.deleteStat(id)).then(
       (event): Removal => (event ? 'removed' : 'gone'),
       (): Removal => {
         this.removing.delete(id);
+        if (spot) this.restoreSpot(id, spot);
         return 'failed';
       },
     );
@@ -394,14 +527,15 @@ export class TrackingSession {
     }
     const confirmed = record.status === 'saved';
     record.undone = true;
-    // Never saved again, even after a reload.
+    // Never saved again, even after a reload; nor is its spot (unless the stat stays).
     removePendingStat(id);
+    const spot = this.setSpotAside(id);
     this.emit();
-    record.removal = record.settled.then(() => this.finishTakingBack(record));
+    record.removal = record.settled.then(() => this.finishTakingBack(record, spot));
     return { type, immediate: !confirmed, removal: record.removal };
   }
 
-  private finishTakingBack(record: TapRecord): Promise<Removal> {
+  private finishTakingBack(record: TapRecord, spot: SpotSave | undefined): Promise<Removal> {
     // A save of it may have landed (even one that seemed to fail): remove it by id.
     const confirmed = record.status === 'saved';
     return this.removeStat(record.stat.id).then((removal): Removal => {
@@ -410,9 +544,10 @@ export class TrackingSession {
         return confirmed ? removal : 'removed';
       }
       if (confirmed) {
-        // Its stat is saved and stays: the tap counts again.
+        // Its stat is saved and stays: the tap counts again, and its spot is kept again.
         record.undone = false;
         record.removal = undefined;
+        if (spot) this.restoreSpot(record.stat.id, spot);
         this.emit();
         return 'failed';
       }
@@ -429,6 +564,7 @@ export class TrackingSession {
    * the same outcome.
    */
   undo(stat: Pick<Tap, 'id' | 'type'>): TakingBack {
+    this.closeSpot();
     const record = this.taps.find((each) => each.stat.id === stat.id);
     if (record) return this.takeBack(record);
     return { type: stat.type, immediate: false, removal: this.removeStat(stat.id) };
@@ -465,6 +601,7 @@ export class TrackingSession {
    */
   undoLatest(): Promise<TakingBack | 'nothing'> | 'busy' {
     if (this.undoInFlight) return 'busy';
+    this.closeSpot();
     const first = this.latest(Infinity);
     if (!first) return Promise.resolve('nothing');
     if (isTapRecord(first) && first.status !== 'saved') {
@@ -508,6 +645,142 @@ export class TrackingSession {
     return count;
   }
 
+  /** Opens the court to `shot`'s spot until its time is up, or closes it (null). */
+  private setSpotShot(shot: SpotShot | null): void {
+    clearTimeout(this.spotTimer);
+    this.spotTimer = undefined;
+    this.spotShot = shot;
+    if (!shot || this.disposed) return;
+    this.spotTimer = setTimeout(
+      () => {
+        this.spotTimer = undefined;
+        if (this.spotShot?.tap.id !== shot.tap.id) return;
+        this.spotShot = null;
+        this.emit();
+      },
+      Math.max(0, shot.until - Date.now()),
+    );
+  }
+
+  /** The shot whose spot the court marks now, if its time isn't up (the timer may be late). */
+  private openSpotShot(): SpotShot | null {
+    if (this.spotShot && Date.now() >= this.spotShot.until) this.closeSpot();
+    return this.spotShot;
+  }
+
+  /** From now on a tap on the court marks no spot, until the next 2PT/3PT tap. */
+  closeSpot(): void {
+    if (!this.spotShot) return;
+    this.setSpotShot(null);
+    this.emit();
+  }
+
+  /**
+   * A tap on the court: marks where the shot in `spotShot` was taken, or moves its spot,
+   * and saves the spot with the shot's stat, whether that's saved yet or not. False if
+   * no shot's spot can be marked now (then nothing changes).
+   */
+  markSpot(point: CourtPoint): boolean {
+    const shot = this.openSpotShot();
+    if (!shot) return false;
+    const { id } = shot.tap;
+    const record = this.taps.find((each) => each.stat.id === id);
+    // (Undo closes the court, so a shot taken back never gets here.)
+    if (record?.undone) return false;
+    this.spotShot = { ...shot, spot: point };
+    if (record) record.stat = { ...record.stat, location: point };
+    if (record && record.status !== 'saved') {
+      // Not saved yet: its journal entry takes the spot, and so does its next save. (A
+      // save already under way puts the spot on once it lands; see save.)
+      record.kept = addPendingStat(record.stat) || record.kept;
+    } else {
+      this.saveSpot(id, point);
+    }
+    this.emit();
+    return true;
+  }
+
+  /**
+   * Puts a spot on a saved stat. It's kept in the pending-spots journal until that's
+   * done (a page that closes first leaves it to replayPendingStats), never as a tap:
+   * saving a kept tap again would bring back a stat deleted since.
+   */
+  private saveSpot(id: string, location: CourtPoint): void {
+    const kept = addPendingSpot({ id, gameId: this.gameId, location });
+    // Its tap is saved: nothing is left to keep of it (the spot is kept above first).
+    removePendingStat(id);
+    const spotSave = this.spotSaves.get(id);
+    if (spotSave) {
+      spotSave.location = location;
+      spotSave.kept = kept;
+    } else {
+      this.spotSaves.set(id, {
+        location,
+        kept,
+        saving: false,
+        failed: false,
+        autoRetried: false,
+        settled: Promise.resolve(),
+      });
+    }
+    this.startSpotSave(id);
+  }
+
+  private startSpotSave(id: string): void {
+    const spotSave = this.spotSaves.get(id);
+    if (!spotSave || spotSave.saving || this.disposed) return;
+    const { location } = spotSave;
+    spotSave.saving = true;
+    spotSave.failed = false;
+    const write = () =>
+      this.deps.setStatLocation
+        ? this.deps.setStatLocation(id, location)
+        : repoDeps.setStatLocation(id, location);
+    spotSave.settled = attempt(write).then(
+      (saved) => {
+        spotSave.saving = false;
+        // Its stat was taken back meanwhile (see setSpotAside), or the session ended.
+        if (this.spotSaves.get(id) !== spotSave || this.disposed) return;
+        // Moved meanwhile: the new spot next.
+        if (saved && !sameSpot(location, spotSave.location)) {
+          this.startSpotSave(id);
+          return;
+        }
+        // On its stat, or its stat is gone (deleted on the game report, say): done.
+        this.spotSaves.delete(id);
+        removePendingSpot(id);
+      },
+      () => {
+        spotSave.saving = false;
+        if (this.spotSaves.get(id) !== spotSave || this.disposed) return;
+        spotSave.failed = true;
+        if (!spotSave.autoRetried) {
+          spotSave.autoRetried = true;
+          this.scheduleRetry();
+        }
+      },
+    );
+  }
+
+  /**
+   * Takes a stat's spot save out of the running (the stat is being taken back): not
+   * saved, and not kept for after a reload. The caller puts it back (restoreSpot) if the
+   * stat can't be removed after all.
+   */
+  private setSpotAside(id: string): SpotSave | undefined {
+    const spotSave = this.spotSaves.get(id);
+    this.spotSaves.delete(id);
+    removePendingSpot(id);
+    return spotSave;
+  }
+
+  /** Puts back a spot set aside (its stat stays): kept, and saved with the next retry. */
+  private restoreSpot(id: string, spotSave: SpotSave): void {
+    if (this.disposed || this.spotSaves.has(id)) return;
+    const kept = addPendingSpot({ id, gameId: this.gameId, location: spotSave.location });
+    this.spotSaves.set(id, { ...spotSave, kept, saving: false, failed: true });
+  }
+
   /**
    * The screen is closing: the taps it saved are the database's alone (whatever reads
    * the game next reads them afresh). Taps not saved yet stay, and so do the kept ones.
@@ -518,6 +791,19 @@ export class TrackingSession {
   }
 
   /**
+   * Stops the session for good (see disposeTrackingSessions): its timers, retries and
+   * journal writes. A write already under way still lands, but nothing follows it up.
+   */
+  dispose(): void {
+    this.disposed = true;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    clearTimeout(this.spotTimer);
+    this.spotTimer = undefined;
+    this.listeners.clear();
+  }
+
+  /**
    * Moves to another period: on screen at once, then saved. Resolves to false if it
    * couldn't be saved (the saved period is shown again, unless another move is on
    * its way).
@@ -525,6 +811,7 @@ export class TrackingSession {
   movePeriod(to: number): Promise<boolean> {
     this.period = to;
     this.movesInFlight += 1;
+    this.setSpotShot(null);
     this.emit();
     return attempt(() => this.deps.setCurrentPeriod(this.gameId, to)).then(
       () => {
@@ -563,4 +850,14 @@ export function trackingSession(gameId: string, period: number): TrackingSession
     sessions.set(gameId, session);
   }
   return session;
+}
+
+/**
+ * Stops and forgets every game's session, for tests (src/test/setup.ts runs it after
+ * each one): a session's retries and timers would otherwise run on into the next test,
+ * and write into its journal.
+ */
+export function disposeTrackingSessions(): void {
+  for (const session of sessions.values()) session.dispose();
+  sessions.clear();
 }

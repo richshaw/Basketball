@@ -1,0 +1,54 @@
+/*
+ * Between the stat strip and the buttons. Its preferred height is the whole drawing
+ * at the full width (the aspect ratio is set inline); it shrinks when the buttons
+ * need the height (they have a minimum, set by the screen), and the drawing then
+ * shrinks to fit, centered on the floor that fills the rest (the SVG's background).
+ */
+.court {
+  position: relative;
+  flex: 0 1 auto;
+  min-height: 0;
+  border-radius: var(--radius-lg);
+}
+
+/* (Two classes, so it wins over the court's own height: auto.) */
+.court .picker {
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * A shot's spot can be marked: the court is outlined, without moving anything. In the
+ * accent's text shade, which stands out on the page (4.5:1) in both themes.
+ */
+.open {
+  outline: var(--border-width-emphasis) solid var(--color-accent-text);
+  outline-offset: var(--border-width-emphasis);
+}
+
+/* "Tap 2PT or 3PT first": over the middle of the court, never in the way of a tap. */
+.hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: calc(100% - 2 * var(--space-4));
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  background-color: var(--color-inverse);
+  color: var(--color-on-inverse);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  text-align: center;
+  white-space: nowrap;
+  box-shadow: var(--shadow-overlay);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  animation: fade-in var(--duration-normal) var(--ease-out);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}

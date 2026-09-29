@@ -1,7 +1,7 @@
 /*
  * Exactly the height of the screen, never scrolling: top bar, stat strip, the
  * button grid (which takes whatever height is left), the last-action line and the
- * bottom bar. A shot chart can later take room above the grid without other changes.
+ * bottom bar. With the shot chart on, its court sits above the grid (see .withCourt).
  */
 .screen {
   display: flex;
@@ -45,4 +45,47 @@
   flex-shrink: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
+}
+
+/*
+ * With the shot chart's court (the stat strip is compact then): the grid keeps its
+ * buttons at least --game-button-min-height tall, and the court (ShotCourt) takes the
+ * rest, up to the whole width. All of it is fixed by the screen's size alone.
+ */
+.withCourt {
+  --stat-grid-min-height: calc(4 * var(--game-button-min-height) + 3 * var(--space-2));
+  /*
+   * Shorter buttons, so the labels take more of their height (cqb: the button's):
+   * 26% rather than 22%, still at most the xl size.
+   */
+  --stat-label-max: 26cqb;
+  /*
+   * Each count shrinks with its button, down to 12px digits (full size on buttons
+   * 88px and up).
+   */
+  --stat-count-font-size: max(var(--font-size-xs), min(var(--font-size-sm), 17cqb));
+  --stat-count-size: max(
+    calc(1.5 * var(--font-size-xs)),
+    min(calc(var(--space-5) + var(--space-1) / 2), 25cqb)
+  );
+  /*
+   * A label on two lines moves down just enough to start below the count, with the
+   * count's own gap from the top between them (its margin moves it half as far).
+   */
+  --stat-two-line-shift: max(
+    0px,
+    calc(2 * var(--stat-count-size) + 2 * var(--line-height-tight) * 1em - 100cqb)
+  );
+}
+
+/* Short screens (iPhone SE): tighter gaps and slightly shorter buttons leave the court room. */
+@media (max-height: 700px) {
+  .withCourt {
+    --stat-grid-gap: calc(var(--space-1) + var(--space-1) / 2);
+    --stat-grid-min-height: calc(
+      4 * var(--game-button-min-height-short) + 3 * var(--stat-grid-gap)
+    );
+
+    gap: var(--stat-grid-gap);
+  }
 }

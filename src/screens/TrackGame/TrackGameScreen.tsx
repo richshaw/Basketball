@@ -6,10 +6,18 @@ import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useToast } from '@/components/Toast/toastContext';
-import { useGame, useGameEvents } from '@/data/hooks';
+import { useGame, useGameEvents, useSettings } from '@/data/hooks';
 import { endGame, type FinalScore } from '@/data/repo';
+import { shotsFromEvents } from '@/data/shots';
 import { computeStatLine, periodLabel } from '@/data/stats';
-import { MAX_PERIOD, type Game, type StatEvent, type StatType } from '@/data/types';
+import {
+  MAX_PERIOD,
+  type CourtPoint,
+  type Game,
+  type StatEvent,
+  type StatType,
+} from '@/data/types';
+import { cx } from '@/lib/cx';
 import { gameTitle } from '@/lib/gameTitle';
 import { paths } from '@/routes';
 import { EndGameSheet } from './EndGameSheet';
@@ -18,6 +26,7 @@ import { LogSheet } from './LogSheet';
 import { NotSavedSheet } from './NotSavedSheet';
 import { PeriodSheet } from './PeriodSheet';
 import type { NotSaved, TakingBack, Tap } from './session';
+import { ShotCourt } from './ShotCourt';
 import { StatGrid } from './StatGrid';
 import { StatStrip } from './StatStrip';
 import { TopBar } from './TopBar';
@@ -27,6 +36,7 @@ import {
   FOUL_TROUBLE_AT,
   FOULED_OUT_AT,
   formatClockTime,
+  spotNote,
   statKind,
   statLabel,
   withTaps,
@@ -47,11 +57,23 @@ function foulNote(fouls: number): string {
   return fouls >= FOUL_TROUBLE_AT ? ` · ${fouls} fouls` : '';
 }
 
+interface TrackerProps {
+  game: Game;
+  events: StatEvent[];
+  /** The Shot chart setting: whether the court is shown to mark where shots were taken. */
+  shotChart: boolean;
+}
+
 /** The live tracking UI for a loaded game. */
-function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
+function Tracker({ game, events, shotChart }: TrackerProps) {
   const toast = useToast();
   const confirm = useConfirm();
   const navigate = useNavigate();
+  // Set as the screen opens: the court never comes or goes (moving the buttons) while
+  // it's open, even if the setting is changed meanwhile (e.g. in another tab).
+  const [withCourt] = useState(shotChart);
+  // Bumped by a tap on the court with no shot to mark: the court says how it works.
+  const [courtHint, setCourtHint] = useState(0);
   const [openSheet, setOpenSheetState] = useState<OpenSheet>(null);
   // Read after a wait (e.g. saving before the game ends): was the sheet closed meanwhile?
   const openSheetRef = useRef<OpenSheet>(null);
@@ -68,11 +90,8 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   // Done on a finished game: the stats that weren't saved, and whether it's busy.
   const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [session, { period, pending, unsaved, unsavedKept, retrying }] = useTrackingSession(
-    game.id,
-    game.currentPeriod,
-    events,
-  );
+  const [session, { period, pending, unsaved, unsavedKept, retrying, spotShot }] =
+    useTrackingSession(game.id, game.currentPeriod, events);
   // A double tap on the grid's Undo or on Next acts once.
   const [undoGuard] = useState(() => createTapGuard());
   const [nextGuard] = useState(() => createTapGuard());
@@ -87,6 +106,12 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
   const counted = useMemo(() => withTaps(events, pending), [events, pending]);
   const counts = useMemo(() => countByType(counted), [counted]);
   const line = useMemo(() => computeStatLine(counted), [counted]);
+  // The game's shots on the court, faintly: all but the one being marked (shown as the pick).
+  const markingId = spotShot?.tap.id;
+  const courtShots = useMemo(
+    () => (withCourt ? shotsFromEvents(counted.filter((stat) => stat.id !== markingId)) : []),
+    [withCourt, counted, markingId],
+  );
 
   const show = useCallback<ShowAction>((action) => {
     setLastAction((previous) => ({ ...action, key: (previous?.key ?? 0) + 1 }));
@@ -135,6 +160,15 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
       show(statAction(tap, type === 'foul' ? foulNote(session.count('foul')) : ''));
     },
     [session, show, statAction],
+  );
+
+  // A tap on the court marks the spot of the shot on the line (the session saves it with
+  // that shot). With no shot to mark, the court says to tap 2PT or 3PT first.
+  const markSpot = useCallback(
+    (point: CourtPoint) => {
+      if (!session.markSpot(point)) setCourtHint((hints) => hints + 1);
+    },
+    [session],
   );
 
   const undo = useCallback((): boolean => {
@@ -275,10 +309,21 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
       tone: 'error',
     };
   }
+  // A shot on the line: how to mark its spot while the court takes it, then that it's marked.
+  const shotOnLine = withCourt ? counted.find((stat) => stat.id === shownAction.tapId) : undefined;
+  if (shotOnLine) {
+    const marking = spotShot?.tap.id === shotOnLine.id ? spotShot : null;
+    const detail = spotNote(
+      shotOnLine.type,
+      marking ? marking.spot : shotOnLine.location,
+      marking !== null,
+    );
+    if (detail) shownAction = { ...shownAction, detail };
+  }
 
   return (
     <>
-      <main className={styles.screen}>
+      <main className={cx(styles.screen, withCourt && styles.withCourt)}>
         <TopBar
           title={gameTitle(game)}
           periodText={periodText}
@@ -288,13 +333,18 @@ function Tracker({ game, events }: { game: Game; events: StatEvent[] }) {
         />
         {isFinal ? <p className={styles.banner}>Editing a finished game</p> : null}
         <div className={styles.stripArea}>
-          <StatStrip line={line} />
-          <UnsavedStats unsaved={unsaved} kept={unsavedKept} retrying={retrying} onRetry={retry} />
+          <StatStrip line={line} compact={withCourt} />
+          <UnsavedStats
+            unsaved={unsaved}
+            kept={unsavedKept}
+            retrying={retrying}
+            onRetry={retry}
+            compact={withCourt}
+          />
         </div>
-        {/*
-          The shot chart (a later PR) slots in here, above the grid: the grid takes
-          whatever height is left, so it shrinks to make room.
-        */}
+        {withCourt ? (
+          <ShotCourt shots={courtShots} spotShot={spotShot} onPick={markSpot} hintKey={courtHint} />
+        ) : null}
         <StatGrid counts={counts} onRecord={record} onUndo={undo} />
         <LastActionLine action={shownAction} holdKey={lineHold} />
         <div className={styles.bottomBar}>
@@ -381,10 +431,11 @@ export function TrackGameScreen() {
   const { gameId } = useParams();
   const game = useGame(gameId);
   const events = useGameEvents(gameId);
+  const settings = useSettings();
 
   if (game === null) return <GameNotFound />;
   // Still loading (IndexedDB answers within a frame or two): show nothing rather
-  // than a placeholder layout that would jump.
-  if (game === undefined || events === undefined) return null;
-  return <Tracker key={game.id} game={game} events={events} />;
+  // than a placeholder layout that would jump (the shot chart's court included).
+  if (game === undefined || events === undefined || settings === undefined) return null;
+  return <Tracker key={game.id} game={game} events={events} shotChart={settings.shotChart} />;
 }
