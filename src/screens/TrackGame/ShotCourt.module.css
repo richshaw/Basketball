@@ -17,9 +17,12 @@
   height: 100%;
 }
 
-/* A shot's spot can be marked: the court is outlined, without moving anything. */
+/*
+ * A shot's spot can be marked: the court is outlined, without moving anything. In the
+ * accent's text shade, which stands out on the page (4.5:1) in both themes.
+ */
 .open {
-  outline: var(--border-width-emphasis) solid var(--color-accent);
+  outline: var(--border-width-emphasis) solid var(--color-accent-text);
   outline-offset: var(--border-width-emphasis);
 }
 

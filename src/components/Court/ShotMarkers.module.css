@@ -2,9 +2,12 @@
   pointer-events: none;
 }
 
-/* Context behind something else, e.g. a game's earlier shots behind a new spot. */
+/*
+ * Context behind something else, e.g. a game's earlier shots behind a new spot: still
+ * easy to see (about 2:1 to 3:1 against the floor), but clearly behind the pick.
+ */
 .faint {
-  opacity: 0.4;
+  opacity: 0.6;
 }
 
 /*
