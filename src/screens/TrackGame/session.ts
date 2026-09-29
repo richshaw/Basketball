@@ -390,9 +390,14 @@ export class TrackingSession implements UnsavedTapHolder {
     for (const record of this.taps) {
       if (record.undone) {
         if (record.orphan) tries.push(this.removeOrphan(record));
-      } else if (record.status === 'failed' && record.kept && !isPendingStat(record.stat.id)) {
+      } else if (
+        record.status === 'failed' &&
+        record.kept &&
+        isPendingStat(record.stat.id) === false
+      ) {
         // No longer kept: saved meanwhile (e.g. by the app-wide retry), or its game's
-        // data was deleted or replaced (e.g. in another tab). Never saved again.
+        // data was deleted or replaced (e.g. in another tab). Never saved again. (Not
+        // when the journal can't be read right now: then it's saved, rather than lost.)
         this.drop(record);
       } else if (record.status === 'failed') {
         this.save(record, quiet);

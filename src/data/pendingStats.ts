@@ -82,12 +82,15 @@ export function removePendingStat(id: string): void {
   }
 }
 
-/** Whether a tap is still kept (not saved or undone since). */
-export function isPendingStat(id: string): boolean {
+/**
+ * Whether a tap is still kept (not saved or undone since): true or false, or undefined
+ * when localStorage can't be read right now. Only false says it's gone.
+ */
+export function isPendingStat(id: string): boolean | undefined {
   try {
     return localStorage.getItem(KEY_PREFIX + id) !== null;
   } catch {
-    return false;
+    return undefined;
   }
 }
 

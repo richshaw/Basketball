@@ -765,6 +765,24 @@ describe('TrackingSession', () => {
       expect(saves).toHaveLength(1);
       expect(pendingTypes()).toEqual([]);
     });
+
+    it("keeps a kept tap while the journal can't be read, and saves it", async () => {
+      const { session, saves, save, fail, pendingTypes, storedTypes } = setUp();
+      session.record('stl');
+      fail(0);
+      await flush();
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new DOMException('The operation is insecure.', 'SecurityError');
+      });
+      session.retry();
+      // Whether it's still kept can't be told: it still counts, and is saved.
+      expect(pendingTypes()).toEqual(['stl']);
+      expect(saves).toHaveLength(2);
+      save(1);
+      await flush();
+      expect(storedTypes()).toEqual(['stl']);
+      expect(session.hasUnsaved()).toBe(false);
+    });
   });
 
   describe('disposeTrackingSessions (the test setup, after each test)', () => {

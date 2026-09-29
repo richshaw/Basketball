@@ -175,6 +175,26 @@ describe('replayPendingStats', () => {
     expect((await getGameEvents(game.id)).map((event) => event.id)).toEqual(['kept']);
   });
 
+  it("leaves a tap for next time when it can't tell whether it's still kept", async () => {
+    const game = await newGame();
+    addPendingStat(stat({ gameId: game.id }));
+    // localStorage lists the taps, then can't be read for a moment.
+    const { getGame } = repo;
+    vi.spyOn(repo, 'getGame').mockImplementation((id) => {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new DOMException('The operation is insecure.', 'SecurityError');
+      });
+      return getGame(id);
+    });
+
+    expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+    expect(await eventTypes(game.id)).toEqual([]);
+    vi.restoreAllMocks();
+    expect(journalKeys()).toEqual([`${KEY_PREFIX}tap-1`]);
+    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
+    expect(await eventTypes(game.id)).toEqual(['stl']);
+  });
+
   it('never rejects, even with no localStorage', async () => {
     vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
       throw new DOMException('The operation is insecure.', 'SecurityError');

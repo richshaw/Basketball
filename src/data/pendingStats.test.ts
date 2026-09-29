@@ -123,7 +123,8 @@ describe('the pending-stats journal', () => {
       throw new DOMException('The operation is insecure.', 'SecurityError');
     });
     expect(addPendingStat(stat({ id: 'blocked' }))).toBe(false);
-    expect(isPendingStat('kept')).toBe(false);
+    // Can't tell: not "gone", which would drop a tap that may well still be kept.
+    expect(isPendingStat('kept')).toBeUndefined();
     expect(listPendingStats()).toEqual([]);
     expect(() => removePendingStat('kept')).not.toThrow();
   });

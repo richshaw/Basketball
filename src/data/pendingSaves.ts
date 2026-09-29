@@ -59,9 +59,10 @@ export async function replayPendingStats(): Promise<ReplayResult> {
         result.dropped += 1;
         continue;
       }
-      // Undone (or saved) meanwhile, e.g. on the live game screen: leave it be. The
-      // save starts right after this check, so an Undo can't slip in between.
-      if (!isPendingStat(stat.id)) continue;
+      // Undone (or saved) meanwhile, e.g. on the live game screen, or the journal can't
+      // be read right now: leave it be (still kept, it's tried next time). The save
+      // starts right after this check, so an Undo can't slip in between.
+      if (isPendingStat(stat.id) !== true) continue;
       await savePendingStat(stat);
       removePendingStat(stat.id);
       result.saved += 1;
