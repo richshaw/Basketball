@@ -9,7 +9,7 @@ import {
   type EngineHarness,
 } from '@/test/backupHarness';
 import { resetDatabase } from '@/test/db';
-import { isDemoGameId, seedDemoData } from '../demo';
+import { buildDemoData, isDemoGameId, seedDemoData } from '../demo';
 import * as repo from '../repo';
 import {
   createGame,
@@ -25,8 +25,15 @@ import {
 import { clearAllData, exportAll, importAll } from '../transfer';
 import { createBackupApi } from './api';
 import { generateBackupCode, parseBackupCode } from './code';
-import { BackupEngine, observeDatabase, readObservation, type BackupObservation } from './engine';
+import {
+  BackupEngine,
+  observeDatabase,
+  readObservation,
+  readRealData,
+  type BackupObservation,
+} from './engine';
 import { deriveBackupKeys } from './keys';
+import { realData } from './policy';
 import { decryptSnapshot, encryptSnapshot } from './snapshot';
 import { loadBackupState, turnOnBackupState } from './state';
 import type { BackupRuntime } from './status';
@@ -651,6 +658,17 @@ describe('shrink guard', () => {
 });
 
 describe('shrink guard: the status says so at once', () => {
+  it('reads the same games of her own on the phone as the upload finds in its export', async () => {
+    // Her games and the sample games side by side: the sample games never count.
+    await seedReal({ liveGame: true });
+    await importAll(buildDemoData({ today: '2026-09-27', liveGame: true }), 'merge');
+    const onPhone = await readRealData();
+    const inExport = realData(await exportAll());
+    expect(onPhone.gameIds.toSorted()).toEqual(inExport.gameIds.toSorted());
+    expect(onPhone.gameIds).toHaveLength(11);
+    expect(onPhone.events).toBe(inExport.events);
+  });
+
   it('shows the pause as soon as the data calls for it, before an upload is held back', async () => {
     const h = createEngineHarness();
     await seedReal();

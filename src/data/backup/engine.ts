@@ -23,7 +23,6 @@
  * timer (after a small read), and all work happens later, asynchronously.
  */
 import { db } from '../db';
-import { isDemoGameId } from '../demo';
 import { getLastChangeAt, getLiveGame, subscribeToChanges } from '../repo';
 import { exportAll, type ExportFile } from '../transfer';
 import {
@@ -52,6 +51,7 @@ import {
   isConnectionProblem,
   pauseReasonFor,
   realData,
+  realGameIds,
   retryDelayMs,
   shrinkCheck,
   type BackupTimings,
@@ -244,8 +244,7 @@ export async function readObservation(): Promise<BackupObservation> {
  * export, read from the indexes alone (no records).
  */
 export async function readRealData(): Promise<RealData> {
-  const ids = await db.games.toCollection().primaryKeys();
-  const gameIds = ids.filter((id) => !isDemoGameId(id));
+  const gameIds = realGameIds(await db.games.toCollection().primaryKeys());
   const events = gameIds.length === 0 ? 0 : await db.events.where('gameId').anyOf(gameIds).count();
   return { gameIds, events };
 }
@@ -704,8 +703,14 @@ export class BackupEngine {
     if (!isBackupOn(state)) return skipped('disabled');
     if (stopped()) return skipped('suspended');
     const now = this.clock.now();
+    // Read BEFORE exporting: a write that lands during the export then counts as a
+    // newer change (and gets uploaded next time) instead of being missed.
+    const changeAt = await getLastChangeAt();
     if (!manual) {
-      if (state.paused && state.paused !== 'shrink') return skipped('paused');
+      // By the status's own rules (checksShrink), so what it shows is what happens here:
+      // not while paused for anything but the shrink guard, with nothing new to upload,
+      // or once the shrink guard has held back this very data.
+      if (!checksShrink(state, changeAt)) return skipped(state.paused ? 'paused' : 'nothing-new');
       if (state.nextAttemptAt !== undefined && state.nextAttemptAt > now) return skipped('waiting');
     }
     const api = this.api();
@@ -722,13 +727,6 @@ export class BackupEngine {
 
     // Stored codes are always well formed (see readState in state.ts).
     const keys = await this.keysFor(state.code);
-    // Read BEFORE exporting: a write that lands during the export then counts as a
-    // newer change (and gets uploaded next time) instead of being missed.
-    const changeAt = await getLastChangeAt();
-    if (!manual && !hasUnsavedChanges(state, changeAt)) return skipped('nothing-new');
-    if (!manual && state.paused === 'shrink' && state.shrink?.changeAt === changeAt) {
-      return skipped('paused');
-    }
     if (stopped()) return skipped('suspended');
 
     this.lastAttemptAt = now;

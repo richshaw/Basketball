@@ -2,7 +2,7 @@
  * The cloud backup's rules, as pure functions: when to upload, how long to wait
  * after a failure, and when a snapshot looks like it would lose games from the backup.
  */
-import { isDemoGameId } from '../demo';
+import { isDemoGameId } from '../demoIds';
 import type { ExportFile } from '../transfer';
 import type { ApiErrorKind } from './api';
 import type { PauseReason, StoredBackupState } from './state';
@@ -68,8 +68,17 @@ export interface RealData {
   events: number;
 }
 
+/**
+ * The parent's own games among these game ids: all but the sample games. The one rule
+ * for both the engine (an export, realData) and the status (the phone's games as they
+ * are, readRealData in engine.ts), so what's shown and what's held back always agree.
+ */
+export function realGameIds(ids: readonly string[]): string[] {
+  return ids.filter((id) => !isDemoGameId(id));
+}
+
 export function realData(file: Pick<ExportFile, 'games' | 'events'>): RealData {
-  const gameIds = file.games.map((game) => game.id).filter((id) => !isDemoGameId(id));
+  const gameIds = realGameIds(file.games.map((game) => game.id));
   const real = new Set(gameIds);
   return { gameIds, events: file.events.filter((event) => real.has(event.gameId)).length };
 }
