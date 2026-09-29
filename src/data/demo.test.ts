@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { isOnHalfCourt, isThreePoint } from '@/lib/court';
 import { todayLocalISO } from '@/lib/format';
 import {
@@ -14,7 +14,7 @@ import {
   seedDemoData,
 } from './demo';
 import { replayPendingStats } from './pendingSaves';
-import { addPendingStat, listPendingStats, newPendingStat } from './pendingStats';
+import { addPendingStat, holdUnsavedTaps, listPendingStats, newPendingStat } from './pendingStats';
 import * as repo from './repo';
 import {
   createGame,
@@ -353,5 +353,35 @@ describe('removeDemoData', () => {
       expect.arrayContaining([demoGameId(1), demoGameId(10)]),
     );
     expect(listPendingStats()).toHaveLength(2);
+  });
+
+  it('forgets what holds a sample game once, and holds it again if it could not remove them', async () => {
+    await seedDemoData({ today: TODAY });
+    // Something holding a sample game's taps (as a live game screen's session does).
+    let forgotten = 0;
+    let heldAgain = 0;
+    onTestFinished(
+      holdUnsavedTaps({
+        gameId: demoGameId(10),
+        hasUnsaved: () => false,
+        reloadSafe: () => true,
+        retryQuietly: () => Promise.resolve(),
+        saved: () => {},
+        forget: () => {
+          forgotten += 1;
+          return () => {
+            heldAgain += 1;
+          };
+        },
+      }),
+    );
+    vi.spyOn(repo, 'savePlayer').mockRejectedValue(new Error('Connection lost'));
+
+    await expect(removeDemoData()).rejects.toThrow('Connection lost');
+
+    // Forgotten just before the one write, and held again once it failed: nothing is
+    // left forgotten (a spot it set aside would never come back).
+    expect(forgotten).toBe(1);
+    expect(heldAgain).toBe(1);
   });
 });

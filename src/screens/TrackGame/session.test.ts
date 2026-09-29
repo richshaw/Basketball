@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
+import { DEMO_LIVE_GAME_ID, removeDemoData, seedDemoData } from '@/data/demo';
 import {
   addPendingRemoval,
   listPendingRemovals,
@@ -2255,6 +2256,37 @@ describe('TrackingSession spots (the shot chart)', () => {
         expect(keptSpots()).toEqual([[shot.id, CORNER]]);
         expect(session.hasUnsaved()).toBe(true);
         await expectSpotPutOn();
+      });
+
+      it("keeps it again when removing the sample games fails after its game's part was deleted", async () => {
+        await seedDemoData({ liveGame: true });
+        const failing = vi.spyOn(repo, 'setStatLocation').mockRejectedValue(new Error('Lost'));
+        const session = trackingSession(DEMO_LIVE_GAME_ID, 3);
+        const before = (await getGameEvents(DEMO_LIVE_GAME_ID)).length;
+        const shot = session.record('fg3_made');
+        await vi.waitFor(async () =>
+          expect(await getGameEvents(DEMO_LIVE_GAME_ID)).toHaveLength(before + 1),
+        );
+        session.syncSavedEvents(await getGameEvents(DEMO_LIVE_GAME_ID));
+        session.markSpot(CORNER);
+        await vi.waitFor(() => expect(failing).toHaveBeenCalled());
+        await flush();
+        expect(keptSpots()).toEqual([[shot.id, CORNER]]);
+        // Taken back (the log's delete, say): its spot is set aside, and its removal hangs.
+        const removal = deferred<StatEvent | undefined>();
+        vi.spyOn(repo, 'deleteStat').mockReturnValueOnce(removal.promise);
+        const taking = session.undo(shot);
+        expect(keptSpots()).toEqual([]);
+
+        // "Remove sample games" fails at the end of its one write, after the live game's
+        // part of it: nothing was removed after all.
+        vi.spyOn(repo, 'getPlayer').mockRejectedValueOnce(new Error('Disk full'));
+        await expect(removeDemoData()).rejects.toThrow('Disk full');
+        removal.reject(new Error('Disk full'));
+        expect(await taking.removal).toBe('failed');
+        // The stat stays, and so does its spot: kept again.
+        expect(keptSpots()).toEqual([[shot.id, CORNER]]);
+        expect(session.hasUnsaved()).toBe(true);
       });
 
       it('never keeps it once the game is deleted', async () => {
