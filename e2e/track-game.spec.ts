@@ -10,6 +10,8 @@ import {
   lastAction,
   lineButton,
   notSaved,
+  setShotChart,
+  shotCourt,
   startGame,
   statGrid,
   tapStats,
@@ -323,6 +325,7 @@ const DEVICES = [
   { name: 'iPhone Pro Max', width: 430, height: 932 - 59, safeBottom: IPHONE_SAFE_BOTTOM },
 ];
 
+// With the Shot chart setting off: no court (e2e/track-shots.spec.ts has the layout with it).
 for (const device of DEVICES) {
   for (const finished of [false, true]) {
     const what = finished ? 'a finished game (with its banner)' : 'a live game';
@@ -336,9 +339,11 @@ for (const device of DEVICES) {
       });
       await page.goto('./');
       await seedDemoData(page, { liveGame: true });
+      await setShotChart(page, false);
       await page.goto(appUrl(paths.trackGame(finished ? demoGameId(10) : DEMO_LIVE_GAME_ID)));
       await expect(page.getByRole('heading', { level: 1, name: /^(vs|@) / })).toBeVisible();
       await expect(page.getByText('Editing a finished game')).toHaveCount(finished ? 1 : 0);
+      await expect(shotCourt(page)).toHaveCount(0);
 
       const main = page.getByRole('main');
       await expect(main).toHaveCSS('touch-action', 'pan-x pan-y');

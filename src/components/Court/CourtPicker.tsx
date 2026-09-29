@@ -54,8 +54,15 @@ function labelPosition(marker: { x: number; y: number }, view: ViewBox) {
   return { x, y };
 }
 
+interface PickedSpotProps {
+  point: CourtPoint;
+  /** What the shot was recorded as, if known (else it goes by where the spot is). */
+  points: 2 | 3 | undefined;
+  view: ViewBox;
+}
+
 /** The picked spot: a target ring with a "2PT"/"3PT" label beside it. */
-function PickedSpot({ point, view }: { point: CourtPoint; view: ViewBox }) {
+function PickedSpot({ point, points, view }: PickedSpotProps) {
   const marker = markerPosition(point, view);
   const label = labelPosition(marker, view);
   return (
@@ -82,7 +89,7 @@ function PickedSpot({ point, view }: { point: CourtPoint; view: ViewBox }) {
           textAnchor="middle"
           dominantBaseline="central"
         >
-          {shotValueLabel(point)}
+          {shotValueLabel(point, points)}
         </text>
       </g>
     </g>
@@ -96,10 +103,16 @@ export interface CourtPickerProps {
    */
   onPick: (point: CourtPoint) => void;
   /**
-   * The spot picked for the shot being recorded, shown with a marker and its
-   * inferred value ("2PT" or "3PT"). null or undefined shows no marker.
+   * The spot picked for the shot being recorded, shown with a marker and its value
+   * ("2PT" or "3PT"). null or undefined shows no marker.
    */
   pending?: CourtPoint | null;
+  /**
+   * What the shot being recorded is worth, when it's known already (e.g. from the 2PT
+   * or 3PT button tapped): the picked spot is labeled (and described) with it, wherever
+   * it is. Left out, the value is the spot's: 3PT beyond the arc.
+   */
+  pendingPoints?: 2 | 3;
   /** This game's earlier shots, drawn faintly for context (those with a location). */
   shots?: readonly Shot[];
   /**
@@ -130,6 +143,7 @@ export interface CourtPickerProps {
 export function CourtPicker({
   onPick,
   pending,
+  pendingPoints,
   shots,
   depth,
   touchAction = 'manipulation',
@@ -178,7 +192,9 @@ export function CourtPicker({
   };
 
   const label = /[.?!]$/.test(ariaLabel) ? ariaLabel : `${ariaLabel}.`;
-  const status = pending ? `Picked: ${describeSpot(pending)}.` : 'Tap where the shot was taken.';
+  const status = pending
+    ? `Picked: ${describeSpot(pending, pendingPoints)}.`
+    : 'Tap where the shot was taken.';
 
   return (
     <HalfCourt
@@ -197,7 +213,12 @@ export function CourtPicker({
     >
       {shots && shots.length > 0 ? <ShotMarkers shots={shots} faint /> : null}
       {pending ? (
-        <PickedSpot key={`${pending.x},${pending.y}`} point={pending} view={view} />
+        <PickedSpot
+          key={`${pending.x},${pending.y}`}
+          point={pending}
+          points={pendingPoints}
+          view={view}
+        />
       ) : null}
     </HalfCourt>
   );

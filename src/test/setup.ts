@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
+import { disposeTrackingSessions } from '@/screens/TrackGame/session';
 import { resetDatabase } from './db';
 import { installDialogPolyfill } from './dialogPolyfill';
 
@@ -27,6 +28,9 @@ beforeEach(async () => {
 afterEach(() => {
   // Vitest globals are off, so Testing Library can't register this itself.
   cleanup();
+  // The live game screen's sessions outlive their screen (one per game, for the page):
+  // stop them, so no retry of theirs writes into the next test's journal.
+  disposeTrackingSessions();
   // IndexedDB runs on real timers: never let one test's fake timers stall the next reset.
   vi.useRealTimers();
 });

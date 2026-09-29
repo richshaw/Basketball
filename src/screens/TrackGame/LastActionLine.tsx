@@ -19,6 +19,11 @@ export interface LastAction {
   onAction?: () => void;
   /** The tap this line confirms, if it's a stat (so the screen can say it wasn't saved). */
   tapId?: string;
+  /**
+   * A short note under the message, e.g. 'Tap the court to mark the spot'. It's about
+   * the shot chart's court, which screen readers skip, so they don't hear it either.
+   */
+  detail?: string;
 }
 
 export interface LastActionLineProps {
@@ -43,7 +48,7 @@ export interface LastActionLineProps {
  * second tap of a double tap on either can't act on the line that replaces it.
  */
 export function LastActionLine({ action, holdKey = 0 }: LastActionLineProps) {
-  const { key, message, kind, tone, actionLabel, onAction } = action;
+  const { key, message, kind, tone, actionLabel, onAction, detail } = action;
   const usedKey = useRef<number | null>(null);
   // Every hold (the button's own tap, or the grid's Undo) bumps `holds`; the button
   // is off until DOUBLE_TAP_MS after the latest one.
@@ -62,7 +67,17 @@ export function LastActionLine({ action, holdKey = 0 }: LastActionLineProps) {
       <div role="status" aria-label="Last action" className={styles.status}>
         <p key={key} className={cx(styles.message, tone && styles[tone])}>
           {kind ? <span className={cx(styles.dot, styles[kind])} aria-hidden="true" /> : null}
-          <span className={styles.text}>{message}</span>
+          {detail ? (
+            <span className={styles.lines}>
+              <span className={styles.text}>{message}</span>
+              {/* Keyed, so each new note fades in. */}
+              <span key={detail} className={styles.detail} aria-hidden="true">
+                {detail}
+              </span>
+            </span>
+          ) : (
+            <span className={styles.text}>{message}</span>
+          )}
         </p>
       </div>
       {actionLabel && onAction ? (

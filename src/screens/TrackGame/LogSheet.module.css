@@ -22,6 +22,21 @@
   background-color: var(--color-stat);
 }
 
+/* A shot's name with a small pin after it: its spot was marked. */
+.spotted {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.pin {
+  flex-shrink: 0;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  color: var(--color-text-muted);
+}
+
 .meta {
   display: inline-flex;
   align-items: center;

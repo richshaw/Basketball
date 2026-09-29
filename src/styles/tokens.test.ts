@@ -103,6 +103,12 @@ describe.each(themes)('%s theme court colors (shot chart)', (theme) => {
       AA_UI_CONTRAST,
     );
   });
+
+  it("the live game court's outline (a spot can be marked) stands out on the page", () => {
+    expect(
+      contrastRatio(color(theme, '--color-accent-text'), color(theme, '--color-bg')),
+    ).toBeGreaterThanOrEqual(AA_UI_CONTRAST);
+  });
 });
 
 describe('index.html', () => {

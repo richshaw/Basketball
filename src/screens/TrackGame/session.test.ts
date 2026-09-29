@@ -1,8 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { listPendingStats, savePendingStat, type PendingStat } from '@/data/pendingStats';
+import { addPendingSpot, listPendingSpots } from '@/data/pendingSpots';
+import {
+  listPendingStats,
+  replayPendingStats,
+  savePendingStat,
+  type PendingStat,
+} from '@/data/pendingStats';
+import * as repo from '@/data/repo';
 import { createGame, deleteStat, getGameEvents, setCurrentPeriod } from '@/data/repo';
-import type { StatEvent, StatType } from '@/data/types';
-import { AUTO_RETRY_MS, TrackingSession, type SessionDeps, type TakingBack } from './session';
+import type { CourtPoint, StatEvent, StatType } from '@/data/types';
+import {
+  AUTO_RETRY_MS,
+  disposeTrackingSessions,
+  SPOT_WINDOW_MS,
+  trackingSession,
+  TrackingSession,
+  type SessionDeps,
+  type TakingBack,
+} from './session';
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -36,6 +51,8 @@ function fakeDeps() {
   const saves: { stat: PendingStat; kept: boolean; answer: Deferred<StatEvent> }[] = [];
   const deletes: string[] = [];
   const moves: { period: number; answer: Deferred<unknown> }[] = [];
+  // Spots put on saved stats, in call order; each waits for the test too (`saveSpot`).
+  const spots: { id: string; location: CourtPoint; answer: Deferred<StatEvent | undefined> }[] = [];
   let stored: StatEvent[] = [];
   let failDeletes = false;
 
@@ -57,20 +74,39 @@ function fakeDeps() {
       moves.push({ period, answer });
       return answer.promise;
     },
+    setStatLocation: (eventId, location) => {
+      const answer = deferred<StatEvent | undefined>();
+      spots.push({ id: eventId, location, answer });
+      return answer.promise;
+    },
   };
 
-  /** Stores save number `index`'s stat (once per id), without answering it. */
+  /**
+   * Stores save number `index`'s stat (once per id: like recordStat, a stat stored
+   * already stays as it is, spot and all), without answering it.
+   */
   const land = (index: number): StatEvent => {
     const call = saves[index];
     if (!call) throw new Error(`No save #${index}`);
-    const { id, type, period, at } = call.stat;
+    const { id, type, period, at, location } = call.stat;
     let event = stored.find((each) => each.id === id);
     if (!event) {
-      event = { id, gameId: 'g', type, period, createdAt: at };
+      event = { id, gameId: 'g', type, period, createdAt: at, ...(location ? { location } : {}) };
       stored = [...stored, event].sort((a, b) => a.createdAt - b.createdAt);
     }
     return event;
   };
+  /** Answers spot write number `index`: puts its spot on the stored stat, if it's there. */
+  const saveSpot = (index: number): StatEvent | undefined => {
+    const call = spots[index];
+    if (!call) throw new Error(`No spot write #${index}`);
+    const event = stored.find((each) => each.id === call.id);
+    const updated = event && { ...event, location: call.location };
+    if (updated) stored = stored.map((each) => (each === event ? updated : each));
+    call.answer.resolve(updated);
+    return updated;
+  };
+  const failSpot = (index: number) => spots[index]?.answer.reject(new Error('Disk error'));
   /** Answers save number `index` (0-based, in call order) with its stored stat. */
   const save = (index: number): StatEvent => {
     const event = land(index);
@@ -84,6 +120,9 @@ function fakeDeps() {
     saves,
     deletes,
     moves,
+    spots,
+    saveSpot,
+    failSpot,
     /** The saved stats, oldest first (as the screen reads them). */
     stored: () => stored,
     store: (...events: StatEvent[]) => {
@@ -614,5 +653,549 @@ describe('TrackingSession', () => {
     unsubscribe();
     void session.movePeriod(2);
     expect(listener).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('TrackingSession spots (the shot chart)', () => {
+  // Where shots were taken, in feet from the basket.
+  const ELBOW: CourtPoint = { x: -6, y: 13.75 };
+  const CORNER: CourtPoint = { x: 23, y: -3 };
+  const LAYUP: CourtPoint = { x: 1, y: 2 };
+
+  /** The taps kept on the phone (src/data/pendingStats.ts), with their spots. */
+  const keptTaps = () => listPendingStats().map((stat) => [stat.id, stat.location]);
+  /** The spots kept for saved stats (src/data/pendingSpots.ts). */
+  const keptSpots = () => listPendingSpots().map((spot) => [spot.id, spot.location]);
+
+  it("opens the court to a 2PT/3PT tap's spot until the next stat, never to a free throw's", async () => {
+    const { session, saves, spots } = setUp();
+    const spotShot = () => session.getSnapshot().spotShot;
+    const shot = session.record('fg2_made');
+    expect(spotShot()).toMatchObject({ tap: shot });
+    expect(spotShot()?.spot).toBeUndefined();
+
+    // Free throws never take a spot: a free throw closes the court, and a tap on it
+    // then marks nothing.
+    session.record('ft_made');
+    expect(spotShot()).toBeNull();
+    expect(session.markSpot(ELBOW)).toBe(false);
+
+    const three = session.record('fg3_miss');
+    expect(spotShot()).toMatchObject({ tap: three });
+    session.record('dreb');
+    expect(spotShot()).toBeNull();
+    expect(session.markSpot(CORNER)).toBe(false);
+
+    await flush();
+    expect(saves.map(({ stat }) => stat.location)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(spots).toEqual([]);
+    expect(keptTaps().every(([, spot]) => spot === undefined)).toBe(true);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('keeps the spot of a shot not saved yet with the tap, and saves them together, once', async () => {
+    const { session, saves, save, fail, stored, spots, pendingTypes } = setUp();
+    const shot = session.record('fg2_made');
+    fail(0);
+    await flush();
+    expect(session.getSnapshot().unsaved).toEqual([shot]);
+
+    expect(session.markSpot(ELBOW)).toBe(true);
+    expect(session.getSnapshot().spotShot?.spot).toEqual(ELBOW);
+    // In the tap's journal entry at once, so a reload saves it with the tap.
+    expect(keptTaps()).toEqual([[shot.id, ELBOW]]);
+    expect(keptSpots()).toEqual([]);
+    // Counted as the same tap, now with its spot.
+    expect(session.getSnapshot().pending).toEqual([{ ...shot, location: ELBOW }]);
+    expect(pendingTypes()).toEqual(['fg2_made']);
+
+    session.retry();
+    expect(saves[1]?.stat).toEqual({ ...saves[0]?.stat, location: ELBOW });
+    save(1);
+    await flush();
+    expect(stored()).toEqual([
+      {
+        id: shot.id,
+        gameId: 'g',
+        type: 'fg2_made',
+        period: 1,
+        createdAt: shot.at,
+        location: ELBOW,
+      },
+    ]);
+    // Saved with the tap: no separate write, and nothing left to keep.
+    expect(spots).toEqual([]);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('puts the spot of a saved shot on its stat, keeping the spot (never the tap) until then', async () => {
+    const { session, save, sync, stored, spots, saveSpot } = setUp();
+    const shot = session.record('fg3_made');
+    save(0);
+    await flush();
+    sync();
+    expect(keptTaps()).toEqual([]);
+
+    expect(session.markSpot(CORNER)).toBe(true);
+    expect(spots.map(({ id, location }) => [id, location])).toEqual([[shot.id, CORNER]]);
+    // Kept until it's saved, in case the page closes first: as a spot, which never
+    // brings back its stat (a kept tap is saved again, even if its stat was deleted).
+    expect(keptSpots()).toEqual([[shot.id, CORNER]]);
+    expect(keptTaps()).toEqual([]);
+    expect(session.getSnapshot().unsaved).toEqual([]);
+
+    saveSpot(0);
+    await flush();
+    expect(stored().map((event) => [event.id, event.location])).toEqual([[shot.id, CORNER]]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it("puts a spot marked while its shot's save is under way on the stat once it lands", async () => {
+    const { session, saves, save, stored, spots, saveSpot } = setUp();
+    const shot = session.record('fg2_miss');
+    // The save under way started before the spot: it saves the shot without it.
+    expect(session.markSpot(ELBOW)).toBe(true);
+    expect(keptTaps()).toEqual([[shot.id, ELBOW]]);
+    save(0);
+    await flush();
+    expect(stored().map((event) => event.location)).toEqual([undefined]);
+    // So the spot is put on it next: the tap is saved, and only its spot is kept now.
+    expect(spots.map(({ id, location }) => [id, location])).toEqual([[shot.id, ELBOW]]);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([[shot.id, ELBOW]]);
+
+    saveSpot(0);
+    await flush();
+    expect(stored().map((event) => [event.id, event.location])).toEqual([[shot.id, ELBOW]]);
+    expect(saves).toHaveLength(1);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('gives a shot whose failed save landed after all its spot, once', async () => {
+    const { session, saves, land, fail, save, stored, spots, saveSpot } = setUp();
+    const shot = session.record('fg2_made');
+    // The write lands without a spot, but the page hears it failed.
+    land(0);
+    fail(0);
+    await flush();
+    expect(session.markSpot(LAYUP)).toBe(true);
+    expect(keptTaps()).toEqual([[shot.id, LAYUP]]);
+
+    // The retry takes the spot along, but finds the stat saved already, as it was.
+    session.retry();
+    expect(saves[1]?.stat.location).toEqual(LAYUP);
+    save(1);
+    await flush();
+    expect(spots.map(({ id, location }) => [id, location])).toEqual([[shot.id, LAYUP]]);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([[shot.id, LAYUP]]);
+    saveSpot(0);
+    await flush();
+    expect(stored().map((event) => [event.id, event.type, event.location])).toEqual([
+      [shot.id, 'fg2_made', LAYUP],
+    ]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('moves the spot with another tap, and saves the last one', async () => {
+    const { session, save, sync, stored, spots, saveSpot } = setUp();
+    // While its save is under way, the journal takes each spot in turn, and the last
+    // one is put on the stat once the save lands.
+    const first = session.record('fg2_made');
+    session.markSpot(ELBOW);
+    session.markSpot(LAYUP);
+    expect(session.getSnapshot().spotShot?.spot).toEqual(LAYUP);
+    expect(keptTaps()).toEqual([[first.id, LAYUP]]);
+    save(0);
+    await flush();
+    sync();
+
+    // Saved: one write at a time...
+    const second = session.record('fg3_miss');
+    save(1);
+    await flush();
+    sync();
+    session.markSpot(CORNER);
+    session.markSpot(ELBOW);
+    session.markSpot(CORNER);
+    expect(spots.map(({ id, location }) => [id, location])).toEqual([
+      [first.id, LAYUP],
+      [second.id, CORNER],
+    ]);
+    saveSpot(0);
+    saveSpot(1);
+    await flush();
+    // ...and a spot moved away and back meanwhile needs no other.
+    expect(spots).toHaveLength(2);
+    expect(stored().map((event) => [event.id, event.location])).toEqual([
+      [first.id, LAYUP],
+      [second.id, CORNER],
+    ]);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('writes a spot again if it moved while the last one was being saved', async () => {
+    const { session, save, sync, stored, spots, saveSpot } = setUp();
+    const shot = session.record('fg3_made');
+    save(0);
+    await flush();
+    sync();
+    session.markSpot(CORNER);
+    session.markSpot(ELBOW);
+    expect(spots).toHaveLength(1);
+    saveSpot(0);
+    await flush();
+    expect(spots.map(({ location }) => location)).toEqual([CORNER, ELBOW]);
+    expect(keptSpots()).toEqual([[shot.id, ELBOW]]);
+    saveSpot(1);
+    await flush();
+    expect(stored().map((event) => event.location)).toEqual([ELBOW]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('closes the court once its time is up, even if its timer is late', async () => {
+    vi.useFakeTimers();
+    const { session } = setUp();
+    const listener = vi.fn();
+    session.subscribe(listener);
+    session.record('fg2_made');
+    await vi.advanceTimersByTimeAsync(SPOT_WINDOW_MS - 1);
+    expect(session.markSpot(ELBOW)).toBe(true);
+    listener.mockClear();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(session.getSnapshot().spotShot).toBeNull();
+    expect(listener).toHaveBeenCalledOnce();
+    expect(session.markSpot(LAYUP)).toBe(false);
+    expect(keptTaps().map(([, spot]) => spot)).toEqual([ELBOW]);
+
+    // The page was in the background: the clock moved on, but no timer ran yet.
+    session.record('fg3_made');
+    vi.setSystemTime(Date.now() + SPOT_WINDOW_MS);
+    expect(session.markSpot(CORNER)).toBe(false);
+    expect(session.getSnapshot().spotShot).toBeNull();
+  });
+
+  it('closes the court on Undo and on a period change', () => {
+    const { session } = setUp();
+    const spotShot = () => session.getSnapshot().spotShot;
+    session.record('fg2_made');
+    void session.movePeriod(2);
+    expect(spotShot()).toBeNull();
+    session.record('fg2_made');
+    void session.undoLatest();
+    expect(spotShot()).toBeNull();
+    const shot = session.record('fg3_made');
+    void session.undo(shot).removal;
+    expect(spotShot()).toBeNull();
+    session.record('fg3_made');
+    session.closeSpot();
+    expect(spotShot()).toBeNull();
+    expect(session.markSpot(ELBOW)).toBe(false);
+  });
+
+  it('undoes a shot with its spot, saved or not', async () => {
+    const { session, saves, save, fail, sync, stored, spots, saveSpot, deletes } = setUp();
+    // Not saved: the tap goes, spot and all, and is never saved.
+    const unsaved = session.record('fg2_made');
+    fail(0);
+    await flush();
+    session.markSpot(ELBOW);
+    expect(await outcome(session.undo(unsaved))).toEqual(['fg2_made', 'removed']);
+    expect(keptTaps()).toEqual([]);
+    session.retry();
+    expect(saves).toHaveLength(1);
+
+    // Saved, with its spot being saved: the stat goes, and its spot isn't kept.
+    const saved = session.record('fg3_miss');
+    save(1);
+    await flush();
+    sync();
+    session.markSpot(CORNER);
+    expect(keptSpots()).toEqual([[saved.id, CORNER]]);
+    const taking = session.undoLatest();
+    expect(keptSpots()).toEqual([]);
+    saveSpot(0);
+    expect(await outcome(taking)).toEqual(['fg3_miss', 'removed']);
+    expect(stored()).toEqual([]);
+    expect(deletes).toEqual([unsaved.id, saved.id]);
+    session.retry();
+    expect(spots).toHaveLength(1);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('keeps the spot of a stat that could not be undone, and still saves it', async () => {
+    const { session, save, sync, stored, spots, saveSpot, failSpot, failDeletes } = setUp();
+    // Two saved shots whose spots couldn't be put on them yet: one the screen shows
+    // among the saved stats, one saved a moment ago (still held as a tap).
+    const shown = session.record('fg3_made');
+    save(0);
+    await flush();
+    sync();
+    session.markSpot(CORNER);
+    failSpot(0);
+    const held = session.record('fg2_made');
+    save(1);
+    await flush();
+    session.markSpot(ELBOW);
+    failSpot(1);
+    await flush();
+    expect(keptSpots()).toEqual([
+      [shown.id, CORNER],
+      [held.id, ELBOW],
+    ]);
+
+    // Undo can't remove them: each counts again, and so does its spot.
+    failDeletes(true);
+    expect(await outcome(session.undo(held))).toEqual(['fg2_made', 'failed']);
+    expect(await outcome(session.undo(shown))).toEqual(['fg3_made', 'failed']);
+    expect(keptSpots().sort()).toEqual(
+      [
+        [shown.id, CORNER],
+        [held.id, ELBOW],
+      ].sort(),
+    );
+
+    // The next retry puts them on their stats (in the order they came back).
+    failDeletes(false);
+    session.retry();
+    expect(spots.slice(2).map(({ id, location }) => [id, location])).toEqual([
+      [held.id, ELBOW],
+      [shown.id, CORNER],
+    ]);
+    saveSpot(2);
+    saveSpot(3);
+    await flush();
+    expect(stored().map((event) => [event.id, event.location])).toEqual([
+      [shown.id, CORNER],
+      [held.id, ELBOW],
+    ]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it("tries a spot that couldn't be saved again with the taps, and keeps it meanwhile", async () => {
+    vi.useFakeTimers();
+    const { session, save, sync, stored, spots, saveSpot, failSpot } = setUp();
+    const shot = session.record('fg2_made');
+    save(0);
+    await vi.advanceTimersByTimeAsync(0);
+    sync();
+    session.markSpot(ELBOW);
+    failSpot(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(keptSpots()).toEqual([[shot.id, ELBOW]]);
+    // Once on its own...
+    await vi.advanceTimersByTimeAsync(AUTO_RETRY_MS);
+    expect(spots).toHaveLength(2);
+    failSpot(1);
+    await vi.advanceTimersByTimeAsync(10 * AUTO_RETRY_MS);
+    expect(spots).toHaveLength(2);
+    // ...then with the next tap (or Retry, or when the page is shown again).
+    session.record('stl');
+    expect(spots).toHaveLength(3);
+    saveSpot(2);
+    save(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stored().map((event) => [event.type, event.location])).toEqual([
+      ['fg2_made', ELBOW],
+      ['stl', undefined],
+    ]);
+    expect(keptTaps()).toEqual([]);
+    expect(keptSpots()).toEqual([]);
+  });
+
+  it('counts a spot not on its stat yet as not saved when the game ends', async () => {
+    const { session, save, sync, saveSpot, failSpot } = setUp();
+    session.record('fg3_miss');
+    save(0);
+    await flush();
+    sync();
+    session.markSpot(CORNER);
+    // End game waits for the spot's write too: it fails.
+    const ending = session.saveAll();
+    failSpot(0);
+    expect(await ending).toEqual({ count: 1, kept: true });
+    // Trying again retries it: saved.
+    const again = session.saveAll();
+    saveSpot(1);
+    expect(await again).toEqual({ count: 0, kept: true });
+  });
+
+  it('starts with the spots an earlier page kept, and puts them on their stats, never as taps', async () => {
+    const { deps, spots, store, saveSpot, stored } = fakeDeps();
+    store(event('three', 'fg3_made', 5));
+    addPendingSpot({ id: 'three', gameId: 'g', location: CORNER });
+    addPendingSpot({ id: 'elsewhere', gameId: 'other', location: ELBOW });
+    const session = new TrackingSession('g', 1, deps);
+    // Not a tap: it isn't counted, listed as not saved, or undone.
+    expect(session.getSnapshot()).toMatchObject({ pending: [], unsaved: [] });
+    session.syncSavedEvents(stored());
+    session.retry();
+    expect(spots.map(({ id, location }) => [id, location])).toEqual([['three', CORNER]]);
+    saveSpot(0);
+    await flush();
+    expect(stored().map((each) => [each.id, each.location])).toEqual([['three', CORNER]]);
+    // (Another game's spot is that game's session's to save.)
+    expect(keptSpots()).toEqual([['elsewhere', ELBOW]]);
+  });
+
+  it('counts, lists and undoes a shot as one tap, spot or not', async () => {
+    const { session, fail, sync, store } = setUp();
+    store(event('old', 'fg2_made', 1));
+    sync();
+    const shot = session.record('fg2_made');
+    fail(0);
+    await flush();
+    session.markSpot(ELBOW);
+    expect(session.count('fg2_made')).toBe(2);
+    expect(session.getSnapshot().unsaved.map((tap) => [tap.id, tap.location])).toEqual([
+      [shot.id, ELBOW],
+    ]);
+    expect(await outcome(session.undoLatest())).toEqual(['fg2_made', 'removed']);
+    expect(session.count('fg2_made')).toBe(1);
+  });
+
+  describe('with the real database', () => {
+    const newGame = () =>
+      createGame({ opponent: 'Central', date: '2026-09-27', periodFormat: 'quarters' });
+    const broken = () => Promise.reject(new DOMException('Connection lost.', 'UnknownError'));
+
+    /** A saved shot whose spot couldn't be put on it (nor by the retry after a second). */
+    async function shotWithKeptSpot(spot: CourtPoint) {
+      const game = await newGame();
+      const session = new TrackingSession(game.id, 1, {
+        recordStat: savePendingStat,
+        deleteStat,
+        setCurrentPeriod,
+        setStatLocation: broken,
+      });
+      const shot = session.record('fg3_made');
+      await vi.waitFor(async () => expect(await getGameEvents(game.id)).toHaveLength(1));
+      session.syncSavedEvents(await getGameEvents(game.id));
+      session.markSpot(spot);
+      await new Promise((resolve) => setTimeout(resolve, AUTO_RETRY_MS + 50));
+      expect(keptSpots()).toEqual([[shot.id, spot]]);
+      expect(keptTaps()).toEqual([]);
+      return { game, shot, session };
+    }
+
+    it('saves a spot the page could not save when the app starts again, once', async () => {
+      const { game, shot } = await shotWithKeptSpot(CORNER);
+
+      // The page reloads, and the app's start saves what was kept.
+      expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
+      expect(await getGameEvents(game.id)).toEqual([
+        {
+          id: shot.id,
+          gameId: game.id,
+          type: 'fg3_made',
+          period: 1,
+          createdAt: shot.at,
+          location: CORNER,
+        },
+      ]);
+      expect(keptSpots()).toEqual([]);
+      expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+    });
+
+    it('never brings back a shot deleted after its spot was kept: at app start', async () => {
+      const { game, shot } = await shotWithKeptSpot(ELBOW);
+      // The game ends and the parent deletes that shot on the game report: its kept spot
+      // goes with it.
+      expect(await deleteStat(shot.id)).toBeDefined();
+      expect(keptSpots()).toEqual([]);
+      expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+      expect(await getGameEvents(game.id)).toEqual([]);
+
+      // Even a spot kept for a stat deleted some other way (a backup restored over it,
+      // say) is only ever put on its stat: the replay drops it, and adds nothing.
+      addPendingSpot({ id: shot.id, gameId: game.id, location: ELBOW });
+      expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 1, failed: 0 });
+      expect(await getGameEvents(game.id)).toEqual([]);
+      expect(keptSpots()).toEqual([]);
+    });
+
+    it('never brings back a shot deleted after its spot was kept: on the game screen', async () => {
+      const { game, shot } = await shotWithKeptSpot(CORNER);
+      await deleteStat(shot.id);
+      addPendingSpot({ id: shot.id, gameId: game.id, location: CORNER });
+
+      // A relaunch that opens the game screen: its new session starts with the kept
+      // spot, but not as a stat to save (nothing is listed as not saved).
+      const after = new TrackingSession(game.id, 1);
+      after.syncSavedEvents(await getGameEvents(game.id));
+      expect(after.getSnapshot()).toMatchObject({ pending: [], unsaved: [] });
+      after.retry();
+      await vi.waitFor(() => expect(keptSpots()).toEqual([]));
+      expect(await getGameEvents(game.id)).toEqual([]);
+      expect(await after.saveAll()).toEqual({ count: 0, kept: true });
+    });
+
+    it('saves a tap kept with its spot when the game screen opens again, once', async () => {
+      const game = await newGame();
+      const before = new TrackingSession(game.id, 2, {
+        recordStat: broken,
+        deleteStat,
+        setCurrentPeriod,
+        setStatLocation: broken,
+      });
+      const shot = before.record('fg2_miss');
+      await vi.waitFor(() => expect(before.getSnapshot().unsaved).toHaveLength(1));
+      before.markSpot(ELBOW);
+
+      // A reload: the new screen's session starts with the kept tap, spot and all.
+      const after = new TrackingSession(game.id, 2);
+      expect(after.getSnapshot().unsaved).toEqual([{ ...shot, location: ELBOW }]);
+      after.retry();
+      await vi.waitFor(() => expect(after.getSnapshot().unsaved).toEqual([]));
+      expect(await getGameEvents(game.id)).toEqual([
+        {
+          id: shot.id,
+          gameId: game.id,
+          type: 'fg2_miss',
+          period: 2,
+          createdAt: shot.at,
+          location: ELBOW,
+        },
+      ]);
+      expect(keptTaps()).toEqual([]);
+      expect(keptSpots()).toEqual([]);
+    });
+  });
+});
+
+describe('disposeTrackingSessions', () => {
+  it("stops every game's session: no more retries, or journal writes, after a test", async () => {
+    const game = await createGame({
+      opponent: 'Central',
+      date: '2026-09-27',
+      periodFormat: 'quarters',
+    });
+    // A tap that can't be saved or kept: its session will try again in a second.
+    const save = vi.spyOn(repo, 'recordStat').mockRejectedValue(new Error('Connection lost'));
+    const keep = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    const session = trackingSession(game.id, 1);
+    session.record('stl');
+    await vi.waitFor(() => expect(session.getSnapshot().unsaved).toHaveLength(1));
+    const saves = save.mock.calls.length;
+
+    // The test ends here (src/test/setup.ts does this after each one), and the next one
+    // can keep taps again: a retry of this session's would fail and keep its tap there.
+    disposeTrackingSessions();
+    keep.mockRestore();
+    await new Promise((resolve) => setTimeout(resolve, AUTO_RETRY_MS + 300));
+    expect(save.mock.calls.length).toBe(saves);
+    expect(listPendingStats()).toEqual([]);
+    // And the next test gets a new session for the game.
+    expect(trackingSession(game.id, 1)).not.toBe(session);
   });
 });

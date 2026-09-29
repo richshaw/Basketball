@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { Badge } from '@/components/Badge/Badge';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
+import { PinIcon } from '@/components/Icons/Icons';
 import { Sheet } from '@/components/Sheet/Sheet';
 import { periodLabel } from '@/data/stats';
 import type { PeriodFormat, StatEvent } from '@/data/types';
@@ -36,7 +37,18 @@ function LogList({
         <ListRow
           key={event.id}
           icon={<span className={cx(styles.dot, styles[statKind(event.type)])} />}
-          title={statLabel(event.type)}
+          title={
+            event.location ? (
+              // A shot whose spot was marked on the court.
+              <span className={styles.spotted}>
+                {statLabel(event.type)}
+                <PinIcon className={styles.pin} />
+                <span className="visually-hidden">, spot marked</span>
+              </span>
+            ) : (
+              statLabel(event.type)
+            )
+          }
           value={
             <span className={styles.meta}>
               <Badge className={styles.period}>{periodLabel(event.period, periodFormat)}</Badge>
@@ -51,8 +63,9 @@ function LogList({
 }
 
 /**
- * Every stat recorded in this game, newest first, with its period and time. Tapping
- * one offers to delete it (for mistakes found later; Undo covers the last one).
+ * Every stat recorded in this game, newest first, with its period and time (and a pin
+ * on shots whose spot was marked). Tapping one offers to delete it (for mistakes found
+ * later; Undo covers the last one).
  */
 export const LogSheet = memo(function LogSheet({
   open,

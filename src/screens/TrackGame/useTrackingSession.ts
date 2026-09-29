@@ -31,8 +31,10 @@ export function useTrackingSession(
     document.addEventListener('visibilitychange', retryWhenShown);
     return () => {
       document.removeEventListener('visibilitychange', retryWhenShown);
-      // Whatever shows the game next reads the stats it saved afresh.
+      // Whatever shows the game next reads the stats it saved afresh, and the court
+      // there marks no spot until the next shot.
       session.forgetSaved();
+      session.closeSpot();
     };
   }, [session]);
 

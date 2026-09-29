@@ -14,10 +14,18 @@
  * one stat. localStorage may be missing, full or blocked: every access is guarded,
  * nothing here throws, and without it taps are still saved, just not kept across a
  * reload.
+ *
+ * Only taps live here: an entry is a stat to save, and saving it again after its stat
+ * was deleted would bring the stat back. A shot's spot (the shot chart) is kept with its
+ * tap while the tap isn't saved; a spot for a stat that's saved already is kept in the
+ * pending-spots journal (pendingSpots.ts), which never adds a stat. replayPendingStats()
+ * saves both, taps first.
  */
 import { newId } from '@/lib/id';
 import { nextTimestamp } from './db';
-import { getGame, recordStat } from './repo';
+import { getPendingSpot, listPendingSpots, removePendingSpot } from './pendingSpots';
+import { getGame, recordStat, setStatLocation } from './repo';
+import { sameSpot } from './shots';
 import { isFieldGoalType } from './stats';
 import type { CourtPoint, StatEvent, StatType } from './types';
 import { statEventSchema } from './validation';
@@ -142,19 +150,25 @@ export function listPendingStats(gameId?: string): PendingStat[] {
   return stats.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
-/** Saves a tap as its stat. Idempotent: a tap saved already resolves to its stat. */
-export function savePendingStat(stat: PendingStat): Promise<StatEvent> {
-  return recordStat(stat.gameId, stat.type, stat.location, {
+/**
+ * Saves a tap as its stat, with its spot. Idempotent: a tap saved already resolves to
+ * its stat, which gets the tap's spot if it doesn't have it (a spot marked after a
+ * save that seemed to fail had landed).
+ */
+export async function savePendingStat(stat: PendingStat): Promise<StatEvent> {
+  const event = await recordStat(stat.gameId, stat.type, stat.location, {
     id: stat.id,
     at: stat.at,
     period: stat.period,
   });
+  if (!stat.location || sameSpot(event.location, stat.location)) return event;
+  return (await setStatLocation(event.id, stat.location)) ?? event;
 }
 
 export interface ReplayResult {
-  /** Saved (or found saved already) and forgotten. */
+  /** Saved (or found saved already) and forgotten: taps, and spots put on their stats. */
   saved: number;
-  /** Their game no longer exists: forgotten without saving. */
+  /** Their game (or, for a spot, its stat) no longer exists: forgotten without saving. */
   dropped: number;
   /** Couldn't be saved: still kept, for next time. */
   failed: number;
@@ -162,10 +176,12 @@ export interface ReplayResult {
 
 /**
  * Saves the taps kept by a page that closed (or couldn't reach the database) before
- * they were saved. Called at app start, in the background. Each is saved at most once
- * and then forgotten; one that can't be saved stays kept for next time, and one whose
- * game no longer exists is dropped. Stats can be added to finished games, so their
- * taps are saved too. Never rejects.
+ * they were saved, then the spots kept for saved stats (pendingSpots.ts). Called at app
+ * start, in the background. Each is saved at most once and then forgotten; one that
+ * can't be saved stays kept for next time. A tap whose game no longer exists is
+ * dropped, and so is a spot whose stat doesn't (a spot never brings back a deleted
+ * stat). Stats can be added to finished games, so their taps are saved too. Never
+ * rejects.
  */
 export async function replayPendingStats(): Promise<ReplayResult> {
   const result: ReplayResult = { saved: 0, dropped: 0, failed: 0 };
@@ -192,5 +208,30 @@ export async function replayPendingStats(): Promise<ReplayResult> {
       result.failed += 1;
     }
   }
+  await replayPendingSpots(result);
   return result;
+}
+
+/** The replay's second half: puts each kept spot on its stat, or drops it if it's gone. */
+async function replayPendingSpots(result: ReplayResult): Promise<void> {
+  for (const { id } of listPendingSpots()) {
+    // As kept right now: it may have been saved, or moved, on the live game screen.
+    const spot = getPendingSpot(id);
+    if (!spot) continue;
+    try {
+      const saved = await setStatLocation(id, spot.location);
+      // (Moved again meanwhile: that one is the game screen's to save.)
+      if (sameSpot(getPendingSpot(id)?.location, spot.location)) removePendingSpot(id);
+      if (saved) result.saved += 1;
+      else result.dropped += 1;
+    } catch (error) {
+      // A spot its stat can never take (it isn't a shot): nothing to keep it for.
+      if (error instanceof TypeError) {
+        removePendingSpot(id);
+        result.dropped += 1;
+      } else {
+        result.failed += 1;
+      }
+    }
+  }
 }
