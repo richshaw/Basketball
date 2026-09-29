@@ -1,12 +1,9 @@
 import { useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { Link } from 'react-router';
 import { Button } from '@/components/Button/Button';
 import { TextField } from '@/components/TextField/TextField';
 import { useToast } from '@/components/Toast/toastContext';
-import { isCloudBackupAvailable } from '@/data/backup/cloudBackup';
 import { savePlayer, type PlayerInput } from '@/data/repo';
 import { TEXT_LIMITS, type Player } from '@/data/types';
-import { paths } from '@/routes';
 import styles from './PlayerSetupCard.module.css';
 
 export interface PlayerSetupCardProps {
@@ -22,7 +19,9 @@ export interface PlayerSetupCardProps {
 /**
  * First run: asks who's being tracked before anything else. Games can still be
  * started without it; the name can be added any time later. Once the player has a
- * name, Games stops showing the card.
+ * name, Games stops showing the card. Compact, so New game fits under it on an iPhone
+ * SE, even below Safari's "Add to Home Screen" banner (the ways to restore a backup or
+ * try sample data are under New game: FirstRunLinks).
  */
 export function PlayerSetupCard({ player, saveVariant = 'primary' }: PlayerSetupCardProps) {
   const toast = useToast();
@@ -121,23 +120,6 @@ export function PlayerSetupCard({ player, saveVariant = 'primary' }: PlayerSetup
           Save
         </Button>
       </form>
-
-      {/* With cloud backup, its code is the way back on a new phone (backup files are there too). */}
-      {isCloudBackupAvailable() ? (
-        <p className={styles.restore}>
-          Setting up a new phone?{' '}
-          <Link to={paths.restoreBackup('games')} className={styles.restoreLink}>
-            Restore from a backup
-          </Link>
-        </p>
-      ) : (
-        <p className={styles.restore}>
-          Restoring from a backup?{' '}
-          <Link to={paths.settings} className={styles.restoreLink}>
-            Go to Settings
-          </Link>
-        </p>
-      )}
     </section>
   );
 }

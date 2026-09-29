@@ -1,8 +1,8 @@
 .card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-5) var(--space-4) var(--space-2);
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-4);
   border-radius: var(--radius-lg);
   background-color: var(--color-surface);
 }
@@ -14,7 +14,11 @@
   text-align: center;
 }
 
-/* The same round illustration as an EmptyState. */
+/*
+ * The same round illustration as an EmptyState, on a phone tall enough for it: on an
+ * iPhone SE (or below Safari's install banner on most iPhones), New game must still fit
+ * under the card without scrolling.
+ */
 .icon {
   display: grid;
   place-items: center;
@@ -36,6 +40,8 @@
 .message {
   margin-top: var(--space-2);
   color: var(--color-text-muted);
+  /* Two lines, not three, on a 375-point iPhone. */
+  font-size: var(--font-size-sm);
   text-wrap: balance;
 }
 
@@ -64,15 +70,8 @@
   flex: 1;
 }
 
-.restore {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  text-align: center;
-}
-
-/* Small text, but still a full 44px tap target. */
-.restoreLink {
-  display: inline-block;
-  padding-block: var(--space-3);
-  font-weight: var(--font-weight-semibold);
+@media (max-height: 739px) {
+  .icon {
+    display: none;
+  }
 }

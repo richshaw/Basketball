@@ -1,14 +1,25 @@
 import { useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { useToast } from '@/components/Toast/toastContext';
+import { isCloudBackupAvailable } from '@/data/backup/cloudBackup';
 import { addSampleData } from '@/data/demo';
+import { paths } from '@/routes';
 import styles from './FirstRunLinks.module.css';
 
+export interface FirstRunLinksProps {
+  /** "Setting up a new phone? Restore from a backup": while the player isn't set up. */
+  restore?: boolean;
+  /** "Just looking? Try it with sample data": while there are no games. */
+  sampleData?: boolean;
+}
+
 /**
- * Quiet ways in for a phone with no games yet, under New game: small lines that never
- * compete with it. "Just looking? Try it with sample data" adds the sample games (for
- * the player the parent set up, if she did; see addSampleData).
+ * Quiet ways in, under New game on a phone that's just starting: small lines that never
+ * compete with it (or with the setup card's Save). Restoring from a backup, and adding
+ * the sample games to look around (for the player the parent set up, if she did; see
+ * addSampleData).
  */
-export function FirstRunLinks() {
+export function FirstRunLinks({ restore = false, sampleData = false }: FirstRunLinksProps) {
   const toast = useToast();
   const [adding, setAdding] = useState(false);
   const addingRef = useRef(false);
@@ -33,17 +44,39 @@ export function FirstRunLinks() {
     }
   };
 
+  if (!restore && !sampleData) return null;
   return (
-    <p className={styles.line}>
-      Just looking?{' '}
-      <button
-        type="button"
-        className={styles.link}
-        onClick={() => void trySampleData()}
-        disabled={adding}
-      >
-        Try it with sample data
-      </button>
-    </p>
+    <div className={styles.links}>
+      {/* With cloud backup, its code is the way back on a new phone (backup files are there too). */}
+      {restore && isCloudBackupAvailable() ? (
+        <p className={styles.line}>
+          Setting up a new phone?{' '}
+          <Link to={paths.restoreBackup('games')} className={styles.link}>
+            Restore from a backup
+          </Link>
+        </p>
+      ) : null}
+      {restore && !isCloudBackupAvailable() ? (
+        <p className={styles.line}>
+          Restoring from a backup?{' '}
+          <Link to={paths.settings} className={styles.link}>
+            Go to Settings
+          </Link>
+        </p>
+      ) : null}
+      {sampleData ? (
+        <p className={styles.line}>
+          Just looking?{' '}
+          <button
+            type="button"
+            className={styles.link}
+            onClick={() => void trySampleData()}
+            disabled={adding}
+          >
+            Try it with sample data
+          </button>
+        </p>
+      ) : null}
+    </div>
   );
 }

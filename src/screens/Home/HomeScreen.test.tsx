@@ -113,8 +113,10 @@ describe('HomeScreen', () => {
 
     it('points to Settings for restoring a backup file (in a build without cloud backup)', async () => {
       const { user, router } = renderRoute(paths.home);
-      const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
-      await user.click(within(card).getByRole('link', { name: 'Go to Settings' }));
+      await screen.findByRole('region', { name: 'Who are you tracking?' });
+      const settings = screen.getByRole('link', { name: 'Go to Settings' });
+      expect(settings.parentElement).toHaveTextContent('Restoring from a backup? Go to Settings');
+      await user.click(settings);
       expect(router.state.location.pathname).toBe(paths.settings);
     });
 
@@ -122,10 +124,15 @@ describe('HomeScreen', () => {
       vi.stubEnv('VITE_BACKUP_API_URL', 'https://backup.hoop-stats.test');
       try {
         const { user, router } = renderRoute(paths.home);
-        const card = await screen.findByRole('region', { name: 'Who are you tracking?' });
-        expect(card).toHaveTextContent('Setting up a new phone? Restore from a backup');
+        await screen.findByRole('region', { name: 'Who are you tracking?' });
+        const restore = screen.getByRole('link', { name: 'Restore from a backup' });
+        expect(restore.parentElement).toHaveTextContent(
+          'Setting up a new phone? Restore from a backup',
+        );
+        // Quietly under New game, which comes first on a small screen.
+        expect(isBefore(newGameLink(), restore)).toBe(true);
 
-        await user.click(within(card).getByRole('link', { name: 'Restore from a backup' }));
+        await user.click(restore);
         expect(router.state.location.pathname).toBe(paths.restoreBackup());
         expect(router.state.location.search).toBe('?from=games');
         expect(

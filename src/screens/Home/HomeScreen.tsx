@@ -124,7 +124,7 @@ export function HomeScreen() {
             action={
               <div className={styles.emptyActions}>
                 <NewGameButton ref={newGameRef} variant="primary" />
-                <FirstRunLinks />
+                <FirstRunLinks sampleData />
               </div>
             }
           />
@@ -139,7 +139,8 @@ export function HomeScreen() {
               // A live game's Resume (or the first-run Save) is the main action when there is one.
               variant={liveGame || needsSetup ? 'secondary' : 'primary'}
             />
-            {noGames ? <FirstRunLinks /> : null}
+            {/* Under New game: on a small phone, Save and New game come first on screen. */}
+            <FirstRunLinks restore={needsSetup} sampleData={noGames} />
           </div>
         )}
 
