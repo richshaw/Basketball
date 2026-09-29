@@ -18,20 +18,53 @@
   --track-radius: var(--radius-lg);
 }
 
-/* The selected "pill" slides under the segments; its position comes from inline custom properties. */
+/* The selected "pill" under the segments. */
 .thumb {
-  position: absolute;
-  top: var(--thumb-inset);
-  bottom: var(--thumb-inset);
-  left: var(--thumb-inset);
-  width: calc((100% - 2 * var(--thumb-inset)) / var(--segment-count));
   /* The outline, not the fill, marks the selection: 3:1 against the track (WCAG 1.4.11). */
   border: 1px solid var(--color-border-strong);
   border-radius: calc(var(--track-radius) - var(--thumb-inset));
   background-color: var(--color-thumb);
   box-shadow: var(--shadow-thumb);
+}
+
+/* Equal segments: it slides; its position comes from inline custom properties. */
+.sliding {
+  position: absolute;
+  top: var(--thumb-inset);
+  bottom: var(--thumb-inset);
+  left: var(--thumb-inset);
+  width: calc((100% - 2 * var(--thumb-inset)) / var(--segment-count));
   transform: translateX(calc(var(--segment-index) * 100%));
   transition: transform var(--duration-normal) var(--ease-out);
+}
+
+/*
+ * fitLabels: equal segments while every label fits, and one that needs more room takes
+ * it from the others. Each reserves the width of its label in bold (the ::after below),
+ * so selecting one never moves the others.
+ */
+.fitLabels {
+  grid-auto-columns: minmax(max-content, 1fr);
+}
+
+.fitLabels .segment {
+  grid-row: 1;
+}
+
+.fitLabels .segment::after {
+  content: attr(data-label);
+  display: block;
+  height: 0;
+  overflow: hidden;
+  font-weight: var(--font-weight-bold);
+  visibility: hidden;
+}
+
+/* fitLabels: in the selected segment's own cell (inline grid-column), fading in. */
+.inCell {
+  grid-row: 1;
+  margin: var(--thumb-inset);
+  animation: fadeIn var(--duration-normal) var(--ease-out);
 }
 
 .segment {
@@ -73,7 +106,17 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .thumb {
+  .sliding {
     transition: none;
+  }
+
+  .inCell {
+    animation: none;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
   }
 }

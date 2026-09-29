@@ -21,6 +21,13 @@ export type SegmentedControlProps<T extends string> = GroupLabel & {
   onChange: (value: T) => void;
   /** `md` is 44px tall (forms, filters); `lg` is 56px for a screen's main choice. */
   size?: 'md' | 'lg';
+  /**
+   * Segments share the width equally while every label fits, and a label that needs
+   * more room takes it from the others (in bold, as when it's selected), instead of
+   * being cut. The thumb then fades in under the selected segment rather than sliding.
+   * Only for labels that fit together: check their length first (see SeasonPicker).
+   */
+  fitLabels?: boolean;
   className?: string;
 };
 
@@ -52,6 +59,7 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   size = 'md',
+  fitLabels = false,
   className,
   ...groupLabel
 }: SegmentedControlProps<T>) {
@@ -84,11 +92,19 @@ export function SegmentedControl<T extends string>({
     <div
       role="radiogroup"
       {...groupLabel}
-      className={cx(styles.control, styles[size], className)}
+      className={cx(styles.control, styles[size], fitLabels && styles.fitLabels, className)}
       style={thumbPosition}
       onKeyDown={handleKeyDown}
     >
-      {selectedIndex === -1 ? null : <span className={styles.thumb} aria-hidden="true" />}
+      {selectedIndex === -1 ? null : (
+        <span
+          // In its own cell, a new thumb for each selection: it fades in there.
+          key={fitLabels ? selectedIndex : undefined}
+          className={cx(styles.thumb, fitLabels ? styles.inCell : styles.sliding)}
+          style={fitLabels ? { gridColumn: selectedIndex + 1 } : undefined}
+          aria-hidden="true"
+        />
+      )}
       {options.map((option, index) => {
         const selected = index === selectedIndex;
         // Roving focus: only one segment is in the tab order (the selected one, else the first).
@@ -104,6 +120,9 @@ export function SegmentedControl<T extends string>({
             aria-checked={selected}
             tabIndex={tabbable ? 0 : -1}
             className={cx(styles.segment, selected && styles.selected)}
+            // With fitLabels: its own column, and its label kept for the width it takes in bold.
+            style={fitLabels ? { gridColumn: index + 1 } : undefined}
+            data-label={fitLabels ? option.label : undefined}
             onClick={() => select(index)}
           >
             {option.label}

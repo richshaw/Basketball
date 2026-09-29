@@ -7,16 +7,8 @@ import {
   type SegmentedOption,
 } from '@/components/SegmentedControl/SegmentedControl';
 import { Sheet } from '@/components/Sheet/Sheet';
-import { ALL_SEASONS, seasonKey, type SeasonKey } from './seasonFilter';
+import { ALL_SEASONS, fitsSegments, seasonKey, type SeasonKey } from './seasonFilter';
 import styles from './SeasonPicker.module.css';
-
-/** Longest label (characters) that still fits one segment, by number of segments. */
-const SEGMENT_MAX_CHARS: Record<number, number> = { 2: 18, 3: 11 };
-
-function fitsSegments(options: readonly SegmentedOption<SeasonKey>[]): boolean {
-  const maxChars = SEGMENT_MAX_CHARS[options.length];
-  return maxChars !== undefined && options.every((option) => option.label.length <= maxChars);
-}
 
 export interface SeasonPickerProps {
   /** Season labels, most recent first. */
@@ -36,9 +28,15 @@ export function SeasonPicker({ seasons, value, onChange }: SeasonPickerProps) {
     ...seasons.map((season) => ({ value: seasonKey(season), label: season })),
   ];
 
-  if (fitsSegments(options)) {
+  if (fitsSegments(options.map((option) => option.label))) {
     return (
-      <SegmentedControl aria-label="Season" options={options} value={value} onChange={onChange} />
+      <SegmentedControl
+        aria-label="Season"
+        options={options}
+        value={value}
+        onChange={onChange}
+        fitLabels
+      />
     );
   }
 

@@ -8,7 +8,7 @@ import {
   screenHeading,
   tabBar,
 } from './support/app';
-import { demoGameId, exportAll, patchGames, seedDemoData } from './support/data';
+import { demoGameId, exportAll, patchGames, seedDemoData, type GamePatch } from './support/data';
 
 /** Points per made shot, to check the screen's math against the stored events. */
 const POINTS: Record<string, number> = { fg2_made: 2, fg3_made: 3, ft_made: 1 };
@@ -106,6 +106,43 @@ test('a long season name leaves the totals in view, and never widens the page', 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     IPHONE_VIEWPORT.width,
   );
+});
+
+test("the season picker shows the app's own season names in full, also 375 points wide", async ({
+  page,
+}) => {
+  await seedDemoData(page);
+  for (const [newer, older] of [
+    ['Fall 2026', 'Summer 2026'],
+    ['Winter 2027', 'Spring 2027'],
+  ] as const) {
+    // The five newest games in the newer season, the others in the older one.
+    const seasons: Record<string, GamePatch> = {};
+    for (let n = 1; n <= 10; n += 1) seasons[demoGameId(n)] = { season: n > 5 ? newer : older };
+    await patchGames(page, seasons);
+    for (const width of [390, 375]) {
+      await page.setViewportSize({ width, height: IPHONE_VIEWPORT.height });
+      await page.goto('about:blank');
+      await page.goto(appUrl(paths.stats));
+      const radios = page.getByRole('radiogroup', { name: 'Season' }).getByRole('radio');
+      await expect(radios).toHaveText(['All', newer, older]);
+      const positions = () =>
+        radios.evaluateAll((all) =>
+          all.map((radio) => Math.round(radio.getBoundingClientRect().x)),
+        );
+      const before = await positions();
+      for (const radio of await radios.all()) {
+        // Selected, in bold: the widest a label gets.
+        await radio.tap();
+        await expect(radio).toBeChecked();
+        expect(await radio.evaluate((el) => el.scrollWidth <= el.clientWidth), `${width}`).toBe(
+          true,
+        );
+        expect(await positions()).toEqual(before);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    }
+  }
 });
 
 test('with no finished games, the Stats tab leads to a new game', async ({ page }) => {

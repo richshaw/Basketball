@@ -16,6 +16,14 @@ export const venues: SegmentedOption<Venue>[] = [
   { value: 'neutral', label: 'Neutral' },
 ];
 
+export type SeasonChoice = 'all' | 'fall' | 'summer';
+/** Labels of different lengths, for SegmentedControl's fitLabels. */
+export const seasons: SegmentedOption<SeasonChoice>[] = [
+  { value: 'all', label: 'All' },
+  { value: 'fall', label: 'Fall 2026' },
+  { value: 'summer', label: 'Summer 2026' },
+];
+
 export type GameFilter = 'all' | 'last5' | 'home' | 'away';
 export const gameFilters: SegmentedOption<GameFilter>[] = [
   { value: 'all', label: 'All' },

@@ -137,4 +137,45 @@ describe('SegmentedControl', () => {
     expect(screen.getByRole('radiogroup', { name: 'Periods' })).toHaveClass('lg');
     expect(segment('Halves')).toBeChecked();
   });
+
+  it('can let a long label take the room it needs, keeping its bold width', async () => {
+    const user = userEvent.setup();
+    function SeasonPicker() {
+      const [value, setValue] = useState('fall');
+      return (
+        <SegmentedControl
+          aria-label="Season"
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'fall', label: 'Fall 2026' },
+            { value: 'summer', label: 'Summer 2026' },
+          ]}
+          value={value}
+          onChange={setValue}
+          fitLabels
+        />
+      );
+    }
+    const { container } = render(<SeasonPicker />);
+    expect(screen.getByRole('radiogroup', { name: 'Season' })).toHaveClass('fitLabels');
+    // Each segment has its own column, and its label for the width it takes in bold.
+    ['All', 'Fall 2026', 'Summer 2026'].forEach((label, index) => {
+      expect(segment(label)).toHaveAttribute('data-label', label);
+      expect(segment(label).style.gridColumn).toBe(`${index + 1}`);
+    });
+    // The thumb sits in the selected segment's column, and moves with the selection.
+    const thumb = () => container.querySelector<HTMLElement>('.thumb');
+    expect(thumb()).toHaveClass('inCell');
+    expect(thumb()?.style.gridColumn).toBe('2');
+
+    await user.click(segment('Summer 2026'));
+    expect(segment('Summer 2026')).toBeChecked();
+    expect(thumb()?.style.gridColumn).toBe('3');
+  });
+
+  it('slides one thumb under equal segments by default', () => {
+    const { container } = render(<VenuePicker initial="away" />);
+    expect(container.querySelector('.thumb')).toHaveClass('sliding');
+    expect(segment('Away')).not.toHaveAttribute('data-label');
+  });
 });
