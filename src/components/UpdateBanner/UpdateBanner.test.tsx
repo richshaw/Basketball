@@ -81,13 +81,23 @@ describe('UpdateBanner', () => {
     expect(dismiss).toHaveBeenCalledTimes(1);
   });
 
-  it('stays away while a reload would lose a tap, and comes back once it would not', () => {
+  it('says the update waits while a reload would lose a tap, and offers it once it would not', async () => {
     const taps = holdUnkeptTaps();
-    renderBanner({ needRefresh: true });
-    expect(banner()).not.toBeInTheDocument();
+    const dismiss = vi.fn();
+    const { user } = renderBanner({ needRefresh: true, dismiss });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'New version available Update once your taps are saved',
+    );
+    expect(screen.queryByRole('button', { name: 'Update' })).not.toBeInTheDocument();
 
     taps.keep();
+    expect(screen.getByRole('status')).toHaveTextContent(/^New version available$/);
     expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled();
+
+    // It can wait until later either way.
+    taps.lose();
+    await user.click(screen.getByRole('button', { name: 'Later' }));
+    expect(dismiss).toHaveBeenCalledTimes(1);
   });
 
   it('offers the update afresh when a reload would have lost a tap as it was under way', async () => {
@@ -100,9 +110,10 @@ describe('UpdateBanner', () => {
     expect(await screen.findByRole('button', { name: 'Updating…' })).toBeDisabled();
 
     // A tap held only in memory again (say, a failed Erase all data held its game's taps
-    // again): the reload is held back, and the banner goes.
+    // again): the reload is held back, and the banner says the update waits.
     taps.lose();
-    expect(banner()).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Updat/ })).not.toBeInTheDocument();
+    expect(banner()).toHaveTextContent('Update once your taps are saved');
     taps.keep();
     expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Later' })).toBeEnabled();

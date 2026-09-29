@@ -31,6 +31,13 @@
   line-height: var(--line-height-tight);
 }
 
+/* Why there's no Update yet (a reload would lose a tap): a second line, quieter. */
+.detail {
+  display: block;
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-regular);
+}
+
 .actions {
   display: flex;
   flex-shrink: 0;

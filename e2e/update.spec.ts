@@ -136,8 +136,15 @@ test('the update waits while a reload would lose a tap, and is offered once it w
       { timeout: 15_000 },
     )
     .toBe(true);
-  await page.waitForTimeout(1000);
-  await expect(updateBanner(page)).toHaveCount(0);
+  // The banner says why no update is offered yet, and the new version stays waiting.
+  await expect(updateBanner(page)).toContainText('Update once your taps are saved');
+  await expect(updateBanner(page).getByRole('button', { name: 'Update' })).toHaveCount(0);
+  await page.waitForTimeout(500);
+  expect(
+    await page.evaluate(async () =>
+      Boolean((await navigator.serviceWorker.getRegistration())?.waiting),
+    ),
+  ).toBe(true);
 
   // Saving works again, and the app-wide retry saves the Steal as the app comes back
   // into view: now the update is offered, and loses nothing.

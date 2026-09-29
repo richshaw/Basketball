@@ -1,8 +1,9 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { RegisterSWOptions } from 'vite-plugin-pwa/types';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { UpdateBanner } from '@/components/UpdateBanner/UpdateBanner';
+import { holdUnsavedTaps } from '@/data/pendingStats';
 import { reloadIfSafe } from './reload';
 import { applyUpdate, watchForTakeover } from './updates';
 import { ServiceWorkerProvider } from './ServiceWorkerProvider';
@@ -59,6 +60,26 @@ describe('ServiceWorkerProvider', () => {
     const [options] = vi.mocked(applyUpdate).mock.calls[0] ?? [];
     await options?.activateWaitingWorker();
     expect(sw.updateServiceWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it('activates the new version only while a reload would lose nothing', async () => {
+    const { user } = renderProvider();
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+    const [options] = vi.mocked(applyUpdate).mock.calls[0] ?? [];
+    expect(options?.mayReload?.()).toBe(true);
+
+    // A live game screen holds a tap only in memory: no longer.
+    onTestFinished(
+      holdUnsavedTaps({
+        gameId: 'g1',
+        hasUnsaved: () => true,
+        reloadSafe: () => false,
+        retryQuietly: () => Promise.resolve(),
+        saved: () => {},
+        forget: () => () => {},
+      }),
+    );
+    expect(options?.mayReload?.()).toBe(false);
   });
 
   it('reloads into the new version only through reloadIfSafe: never while that would lose a tap', async () => {

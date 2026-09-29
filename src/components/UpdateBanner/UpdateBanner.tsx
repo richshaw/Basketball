@@ -6,9 +6,10 @@ import styles from './UpdateBanner.module.css';
 
 /**
  * Offers a new app version. Rendered only by AppShell (the tab screens), never on
- * the live game screen, because updating reloads the app. It stays away while a reload
- * would lose a tap the live game screen holds only in memory (useReloadSafe: not kept on
- * the phone yet, say), and comes back once it wouldn't.
+ * the live game screen, because updating reloads the app. While a reload would lose a
+ * tap the live game screen holds only in memory (useReloadSafe: not kept on the phone
+ * yet, say), it says the update waits for the taps to be saved, and offers it once
+ * they are.
  */
 export function UpdateBanner() {
   const { needRefresh, update, dismiss } = useServiceWorkerUpdate();
@@ -19,7 +20,23 @@ export function UpdateBanner() {
   // again, the update is offered afresh rather than shown as still under way.
   if (updating && !reloadSafe) setUpdating(false);
 
-  if (!needRefresh || !reloadSafe) return null;
+  if (!needRefresh) return null;
+
+  if (!reloadSafe) {
+    return (
+      <aside className={styles.banner} aria-label="App update">
+        <p className={styles.message} role="status">
+          New version available{' '}
+          <span className={styles.detail}>Update once your taps are saved</span>
+        </p>
+        <div className={styles.actions}>
+          <Button variant="ghost" onClick={dismiss}>
+            Later
+          </Button>
+        </div>
+      </aside>
+    );
+  }
 
   const handleUpdate = async () => {
     setUpdating(true);
