@@ -4,7 +4,7 @@ import { courtToSvg, courtViewBox } from '@/components/Court/courtGeometry';
 import { courtBox, mockScreenBox, svgToClient } from '@/components/Court/courtTestUtils';
 import { db } from '@/data/db';
 import { demoGameId, seedDemoData } from '@/data/demo';
-import { READ_RETRY_DELAYS_MS, READ_WATCHDOG_MS } from '@/data/hooks';
+import { READ_CLOSED_WAIT_MS, READ_RETRY_DELAYS_MS, READ_WATCHDOG_MS } from '@/data/hooks';
 import { listPendingRemovals } from '@/data/pendingRemovals';
 import { replayPendingStats, retryPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
 import { listPendingSpots } from '@/data/pendingSpots';
@@ -1434,6 +1434,58 @@ describe('TrackGameScreen', () => {
         });
         await waitFor(() => expect(readNote()).not.toBeInTheDocument());
         await expectStrip('Steals: 1');
+      });
+
+      /** Games, with the live game to resume, and then the connection is lost. */
+      async function loseConnectionOnGames(game: Game) {
+        const view = renderRoute(paths.home);
+        await screen.findByRole('link', { name: 'Resume game' });
+        const connection = loseConnection();
+        // Something reads (the backup scheduler, say): the open fails, and Dexie gives up.
+        await getGame(game.id).catch(() => undefined);
+        expect(db.hasFailed()).toBe(true);
+        return { ...view, connection };
+      }
+
+      it('opens the live game once the database is open again, if it was closed as she tapped Resume', async () => {
+        setReopenDelaysForTests([200]);
+        const game = await newGame();
+        await recordStat(game.id, 'stl');
+        const { router, connection } = await loseConnectionOnGames(game);
+
+        // She taps Resume a moment later. Nothing is on screen yet to keep, and nothing
+        // to show: the screen waits for the database, and never shows the error screen.
+        await act(() => router.navigate(paths.trackGame(game.id)));
+        await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+        expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull();
+        expect(screen.queryByRole('group', { name: 'Record a stat' })).toBeNull();
+
+        // The connection is back: the database opens again, and the live game shows.
+        connection.restore();
+        expect(
+          await screen.findByRole('group', { name: 'Record a stat' }, { timeout: 3000 }),
+        ).toBeInTheDocument();
+        await expectStrip('Steals: 1');
+        expect(readNote()).not.toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull();
+      });
+
+      it('shows the error screen if the database is still closed a while later: there is nothing to keep', async () => {
+        vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+        const game = await newGame();
+        const { router } = await loseConnectionOnGames(game);
+        await act(() => router.navigate(paths.trackGame(game.id)));
+        await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+        expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull();
+
+        // Still closed once the wait is up (read again as the app comes back into view).
+        vi.setSystemTime(Date.now() + READ_CLOSED_WAIT_MS);
+        act(() => {
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+        expect(
+          await screen.findByRole('heading', { name: 'Something went wrong' }),
+        ).toBeInTheDocument();
       });
     });
 

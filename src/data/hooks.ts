@@ -117,6 +117,12 @@ export const READ_RETRY_DELAYS_MS: readonly number[] = [1000, 3000, 10_000];
 export const READ_WATCHDOG_MS = 3000;
 const READ_WATCHDOG_MAX_MS = 30_000;
 
+/**
+ * How long a first read (nothing on screen yet) waits for a database closed for good to
+ * open again (reopen.ts tries after 1 s and 3 s) before it counts as a failed read.
+ */
+export const READ_CLOSED_WAIT_MS = 10_000;
+
 /** The error of a read that didn't answer in time (see READ_WATCHDOG_MS). */
 function unansweredRead(): DOMException {
   return new DOMException('Reading saved data did not answer in time.', 'TimeoutError');
@@ -141,7 +147,9 @@ interface SteadyState<K, T> {
  * background) and when the database closes for good or opens again (reopen.ts). A read
  * that doesn't answer at all is read again too (READ_WATCHDOG_MS), and counts as a
  * failed read once there's a result on screen; so does a DatabaseClosedError, which
- * liveQuery itself drops without a word.
+ * liveQuery itself drops without a word. A first read has nothing to keep yet: one that
+ * finds the database closed waits for it to open again (then it's read again, and fills
+ * the screen), and counts as failed only if it's still closed READ_CLOSED_WAIT_MS later.
  */
 function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): SteadyRead<T> {
   // Moves on to read again after a failure, or a read that never answered (a new live
@@ -154,10 +162,15 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
   }));
   // Reads in a row that never answered: how far the watchdog has backed off.
   const unanswered = useRef(0);
+  // The key whose result is on screen, once there is one.
+  const shown = useRef<{ key: K } | undefined>(undefined);
+  // Since when a first read has found the database closed (for this key).
+  const closedSince = useRef<{ key: K; at: number } | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
+    let closedWait: ReturnType<typeof setTimeout> | undefined;
     const answered = () => {
       clearTimeout(watchdog);
       watchdog = undefined;
@@ -171,6 +184,27 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
           ? { ...current, error, failures: current.failures + 1 }
           : { key, hasValue: false, error, failures: 1 },
       );
+    };
+    // The database is closed (reopen.ts is opening it again): liveQuery drops this read
+    // without a word. With a result on screen, it's a failed read like any other. A
+    // first read has nothing to keep: it's read again once the database is open (below),
+    // or by the watchdog, and fails only if the database stays closed too long.
+    const closed = (error: unknown) => {
+      if (!active) return;
+      if (shown.current && Object.is(shown.current.key, key)) {
+        failed(error);
+        return;
+      }
+      if (!closedSince.current || !Object.is(closedSince.current.key, key)) {
+        closedSince.current = { key, at: Date.now() };
+      }
+      const left = closedSince.current.at + READ_CLOSED_WAIT_MS - Date.now();
+      if (left <= 0) {
+        failed(error);
+        return;
+      }
+      clearTimeout(closedWait);
+      closedWait = setTimeout(() => setAttempt((count) => count + 1), left);
     };
     const subscription = liveQuery(() => {
       // Each run (the first, and again whenever its data changes) must answer in time,
@@ -195,9 +229,7 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
         try {
           return await read;
         } catch (error) {
-          // liveQuery drops this one without a word: the database is closed (reopen.ts
-          // is opening it again), and this read failed like any other.
-          if (isDatabaseClosedError(error)) failed(error);
+          if (isDatabaseClosedError(error)) closed(error);
           throw error;
         }
       })();
@@ -205,6 +237,9 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
       next: (value) => {
         if (!active) return;
         answered();
+        clearTimeout(closedWait);
+        shown.current = { key };
+        closedSince.current = undefined;
         setState({ key, hasValue: true, value, failures: 0 });
       },
       error: failed,
@@ -212,6 +247,7 @@ function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): Steady
     return () => {
       active = false;
       clearTimeout(watchdog);
+      clearTimeout(closedWait);
       subscription.unsubscribe();
     };
   }, [key, query, attempt]);

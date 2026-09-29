@@ -486,7 +486,8 @@ export function TrackGameScreen() {
   if (game.value === null) return <GameNotFound />;
   if (game.value === undefined || events.value === undefined || settings.value === undefined) {
     // Nothing on screen to keep yet: a first read that failed gets the route's error
-    // screen (with Reload), like any other screen.
+    // screen (with Reload), like any other screen. (One that finds the database closed
+    // first waits a while for it to open again: then the screen simply shows.)
     if (game.failed) throw game.error;
     if (events.failed) throw events.error;
     if (settings.failed) throw settings.error;
