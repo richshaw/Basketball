@@ -123,8 +123,10 @@
   display: none;
 }
 
+/* Points stay big; without the space around them, the row is no taller for it. */
 .compact .points {
   grid-row: auto;
+  padding-block: 0;
 }
 
 .compact .shooting {
@@ -132,5 +134,9 @@
 }
 
 .compact .points .value {
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-3xl);
+}
+
+.compact .points .label {
+  margin-top: 0;
 }

@@ -55,11 +55,27 @@
 .withCourt {
   --stat-grid-min-height: calc(4 * var(--game-button-min-height) + 3 * var(--space-2));
   /*
-   * Shorter buttons: each count shrinks with its button (cqb: its height), so it stays
-   * clear of a long first word ("Charge"). Full size on buttons 88px and up.
+   * Shorter buttons, so the labels take more of their height (cqb: the button's):
+   * 26% rather than 22%, still at most the xl size.
    */
-  --stat-count-size: min(calc(var(--space-5) + var(--space-1) / 2), 25cqb);
-  --stat-count-font-size: min(var(--font-size-sm), 17cqb);
+  --stat-label-max: 26cqb;
+  /*
+   * Each count shrinks with its button, down to 12px digits (full size on buttons
+   * 88px and up).
+   */
+  --stat-count-font-size: max(var(--font-size-xs), min(var(--font-size-sm), 17cqb));
+  --stat-count-size: max(
+    calc(1.5 * var(--font-size-xs)),
+    min(calc(var(--space-5) + var(--space-1) / 2), 25cqb)
+  );
+  /*
+   * A label on two lines moves down just enough to start below the count, with the
+   * count's own gap from the top between them (its margin moves it half as far).
+   */
+  --stat-two-line-shift: max(
+    0px,
+    calc(2 * var(--stat-count-size) + 2 * var(--line-height-tight) * 1em - 100cqb)
+  );
 }
 
 /* Short screens (iPhone SE): tighter gaps and slightly shorter buttons leave the court room. */

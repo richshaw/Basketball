@@ -105,6 +105,7 @@ interface StatButtonProps {
  */
 const StatButton = memo(function StatButton({ type, count, onRecord }: StatButtonProps) {
   const { label, kind } = STAT_DEFS[type];
+  const words = GRID_WORDS[type] ?? label.split(' ');
   const countId = useId();
 
   return (
@@ -119,8 +120,8 @@ const StatButton = memo(function StatButton({ type, count, onRecord }: StatButto
         flash(event.currentTarget);
       }}
     >
-      <span className={styles.label} data-fit-label="">
-        <Words words={GRID_WORDS[type] ?? label.split(' ')} />
+      <span className={cx(styles.label, words.length > 1 && styles.twoLines)} data-fit-label="">
+        <Words words={words} />
       </span>
       {count > 0 ? (
         <>
@@ -165,7 +166,9 @@ export interface StatGridProps {
  * The 4x4 grid of big stat buttons (the last one is Undo). It fills whatever height
  * its parent gives it, so other parts (e.g. the shot chart's court) can take space
  * above it; the parent can set `--stat-grid-min-height` and `--stat-grid-gap` to keep
- * the buttons from getting too small.
+ * the buttons from getting too small, and size the labels and counts for shorter
+ * buttons (`--stat-label-max`, `--stat-count-size`, `--stat-count-font-size`,
+ * `--stat-two-line-shift`: see StatGrid.module.css).
  */
 export const StatGrid = memo(function StatGrid({ counts, onRecord, onUndo }: StatGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);

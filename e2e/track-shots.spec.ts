@@ -127,17 +127,59 @@ test.describe('marking spots', () => {
 });
 
 // Installed-app viewports: the screen minus the status bar (the page starts below it).
+// The smallest button height and label size (computed, in px) each must keep.
 const DEVICES = [
-  { name: 'iPhone', width: 390, height: 797, safeBottom: IPHONE_SAFE_BOTTOM, minButton: 72 },
-  { name: 'iPhone SE', width: 375, height: 667 - 20, safeBottom: 0, minButton: 64 },
+  {
+    name: 'iPhone',
+    width: 390,
+    height: 797,
+    safeBottom: IPHONE_SAFE_BOTTOM,
+    minButton: 72,
+    minLabel: 16,
+  },
+  { name: 'iPhone SE', width: 375, height: 667 - 20, safeBottom: 0, minButton: 64, minLabel: 14 },
   {
     name: 'iPhone Pro Max',
     width: 430,
     height: 932 - 59,
     safeBottom: IPHONE_SAFE_BOTTOM,
     minButton: 72,
+    minLabel: 16,
   },
 ];
+
+/**
+ * Each stat button's label and count font sizes (computed, in px), and whether its
+ * count covers any word of its label.
+ */
+function statButtonType(page: Page) {
+  return statGrid(page).evaluate((grid) =>
+    Array.from(grid.querySelectorAll('button'), (button) => {
+      const label = button.querySelector('[data-fit-label]');
+      const count = button.querySelector('.tabular-nums');
+      const countBox = count?.getBoundingClientRect();
+      const words = Array.from(button.querySelectorAll('[data-fit-word]'), (word) => {
+        const range = document.createRange();
+        range.selectNodeContents(word);
+        return range.getBoundingClientRect();
+      });
+      return {
+        name: button.getAttribute('aria-label'),
+        labelPx: label ? parseFloat(getComputedStyle(label).fontSize) : 0,
+        countPx: count ? parseFloat(getComputedStyle(count).fontSize) : undefined,
+        countCoversLabel:
+          !!countBox &&
+          words.some(
+            (word) =>
+              word.left < countBox.right &&
+              word.right > countBox.left &&
+              word.top < countBox.bottom &&
+              word.bottom > countBox.top,
+          ),
+      };
+    }),
+  );
+}
 
 for (const device of DEVICES) {
   for (const finished of [false, true]) {
@@ -176,6 +218,24 @@ for (const device of DEVICES) {
         });
         expect(fits).toBe(true);
       }
+
+      // Big type still: labels, counts (two digits on the longest first words, "Charge"
+      // and "Turn-", each clear of its label) and points.
+      await tapStats(page, Array<string>(10).fill('Charge Taken'));
+      await tapStats(page, Array<string>(10).fill('Turnover'));
+      const type = await statButtonType(page);
+      for (const button of type) {
+        expect(button.labelPx, button.name ?? '').toBeGreaterThanOrEqual(device.minLabel);
+        if (button.countPx !== undefined) {
+          expect(button.countPx, button.name ?? '').toBeGreaterThanOrEqual(12);
+        }
+        expect(button.countCoversLabel, button.name ?? '').toBe(false);
+      }
+      expect(type.filter((button) => button.countPx !== undefined).length).toBeGreaterThan(8);
+      const points = stats(page).getByRole('listitem').first().locator('.tabular-nums');
+      expect(
+        await points.evaluate((value) => parseFloat(getComputedStyle(value).fontSize)),
+      ).toBeGreaterThanOrEqual(32);
 
       // The court: all on screen, between the stat strip and the buttons (clear of both,
       // its outline included), and deep enough to put a three at the top of the key.
