@@ -307,10 +307,19 @@ export class TrackingSession implements UnsavedTapHolder {
   /** Spots being put on saved stats, by stat id. */
   private readonly spotSaves = new Map<string, SpotSave>();
   /**
-   * How many times its game's data went (forget()): a spot set aside while its stat was
-   * being taken back isn't kept again once that has happened.
+   * How many times its game's data went (forget() with no id): each such forget has
+   * its number.
    */
   private forgets = 0;
+  /**
+   * The forgets still in effect: those not undone (as when that write failed) by the
+   * function forget() returned. A spot set aside while its stat was being taken back
+   * isn't kept again while one made since then is in effect (its game's data is going,
+   * or went); it waits in `parkedSpots` in case that one is undone.
+   */
+  private readonly forgetsInEffect = new Set<number>();
+  /** Spots set aside, waiting for the forgets made since to be undone (see restoreSpot). */
+  private readonly parkedSpots = new Map<string, { spotSave: SpotSave; since: number }>();
   private snapshot: SessionSnapshot;
   readonly gameId: string;
   private readonly deps: SessionDeps;
@@ -676,11 +685,13 @@ export class TrackingSession implements UnsavedTapHolder {
   forget(id?: string): () => void {
     const held = this.taps;
     const spots = id === undefined ? [...this.spotSaves] : [];
+    let forgetting: number | undefined;
     if (id === undefined) {
       this.taps = [];
       this.removing.clear();
       this.spotSaves.clear();
-      this.forgets += 1;
+      forgetting = ++this.forgets;
+      this.forgetsInEffect.add(forgetting);
       clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
       this.setSpotShot(null);
@@ -689,7 +700,21 @@ export class TrackingSession implements UnsavedTapHolder {
     }
     const forgotten = held.filter((record) => !this.taps.includes(record));
     this.emit();
-    return () => this.holdAgain(forgotten, spots);
+    return () => {
+      // That write failed: this forget is undone, and the spots it held back come back.
+      if (forgetting !== undefined) this.forgetsInEffect.delete(forgetting);
+      this.holdAgain(forgotten, spots);
+      for (const [spotId, { spotSave, since }] of [...this.parkedSpots]) {
+        if (this.forgottenSince(since)) continue;
+        this.parkedSpots.delete(spotId);
+        this.restoreSpot(spotId, spotSave, since);
+      }
+    };
+  }
+
+  /** Whether a forget made after the `since`th is still in effect. */
+  private forgottenSince(since: number): boolean {
+    return [...this.forgetsInEffect].some((forget) => forget > since);
   }
 
   /**
@@ -1085,11 +1110,16 @@ export class TrackingSession implements UnsavedTapHolder {
 
   /**
    * Puts back a spot set aside (its stat stays): kept, and saved with the next retry.
-   * Not once its game's data went since it was set aside (`forgets` then), nor over a
-   * spot marked meanwhile.
+   * Not over a spot marked meanwhile, nor while its game's data is going (or went): a
+   * forget() made since it was set aside (the `since`th was the last before) is in
+   * effect. Then it waits, and comes back if that forget is undone (its write failed).
    */
-  private restoreSpot(id: string, spotSave: SpotSave, forgets: number): void {
-    if (forgets !== this.forgets || this.spotSaves.has(id)) return;
+  private restoreSpot(id: string, spotSave: SpotSave, since: number): void {
+    if (this.spotSaves.has(id)) return;
+    if (this.forgottenSince(since)) {
+      this.parkedSpots.set(id, { spotSave, since });
+      return;
+    }
     const kept = addPendingSpot({ id, gameId: this.gameId, location: spotSave.location });
     this.spotSaves.set(id, { ...spotSave, kept, saving: false, failed: true });
     this.emit();

@@ -2100,6 +2100,85 @@ describe('TrackingSession spots (the shot chart)', () => {
       expect(isReloadSafe()).toBe(true);
     });
 
+    describe("a spot set aside by an Undo that fails while its game's data is going", () => {
+      /**
+       * A saved shot of trackingSession()'s whose spot is kept but not on it yet, being
+       * taken back (the log's delete, say): its spot is set aside, and its removal hangs
+       * until `failRemoval()`.
+       */
+      async function shotBeingTakenBack() {
+        const { game, shot, session, failing } = await heldShotWithKeptSpot(CORNER);
+        const removal = deferred<StatEvent | undefined>();
+        vi.spyOn(repo, 'deleteStat').mockReturnValueOnce(removal.promise);
+        const taking = session.undo(shot);
+        expect(keptSpots()).toEqual([]);
+        return {
+          game,
+          shot,
+          session,
+          taking,
+          failing,
+          failRemoval: () => removal.reject(new Error('Disk full')),
+          /** The database works again: the stat gets its spot (the app-wide retry). */
+          expectSpotPutOn: async () => {
+            failing.mockRestore();
+            await retryPendingStats();
+            expect(
+              (await getGameEvents(game.id)).map((event) => [event.id, event.location]),
+            ).toEqual([[shot.id, CORNER]]);
+            expect(keptSpots()).toEqual([]);
+            expect(session.hasUnsaved()).toBe(false);
+          },
+        };
+      }
+
+      it("keeps it again when the game couldn't be deleted, before the removal failed", async () => {
+        const { game, shot, session, taking, failRemoval, expectSpotPutOn } =
+          await shotBeingTakenBack();
+        vi.spyOn(db, 'transaction').mockRejectedValueOnce(new Error('Disk full'));
+        await expect(deleteGame(game.id)).rejects.toThrow('Disk full');
+        failRemoval();
+        expect(await taking.removal).toBe('failed');
+        // The stat stays, and so does its spot: kept again.
+        expect(keptSpots()).toEqual([[shot.id, CORNER]]);
+        expect(session.hasUnsaved()).toBe(true);
+        await expectSpotPutOn();
+      });
+
+      it("keeps it again when the game couldn't be deleted, after the removal failed", async () => {
+        const { game, shot, session, taking, failRemoval, expectSpotPutOn } =
+          await shotBeingTakenBack();
+        const deleting = deferred<never>();
+        vi.spyOn(db, 'transaction').mockImplementationOnce(() => deleting.promise as never);
+        const deleted = deleteGame(game.id);
+        failRemoval();
+        expect(await taking.removal).toBe('failed');
+        // Its game's data is going: not kept meanwhile.
+        expect(keptSpots()).toEqual([]);
+
+        deleting.reject(new Error('Disk full'));
+        await expect(deleted).rejects.toThrow('Disk full');
+        // It wasn't deleted after all: the spot is kept again.
+        expect(keptSpots()).toEqual([[shot.id, CORNER]]);
+        expect(session.hasUnsaved()).toBe(true);
+        await expectSpotPutOn();
+      });
+
+      it('never keeps it once the game is deleted', async () => {
+        const { game, taking, failing, failRemoval } = await shotBeingTakenBack();
+        // (It forgets the game's taps and spots at once; deleting takes a moment.)
+        const deleted = deleteGame(game.id);
+        failRemoval();
+        expect(await taking.removal).toBe('failed');
+        await deleted;
+        expect(keptSpots()).toEqual([]);
+        failing.mockRestore();
+        const writes = vi.spyOn(repo, 'setStatLocation');
+        await retryPendingStats();
+        expect(writes).not.toHaveBeenCalled();
+      });
+    });
+
     it('Erase all data forgets a spot the session holds, and keeps it if Erase fails', async () => {
       const { game, shot, session, failing } = await heldShotWithKeptSpot(CORNER);
       vi.spyOn(db, 'transaction').mockRejectedValueOnce(new Error('Disk full'));
