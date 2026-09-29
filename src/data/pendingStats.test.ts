@@ -1,33 +1,36 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import {
+  addPendingSpot,
+  listPendingSpots,
+  removePendingSpot,
+  type PendingSpot,
+} from './pendingSpots';
 import {
   addPendingStat,
+  forgetPendingStat,
+  forgetPendingStats,
+  hasPendingStats,
+  holdUnsavedTaps,
   isPendingStat,
+  isReloadSafe,
   listPendingStats,
   newPendingStat,
+  notifyPendingStats,
+  pendingStatSaved,
   removePendingStat,
-  replayPendingStats,
-  savePendingStat,
+  watchPendingStats,
   type PendingStat,
+  type UnsavedTapHolder,
 } from './pendingStats';
-import * as repo from './repo';
-import { createGame, deleteGame, endGame, getAllEvents, getGameEvents, type NewGame } from './repo';
-import type { Game } from './types';
+import type { StatEvent } from './types';
 
 const T0 = new Date(2026, 8, 27, 18, 0).getTime();
 const KEY_PREFIX = 'hoop-stats.pendingStat.';
+const SPOT_PREFIX = 'hoop-stats.pendingSpot.';
 
 afterEach(() => {
   vi.useRealTimers();
 });
-
-function newGame(overrides: Partial<NewGame> = {}): Promise<Game> {
-  return createGame({
-    opponent: 'Lincoln',
-    date: '2026-09-27',
-    periodFormat: 'quarters',
-    ...overrides,
-  });
-}
 
 function stat(overrides: Partial<PendingStat> = {}): PendingStat {
   return { id: 'tap-1', gameId: 'game-1', type: 'stl', period: 2, at: T0, ...overrides };
@@ -38,6 +41,20 @@ function journalKeys(): string[] {
   return Object.keys(localStorage)
     .filter((key) => key.startsWith(KEY_PREFIX))
     .sort();
+}
+
+/** Taps held in memory by a (fake) tracking session, until the test ends. */
+function holdTaps(holder: Pick<UnsavedTapHolder, 'gameId'> & Partial<UnsavedTapHolder>) {
+  onTestFinished(
+    holdUnsavedTaps({
+      hasUnsaved: () => false,
+      reloadSafe: () => true,
+      retryQuietly: () => Promise.resolve(),
+      saved: () => {},
+      forget: () => () => {},
+      ...holder,
+    }),
+  );
 }
 
 describe('the pending-stats journal', () => {
@@ -131,139 +148,191 @@ describe('the pending-stats journal', () => {
       throw new DOMException('The operation is insecure.', 'SecurityError');
     });
     expect(addPendingStat(stat({ id: 'blocked' }))).toBe(false);
-    expect(isPendingStat('kept')).toBe(false);
+    // Can't tell: not "gone", which would drop a tap that may well still be kept.
+    expect(isPendingStat('kept')).toBeUndefined();
     expect(listPendingStats()).toEqual([]);
     expect(() => removePendingStat('kept')).not.toThrow();
   });
 });
 
-describe('replayPendingStats', () => {
-  it('saves each kept tap once, in its period at its tap time, and forgets it', async () => {
-    const game = await newGame();
-    const steal = stat({ id: 'a', gameId: game.id, at: T0 + 10, period: 2 });
-    const shot = stat({
-      id: 'b',
-      gameId: game.id,
-      type: 'fg3_miss',
-      at: T0,
-      period: 3,
-      location: { x: 22, y: 1 },
+describe('what is pending', () => {
+  it('counts the kept taps and spots, and the ones held in memory, kept or not', () => {
+    expect(hasPendingStats()).toBe(false);
+    addPendingStat(stat());
+    expect(hasPendingStats()).toBe(true);
+    removePendingStat('tap-1');
+    expect(hasPendingStats()).toBe(false);
+    // A spot kept for a saved shot, still to be put on it.
+    addPendingSpot({ id: 'shot', gameId: 'game-1', location: { x: 1, y: 2 } });
+    expect(hasPendingStats()).toBe(true);
+    removePendingSpot('shot');
+    expect(hasPendingStats()).toBe(false);
+
+    let unsaved = true;
+    const release = holdUnsavedTaps({
+      gameId: 'game-1',
+      hasUnsaved: () => unsaved,
+      reloadSafe: () => true,
+      retryQuietly: () => Promise.resolve(),
+      saved: () => {},
+      forget: () => () => {},
     });
-    addPendingStat(steal);
-    addPendingStat(shot);
-
-    expect(await replayPendingStats()).toEqual({ saved: 2, dropped: 0, failed: 0 });
-    expect(await getGameEvents(game.id)).toEqual([
-      {
-        id: 'b',
-        gameId: game.id,
-        type: 'fg3_miss',
-        period: 3,
-        createdAt: T0,
-        location: { x: 22, y: 1 },
-      },
-      { id: 'a', gameId: game.id, type: 'stl', period: 2, createdAt: T0 + 10 },
-    ]);
-    expect(journalKeys()).toEqual([]);
-    expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+    expect(hasPendingStats()).toBe(true);
+    unsaved = false;
+    expect(hasPendingStats()).toBe(false);
+    unsaved = true;
+    release();
+    expect(hasPendingStats()).toBe(false);
   });
 
-  it('saves a tap whose write landed after all only once', async () => {
-    const game = await newGame();
-    const steal = stat({ gameId: game.id });
-    addPendingStat(steal);
-    // Its write landed, but the page that made it heard it failed, and kept it.
-    await savePendingStat(steal);
-
-    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
-    expect((await getGameEvents(game.id)).map((event) => event.id)).toEqual([steal.id]);
-    expect(journalKeys()).toEqual([]);
+  it('says a reload would lose nothing only while no session holds something it would lose', () => {
+    expect(isReloadSafe()).toBe(true);
+    // The journal outlives a reload.
+    addPendingStat(stat());
+    expect(isReloadSafe()).toBe(true);
+    let safe = true;
+    holdTaps({ gameId: 'game-1' });
+    holdTaps({ gameId: 'game-2', reloadSafe: () => safe });
+    expect(isReloadSafe()).toBe(true);
+    safe = false;
+    expect(isReloadSafe()).toBe(false);
   });
 
-  it('gives a tap saved before its spot was marked that spot, once', async () => {
-    const game = await newGame();
-    const shot = stat({ gameId: game.id, type: 'fg2_made' });
-    // Its write landed without a spot (the page heard it failed); the spot was marked
-    // next, and kept with the tap.
-    await savePendingStat(shot);
-    const elbow = { x: -6, y: 13.75 };
-    addPendingStat({ ...shot, location: elbow });
-
-    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
-    expect(await getGameEvents(game.id)).toEqual([
-      { id: shot.id, gameId: game.id, type: 'fg2_made', period: 2, createdAt: T0, location: elbow },
-    ]);
-    expect(journalKeys()).toEqual([]);
-
-    // A spot moved since wins; a tap without one never clears it.
-    const layup = { x: 1, y: 2 };
-    expect((await savePendingStat({ ...shot, location: layup })).location).toEqual(layup);
-    expect((await savePendingStat(shot)).location).toEqual(layup);
-    expect(await getGameEvents(game.id)).toHaveLength(1);
-  });
-
-  it('saves taps on a finished game too', async () => {
-    const game = await newGame();
-    await endGame(game.id, { teamScore: 40, opponentScore: 38 });
-    addPendingStat(stat({ gameId: game.id, type: 'ft_made' }));
-    expect(await replayPendingStats()).toMatchObject({ saved: 1 });
-    expect((await getGameEvents(game.id)).map((event) => event.type)).toEqual(['ft_made']);
-  });
-
-  it('drops the taps of a game that no longer exists', async () => {
-    const kept = await newGame();
-    const deleted = await newGame({ opponent: 'Roosevelt' });
-    await deleteGame(deleted.id);
-    addPendingStat(stat({ id: 'a', gameId: deleted.id }));
-    addPendingStat(stat({ id: 'b', gameId: 'never-was' }));
-    addPendingStat(stat({ id: 'c', gameId: kept.id }));
-
-    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 2, failed: 0 });
-    expect((await getAllEvents()).map((event) => event.id)).toEqual(['c']);
-    expect(journalKeys()).toEqual([]);
-  });
-
-  it("keeps a tap it couldn't save, and saves it next time", async () => {
-    const game = await newGame();
-    addPendingStat(stat({ id: 'a', gameId: game.id, at: T0 }));
-    addPendingStat(stat({ id: 'b', gameId: game.id, at: T0 + 1 }));
-    vi.spyOn(repo, 'recordStat').mockRejectedValueOnce(
-      new DOMException('Connection to Indexed Database server lost.', 'UnknownError'),
-    );
-
-    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 1 });
-    expect(journalKeys()).toEqual([`${KEY_PREFIX}a`]);
-    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
-    expect((await getGameEvents(game.id)).map((event) => event.id)).toEqual(['a', 'b']);
-  });
-
-  it('keeps every tap when the database cannot be read', async () => {
+  it('forgets a tap saved from the journal, and tells the sessions holding taps', () => {
     addPendingStat(stat({ id: 'a' }));
     addPendingStat(stat({ id: 'b' }));
-    vi.spyOn(repo, 'getGame').mockRejectedValue(new Error('Database closed'));
-    expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 2 });
-    expect(journalKeys()).toEqual([`${KEY_PREFIX}a`, `${KEY_PREFIX}b`]);
+    const saved = vi.fn();
+    holdTaps({ gameId: 'game-1', saved });
+    const event: StatEvent = { id: 'a', gameId: 'game-1', type: 'stl', period: 2, createdAt: T0 };
+    pendingStatSaved('a', event);
+    expect(listPendingStats().map((each) => each.id)).toEqual(['b']);
+    expect(saved).toHaveBeenCalledExactlyOnceWith('a', event);
   });
 
-  it('leaves out a tap undone while it runs', async () => {
-    const game = await newGame();
-    addPendingStat(stat({ id: 'undone', gameId: game.id }));
-    addPendingStat(stat({ id: 'kept', gameId: game.id, at: T0 + 1 }));
-    // The Undo lands while the replay looks the game up.
-    const { getGame } = repo;
-    vi.spyOn(repo, 'getGame').mockImplementation((id) => {
-      removePendingStat('undone');
-      return getGame(id);
-    });
+  it('tells its watchers when a tap may have become pending, until they stop', () => {
+    const listener = vi.fn();
+    const stop = watchPendingStats(listener);
+    notifyPendingStats();
+    expect(listener).toHaveBeenCalledTimes(1);
+    stop();
+    notifyPendingStats();
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
 
-    expect(await replayPendingStats()).toEqual({ saved: 1, dropped: 0, failed: 0 });
-    expect((await getGameEvents(game.id)).map((event) => event.id)).toEqual(['kept']);
+describe('forgetting taps whose data is deleted or replaced', () => {
+  /**
+   * A (fake) session holding taps of `gameId` in memory, until the test ends: `forget`
+   * is how it was told to forget them, and `holdAgain` how it was told to hold them again.
+   */
+  function holdForgettingTaps(gameId: string) {
+    const holdAgain = vi.fn();
+    const forget = vi.fn((_id?: string) => holdAgain);
+    holdTaps({ gameId, forget });
+    return { forget, holdAgain };
+  }
+
+  function keepUnreadable(id: string, gameId: string) {
+    // E.g. kept by a newer version of the app, with a stat type this one doesn't know.
+    localStorage.setItem(`${KEY_PREFIX}${id}`, JSON.stringify({ id, gameId, type: 'dunk' }));
+  }
+
+  /** A spot kept for a saved shot (pendingSpots.ts). */
+  function keepSpot(id: string, gameId: string): PendingSpot {
+    const spot = { id, gameId, location: { x: -6, y: 13.75 } };
+    addPendingSpot(spot);
+    return spot;
+  }
+
+  it("forgets one game's taps and spots, even ones this version can't read, and its sessions forget theirs", () => {
+    addPendingStat(stat({ id: 'a', gameId: 'game-1' }));
+    addPendingStat(stat({ id: 'b', gameId: 'game-2' }));
+    keepUnreadable('c', 'game-1');
+    localStorage.setItem(`${KEY_PREFIX}garbled`, '{"id":');
+    keepSpot('shot-1', 'game-1');
+    const otherSpot = keepSpot('shot-2', 'game-2');
+    const one = holdForgettingTaps('game-1');
+    const two = holdForgettingTaps('game-2');
+
+    forgetPendingStats('game-1');
+    expect(journalKeys()).toEqual([`${KEY_PREFIX}b`, `${KEY_PREFIX}garbled`]);
+    expect(listPendingSpots()).toEqual([otherSpot]);
+    expect(one.forget).toHaveBeenCalledExactlyOnceWith();
+    expect(two.forget).not.toHaveBeenCalled();
   });
 
-  it('never rejects, even with no localStorage', async () => {
+  it('forgets them all, leaving no game id or stat type in localStorage, and nothing else', () => {
+    addPendingStat(stat({ id: 'a', gameId: 'game-1' }));
+    keepUnreadable('c', 'game-2');
+    localStorage.setItem(`${KEY_PREFIX}garbled`, '{"id":');
+    keepSpot('shot', 'game-1');
+    localStorage.setItem(`${SPOT_PREFIX}garbled`, '{"gameId":"game-2"');
+    localStorage.setItem('hoop-stats.lastBackupFile', '{"savedAt":1}');
+    const one = holdForgettingTaps('game-1');
+    const two = holdForgettingTaps('game-2');
+
+    forgetPendingStats();
+    expect(Object.entries(localStorage)).toEqual([['hoop-stats.lastBackupFile', '{"savedAt":1}']]);
+    expect(one.forget).toHaveBeenCalledExactlyOnceWith();
+    expect(two.forget).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it('keeps the entries again if the data could not be deleted after all, and the sessions hold their taps again', () => {
+    const steal = stat({ id: 'a', gameId: 'game-1' });
+    addPendingStat(steal);
+    keepUnreadable('c', 'game-1');
+    const spot = keepSpot('shot', 'game-1');
+    const one = holdForgettingTaps('game-1');
+    const two = holdForgettingTaps('game-2');
+    // By the time a session holds its taps again, their entries are back.
+    const keptThen: [PendingStat[], PendingSpot[]][] = [];
+    one.holdAgain.mockImplementation(() => keptThen.push([listPendingStats(), listPendingSpots()]));
+    const listener = vi.fn();
+    onTestFinished(watchPendingStats(listener));
+
+    const keepAgain = forgetPendingStats('game-1');
+    expect(journalKeys()).toEqual([]);
+    expect(listPendingSpots()).toEqual([]);
+    expect(one.holdAgain).not.toHaveBeenCalled();
+    keepAgain();
+    expect(journalKeys()).toEqual([`${KEY_PREFIX}a`, `${KEY_PREFIX}c`]);
+    expect(listPendingStats()).toEqual([steal]);
+    expect(listPendingSpots()).toEqual([spot]);
+    expect(keptThen).toEqual([[[steal], [spot]]]);
+    expect(two.holdAgain).not.toHaveBeenCalled();
+    // The app-wide retry wakes up for them.
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('has the sessions hold their taps again even when none was kept', () => {
+    // E.g. localStorage was full: the taps lived only in memory.
+    const one = holdForgettingTaps('game-1');
+    const listener = vi.fn();
+    onTestFinished(watchPendingStats(listener));
+    forgetPendingStats()();
+    expect(one.holdAgain).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets one tap by its id, kept or held in memory (its spot waits for the delete)', () => {
+    addPendingStat(stat({ id: 'a' }));
+    addPendingStat(stat({ id: 'b' }));
+    const spot = keepSpot('a', 'game-1');
+    const { forget } = holdForgettingTaps('game-1');
+    forgetPendingStat('a');
+    expect(listPendingStats().map((each) => each.id)).toEqual(['b']);
+    expect(forget).toHaveBeenCalledExactlyOnceWith('a');
+    // (deleteStat forgets it once the stat is gone.)
+    expect(listPendingSpots()).toEqual([spot]);
+  });
+
+  it('carries on without localStorage', () => {
     vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
       throw new DOMException('The operation is insecure.', 'SecurityError');
     });
-    await expect(replayPendingStats()).resolves.toEqual({ saved: 0, dropped: 0, failed: 0 });
+    const { forget, holdAgain } = holdForgettingTaps('game-1');
+    expect(() => forgetPendingStats()()).not.toThrow();
+    expect(forget).toHaveBeenCalledTimes(1);
+    expect(holdAgain).toHaveBeenCalledTimes(1);
   });
 });

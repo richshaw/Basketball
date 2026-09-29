@@ -9,9 +9,12 @@ import {
   isDemoGameId,
   seedDemoData,
 } from './demo';
+import { replayPendingStats } from './pendingSaves';
+import { addPendingStat, listPendingStats, newPendingStat } from './pendingStats';
 import {
   createGame,
   getGame,
+  getGameEvents,
   getLiveGame,
   getPlayer,
   getSettings,
@@ -189,6 +192,18 @@ describe('seedDemoData', () => {
 
     await seedDemoData({ today: TODAY });
     expect(await getSettings()).toEqual(demo.settings);
+  });
+
+  it('forgets the taps not saved yet of the data it replaces', async () => {
+    await seedDemoData({ today: TODAY });
+    const before = await getGameEvents(demoGameId(10));
+    // A tap on a sample game, kept because the database didn't take it.
+    addPendingStat(newPendingStat({ gameId: demoGameId(10), type: 'blk', period: 4 }));
+
+    await seedDemoData({ today: TODAY, force: true });
+    expect(listPendingStats()).toEqual([]);
+    expect(await replayPendingStats()).toEqual({ saved: 0, dropped: 0, failed: 0 });
+    expect(await getGameEvents(demoGameId(10))).toEqual(before);
   });
 });
 

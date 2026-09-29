@@ -44,14 +44,21 @@ export interface Counted {
 }
 
 /**
- * The game's saved stats plus the taps not among them yet, each once (by id): what
- * the screen counts, from the moment of each tap.
+ * The game's saved stats plus the taps not among them yet, each once (by id), less the
+ * stats being taken back (`takenBack`, by id): what the screen counts, from the moment
+ * of each tap and each Undo.
  */
-export function withTaps(saved: readonly Counted[], taps: readonly Counted[]): readonly Counted[] {
-  if (taps.length === 0) return saved;
+export function withTaps(
+  saved: readonly Counted[],
+  taps: readonly Counted[],
+  takenBack: readonly string[] = [],
+): readonly Counted[] {
+  const gone = new Set(takenBack);
+  const counted = gone.size === 0 ? saved : saved.filter((stat) => !gone.has(stat.id));
+  if (taps.length === 0) return counted;
   const savedIds = new Set(saved.map((stat) => stat.id));
-  const notSaved = taps.filter((tap) => !savedIds.has(tap.id));
-  return notSaved.length === 0 ? saved : [...saved, ...notSaved];
+  const notSaved = taps.filter((tap) => !savedIds.has(tap.id) && !gone.has(tap.id));
+  return notSaved.length === 0 ? counted : [...counted, ...notSaved];
 }
 
 /**
@@ -73,13 +80,15 @@ export function spotNote(
 
 /**
  * What happens to stats not saved yet: kept on this phone (the pending-stats journal)
- * and saved later, or (with no room to keep them) only while the app stays open.
+ * and saved automatically, even after a relaunch; or (with no room to keep them) saved
+ * automatically only while the app stays open (the app-wide retry, pendingSaves.ts).
  */
 export function unsavedNote(count: number, kept: boolean): string {
-  const they = count === 1 ? "It's" : "They're";
+  // "It's" or "They're", starting a sentence and inside one.
+  const [starting, inside] = count === 1 ? ["It's", "it's"] : ["They're", "they're"];
   return kept
-    ? `${they} kept on this phone and will be saved automatically.`
-    : `${they} not kept on this phone, so keep the app open.`;
+    ? `${starting} kept on this phone and will be saved automatically.`
+    : `${starting} not kept on this phone. Keep the app open until ${inside} saved.`;
 }
 
 /** E.g. "1 stat isn't saved yet" or "2 stats aren't saved yet". */

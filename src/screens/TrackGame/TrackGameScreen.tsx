@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Button } from '@/components/Button/Button';
 import { useConfirm } from '@/components/ConfirmDialog/confirmContext';
@@ -6,7 +6,8 @@ import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { ScreenBody } from '@/components/ScreenBody/ScreenBody';
 import { ScreenHeader } from '@/components/ScreenHeader/ScreenHeader';
 import { useToast } from '@/components/Toast/toastContext';
-import { useGame, useGameEvents, useSettings } from '@/data/hooks';
+import { useSteadyGame, useSteadyGameEvents, useSteadySettings } from '@/data/hooks';
+import { isReloadSafe } from '@/data/pendingStats';
 import { endGame, type FinalScore } from '@/data/repo';
 import { shotsFromEvents } from '@/data/shots';
 import { computeStatLine, periodLabel } from '@/data/stats';
@@ -25,6 +26,7 @@ import { LastActionLine, type LastAction } from './LastActionLine';
 import { LogSheet } from './LogSheet';
 import { NotSavedSheet } from './NotSavedSheet';
 import { PeriodSheet } from './PeriodSheet';
+import { ReadFailedNote } from './ReadFailedNote';
 import type { NotSaved, TakingBack, Tap } from './session';
 import { ShotCourt } from './ShotCourt';
 import { StatGrid } from './StatGrid';
@@ -59,13 +61,16 @@ function foulNote(fouls: number): string {
 
 interface TrackerProps {
   game: Game;
+  /** The game's saved stats, oldest first. */
   events: StatEvent[];
+  /** The latest read of the game or its stats failed: `game` and `events` are the last read. */
+  readFailed: boolean;
   /** The Shot chart setting: whether the court is shown to mark where shots were taken. */
   shotChart: boolean;
 }
 
 /** The live tracking UI for a loaded game. */
-function Tracker({ game, events, shotChart }: TrackerProps) {
+function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
   const toast = useToast();
   const confirm = useConfirm();
   const navigate = useNavigate();
@@ -75,11 +80,20 @@ function Tracker({ game, events, shotChart }: TrackerProps) {
   // Bumped by a tap on the court with no shot to mark: the court says how it works.
   const [courtHint, setCourtHint] = useState(0);
   const [openSheet, setOpenSheetState] = useState<OpenSheet>(null);
-  // Read after a wait (e.g. saving before the game ends): was the sheet closed meanwhile?
-  const openSheetRef = useRef<OpenSheet>(null);
+  // Moves on whenever a sheet opens or closes, and when the screen closes. A wait (e.g.
+  // saving before the game ends) goes on only if it hasn't moved since the wait began:
+  // a request taken back ("Keep tracking", the Games link) never comes back, not even
+  // under a sheet opened again meanwhile.
+  const sheetTurn = useRef(0);
   const setOpenSheet = useCallback((sheet: OpenSheet) => {
-    openSheetRef.current = sheet;
+    sheetTurn.current += 1;
     setOpenSheetState(sheet);
+  }, []);
+  useEffect(() => {
+    const turn = sheetTurn;
+    return () => {
+      turn.current += 1;
+    };
   }, []);
   // Bumped each time the end-game sheet opens, so its form starts fresh.
   const [endSheetKey, setEndSheetKey] = useState(0);
@@ -90,8 +104,10 @@ function Tracker({ game, events, shotChart }: TrackerProps) {
   // Done on a finished game: the stats that weren't saved, and whether it's busy.
   const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [session, { period, pending, unsaved, unsavedKept, retrying, spotShot }] =
-    useTrackingSession(game.id, game.currentPeriod, events);
+  const [
+    session,
+    { period, pending, unsaved, unsavedKept, reloadSafe, retrying, takenBack, spotShot },
+  ] = useTrackingSession(game.id, game.currentPeriod, events);
   // A double tap on the grid's Undo or on Next acts once.
   const [undoGuard] = useState(() => createTapGuard());
   const [nextGuard] = useState(() => createTapGuard());
@@ -101,9 +117,10 @@ function Tracker({ game, events, shotChart }: TrackerProps) {
   const periodText = periodLabel(period, periodFormat);
   const isFinal = game.status === 'final';
 
-  // The saved stats plus the taps not among them yet, each once: a tap counts from
-  // the moment it's made, saved yet or not.
-  const counted = useMemo(() => withTaps(events, pending), [events, pending]);
+  // The saved stats plus the taps not among them yet, each once, less the stats being
+  // taken back: a tap counts from the moment it's made, saved yet or not, and stops
+  // counting the moment it's undone, even while its stat is still being removed.
+  const counted = useMemo(() => withTaps(events, pending, takenBack), [events, pending, takenBack]);
   const counts = useMemo(() => countByType(counted), [counted]);
   const line = useMemo(() => computeStatLine(counted), [counted]);
   // The game's shots on the court, faintly: all but the one being marked (shown as the pick).
@@ -247,10 +264,12 @@ function Tracker({ game, events, shotChart }: TrackerProps) {
   // saved later on their own).
   const finishGame = useCallback(
     async (score: FinalScore, anyway: boolean): Promise<NotSaved | null> => {
+      const turn = sheetTurn.current;
       if (!anyway) {
         const left = await session.saveAll();
-        // "Keep tracking" was tapped while it saved: the game goes on.
-        if (openSheetRef.current !== 'end') return null;
+        // "Keep tracking" was tapped while it saved (even if End game was opened again
+        // since): the game goes on.
+        if (sheetTurn.current !== turn) return null;
         if (left.count > 0) return left;
       }
       try {
@@ -259,7 +278,8 @@ function Tracker({ game, events, shotChart }: TrackerProps) {
         toast.show({ message: "Couldn't end the game. Try again." });
         throw error;
       }
-      await navigate(paths.gameReport(gameId), { replace: true });
+      // Ended, but "Keep tracking" was tapped meanwhile: stay, on the finished game.
+      if (sheetTurn.current === turn) await navigate(paths.gameReport(gameId), { replace: true });
       return null;
     },
     [gameId, navigate, session, toast],
@@ -268,13 +288,14 @@ function Tracker({ game, events, shotChart }: TrackerProps) {
   // Done, on a finished game: the same, with its own "not saved yet" sheet.
   const leave = async (anyway: boolean) => {
     if (leaving) return;
-    const sheet = openSheetRef.current;
+    const turn = sheetTurn.current;
     setLeaving(true);
     try {
       if (!anyway) {
         const left = await session.saveAll();
-        // Its sheet was closed (or another opened) while it saved: stay.
-        if (openSheetRef.current !== sheet) return;
+        // A sheet was opened or closed while it saved, or the screen was left (e.g. for
+        // Games): stay where the parent went.
+        if (sheetTurn.current !== turn) return;
         if (left.count > 0) {
           setNotSaved(left);
           setOpenSheet('notSaved');
@@ -334,13 +355,20 @@ function Tracker({ game, events, shotChart }: TrackerProps) {
         {isFinal ? <p className={styles.banner}>Editing a finished game</p> : null}
         <div className={styles.stripArea}>
           <StatStrip line={line} compact={withCourt} />
-          <UnsavedStats
-            unsaved={unsaved}
-            kept={unsavedKept}
-            retrying={retrying}
-            onRetry={retry}
-            compact={withCourt}
-          />
+          {/* A tap not saved and not kept keeps its own row: it asks to keep the app open. */}
+          {readFailed && (unsaved.length === 0 || unsavedKept) ? (
+            // Reload only while it would lose nothing: not this game's taps, spots, Undos
+            // or period moves, nor another game's that only this page holds.
+            <ReadFailedNote canReload={reloadSafe && isReloadSafe()} compact={withCourt} />
+          ) : (
+            <UnsavedStats
+              unsaved={unsaved}
+              kept={unsavedKept}
+              retrying={retrying}
+              onRetry={retry}
+              compact={withCourt}
+            />
+          )}
         </div>
         {withCourt ? (
           <ShotCourt shots={courtShots} spotShot={spotShot} onPick={markSpot} hintKey={courtHint} />
@@ -425,17 +453,36 @@ function GameNotFound() {
  * screen on purpose: no tab bar and no update banner may interrupt a live game.
  * Every tap is kept on the phone and saved at once; nothing here ever waits on the
  * database first, and a tap that couldn't be saved stays on screen until it is (see
- * session.ts), even across a relaunch.
+ * session.ts), even across a relaunch. A read of the saved stats that fails doesn't
+ * take the screen down either: it keeps what it read last, says so calmly, and reads
+ * again on its own.
  */
 export function TrackGameScreen() {
   const { gameId } = useParams();
-  const game = useGame(gameId);
-  const events = useGameEvents(gameId);
-  const settings = useSettings();
+  const game = useSteadyGame(gameId);
+  const events = useSteadyGameEvents(gameId);
+  // (The Shot chart setting: read as steadily, so a failed read can't take the screen
+  // down either.)
+  const settings = useSteadySettings();
 
-  if (game === null) return <GameNotFound />;
-  // Still loading (IndexedDB answers within a frame or two): show nothing rather
-  // than a placeholder layout that would jump (the shot chart's court included).
-  if (game === undefined || events === undefined || settings === undefined) return null;
-  return <Tracker key={game.id} game={game} events={events} shotChart={settings.shotChart} />;
+  if (game.value === null) return <GameNotFound />;
+  if (game.value === undefined || events.value === undefined || settings.value === undefined) {
+    // Nothing on screen to keep yet: a first read that failed gets the route's error
+    // screen (with Reload), like any other screen.
+    if (game.failed) throw game.error;
+    if (events.failed) throw events.error;
+    if (settings.failed) throw settings.error;
+    // Still loading (IndexedDB answers within a frame or two): show nothing rather
+    // than a placeholder layout that would jump (the shot chart's court included).
+    return null;
+  }
+  return (
+    <Tracker
+      key={game.value.id}
+      game={game.value}
+      events={events.value}
+      readFailed={game.failed || events.failed}
+      shotChart={settings.value.shotChart}
+    />
+  );
 }

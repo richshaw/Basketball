@@ -5,8 +5,10 @@ import { demoGameId, seedDemoData } from './support/data';
 import {
   expectAllSaved,
   failNextSaves,
+  failStatReads,
   lastAction,
   notSaved,
+  readFailedNote,
   setShotChart,
   shotCourt,
   startGame,
@@ -125,6 +127,21 @@ async function midGame(page: Page) {
   await expectAllSaved(page);
 }
 
+/**
+ * Mid-game, the saved stats can't be read any more (as when WebKit has lost its
+ * IndexedDB connection): the next tap is saved, but can't be read back.
+ */
+async function readFailed(page: Page) {
+  await midGame(page);
+  await failStatReads(page);
+  await page
+    .getByRole('group', { name: 'Record a stat' })
+    .getByRole('button', { name: 'Steal' })
+    .tap();
+  await expect(readFailedNote(page)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reload' })).toBeVisible();
+}
+
 /** A finished game being corrected: one more foul puts her in foul trouble (4). */
 async function finishedGame(page: Page) {
   await page.goto('./');
@@ -209,6 +226,8 @@ const shots: Shot[] = [
       await expect(notSaved(page)).toContainText('kept on this phone');
     },
   },
+  { name: 'read-failed', device: IPHONE, capture: readFailed },
+  { name: 'read-failed-se', device: IPHONE_SE, capture: readFailed },
   {
     name: 'not-saved-se',
     device: IPHONE_SE,

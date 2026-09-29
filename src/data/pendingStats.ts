@@ -6,26 +6,28 @@
  * removed once that save is confirmed or the tap is undone. If the page reloads or
  * closes first (an iOS relaunch, the Update button), or IndexedDB keeps failing (WebKit
  * can lose its connection while the app is in the background, and every write fails
- * until it's back or the page reloads), what's left is saved later: by
- * replayPendingStats() at app start, and by the game's tracking session when it starts.
+ * until it's back or the page reloads), what's left is saved later (pendingSaves.ts):
+ * by the app-wide retry, at app start and while the app is open, and by the game's
+ * tracking session when it starts.
  *
- * One key per tap, so keeping or removing one never rewrites the others. Saving an
- * entry is idempotent (recordStat with the tap's id), so an entry saved twice is still
- * one stat. localStorage may be missing, full or blocked: every access is guarded,
- * nothing here throws, and without it taps are still saved, just not kept across a
- * reload.
+ * One key per tap, so keeping or removing one never rewrites the others. localStorage
+ * may be missing, full or blocked: every access is guarded, nothing here throws, and
+ * without it taps are still saved, just not kept across a reload.
  *
  * Only taps live here: an entry is a stat to save, and saving it again after its stat
  * was deleted would bring the stat back. A shot's spot (the shot chart) is kept with its
  * tap while the tap isn't saved; a spot for a stat that's saved already is kept in the
- * pending-spots journal (pendingSpots.ts), which never adds a stat. replayPendingStats()
- * saves both, taps first.
+ * pending-spots journal (pendingSpots.ts), which never adds a stat. What's pending, and
+ * what's forgotten when data is deleted or replaced, covers both journals.
+ *
+ * This module never touches the database (pendingSaves.ts saves the kept taps and
+ * spots), so the repository can use it too.
  */
-import { newId } from '@/lib/id';
+import { isRealPoint } from '@/lib/court';
+import { compareIds, newId } from '@/lib/id';
 import { nextTimestamp } from './db';
-import { getPendingSpot, listPendingSpots, removePendingSpot } from './pendingSpots';
-import { getGame, recordStat, setStatLocation } from './repo';
-import { sameSpot } from './shots';
+import { removeJournalEntries } from './journal';
+import { forgetPendingSpots, listPendingSpots } from './pendingSpots';
 import { isFieldGoalType } from './stats';
 import type { CourtPoint, StatEvent, StatType } from './types';
 import { statEventSchema } from './validation';
@@ -88,19 +90,16 @@ export function removePendingStat(id: string): void {
   }
 }
 
-/** Whether a tap is still kept (not saved or undone since). */
-export function isPendingStat(id: string): boolean {
+/**
+ * Whether a tap is still kept (not saved or undone since): true or false, or undefined
+ * when localStorage can't be read right now. Only false says it's gone.
+ */
+export function isPendingStat(id: string): boolean | undefined {
   try {
     return localStorage.getItem(KEY_PREFIX + id) !== null;
   } catch {
-    return false;
+    return undefined;
   }
-}
-
-function isRealPoint(value: unknown): value is CourtPoint {
-  if (typeof value !== 'object' || value === null) return false;
-  const { x, y } = value as Record<string, unknown>;
-  return Number.isFinite(x) && Number.isFinite(y);
 }
 
 /** One entry, or undefined if it isn't a tap this version can save. */
@@ -147,91 +146,161 @@ export function listPendingStats(gameId?: string): PendingStat[] {
   } catch {
     // Blocked storage: nothing could have been kept there.
   }
-  return stats.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return stats.sort((a, b) => a.at - b.at || compareIds(a.id, b.id));
+}
+
+// ---------------------------------------------------------------------------
+// Taps held in memory, and whether anything is pending
+
+/**
+ * Taps held in memory that aren't saved yet: a tracking session's (see
+ * src/screens/TrackGame/session.ts), including any it couldn't keep in the journal, and
+ * the spots it's still putting on saved stats (the shot chart).
+ */
+export interface UnsavedTapHolder {
+  /** The game whose taps it holds. */
+  readonly gameId: string;
+  /**
+   * Whether it holds a tap or a spot that isn't saved yet (or a taken-back tap to remove
+   * again).
+   */
+  hasUnsaved(): boolean;
+  /**
+   * Whether reloading the page now would lose nothing it holds: each of its taps and
+   * spots that isn't saved yet is kept in a journal, and nothing is still being taken
+   * back (a reload would forget to remove its stat) or moved to another period.
+   */
+  reloadSafe(): boolean;
+  /**
+   * Tries again to save them without showing it on screen (only a save that lands
+   * changes anything there). Settles once those tries are done; never rejects.
+   */
+  retryQuietly(): Promise<void>;
+  /**
+   * One of its taps was saved from the journal (by the app-wide retry), as `event`: it's
+   * saved, and must still count until the saved stats on screen show it (and get the spot
+   * marked for it meanwhile, if `event` lacks it).
+   */
+  saved(id: string, event: StatEvent): void;
+  /**
+   * Its game's data is being deleted or replaced (no id), or one stat is (its id):
+   * forgets those taps, never saving them. Returns a function that holds them again,
+   * for when that write fails.
+   */
+  forget(id?: string): () => void;
+}
+
+const holders = new Set<UnsavedTapHolder>();
+
+/**
+ * Registers taps held in memory for the app-wide retry. Returns a function that
+ * unregisters them.
+ */
+export function holdUnsavedTaps(holder: UnsavedTapHolder): () => void {
+  holders.add(holder);
+  return () => {
+    holders.delete(holder);
+  };
 }
 
 /**
- * Saves a tap as its stat, with its spot. Idempotent: a tap saved already resolves to
- * its stat, which gets the tap's spot if it doesn't have it (a spot marked after a
- * save that seemed to fail had landed).
+ * A kept tap was saved from the journal (replayPendingStats), as `event`: forgets it,
+ * and tells the sessions holding it that it's saved, so they keep counting it until the
+ * saved stats on screen show it, rather than taking its missing entry to mean it's gone.
  */
-export async function savePendingStat(stat: PendingStat): Promise<StatEvent> {
-  const event = await recordStat(stat.gameId, stat.type, stat.location, {
-    id: stat.id,
-    at: stat.at,
-    period: stat.period,
-  });
-  if (!stat.location || sameSpot(event.location, stat.location)) return event;
-  return (await setStatLocation(event.id, stat.location)) ?? event;
+export function pendingStatSaved(id: string, event: StatEvent): void {
+  removePendingStat(id);
+  for (const holder of [...holders]) holder.saved(id, event);
 }
 
-export interface ReplayResult {
-  /** Saved (or found saved already) and forgotten: taps, and spots put on their stats. */
-  saved: number;
-  /** Their game (or, for a spot, its stat) no longer exists: forgotten without saving. */
-  dropped: number;
-  /** Couldn't be saved: still kept, for next time. */
-  failed: number;
+/** Tries again to save the taps held in memory (quietly). Never rejects. */
+export async function retryHeldTaps(): Promise<void> {
+  await Promise.all(
+    [...holders].map(async (holder) => {
+      try {
+        await holder.retryQuietly();
+      } catch {
+        // Tried again next time.
+      }
+    }),
+  );
 }
 
 /**
- * Saves the taps kept by a page that closed (or couldn't reach the database) before
- * they were saved, then the spots kept for saved stats (pendingSpots.ts). Called at app
- * start, in the background. Each is saved at most once and then forgotten; one that
- * can't be saved stays kept for next time. A tap whose game no longer exists is
- * dropped, and so is a spot whose stat doesn't (a spot never brings back a deleted
- * stat). Stats can be added to finished games, so their taps are saved too. Never
- * rejects.
+ * Whether reloading the page now would lose nothing held in memory, for any game (see
+ * UnsavedTapHolder.reloadSafe): what the journals keep outlives the page anyway.
  */
-export async function replayPendingStats(): Promise<ReplayResult> {
-  const result: ReplayResult = { saved: 0, dropped: 0, failed: 0 };
-  const gameExists = new Map<string, Promise<boolean>>();
-  for (const stat of listPendingStats()) {
-    let exists = gameExists.get(stat.gameId);
-    if (!exists) {
-      exists = getGame(stat.gameId).then((game) => game !== undefined);
-      gameExists.set(stat.gameId, exists);
-    }
-    try {
-      if (!(await exists)) {
-        removePendingStat(stat.id);
-        result.dropped += 1;
-        continue;
-      }
-      // Undone (or saved) meanwhile, e.g. on the live game screen: leave it be. The
-      // save starts right after this check, so an Undo can't slip in between.
-      if (!isPendingStat(stat.id)) continue;
-      await savePendingStat(stat);
-      removePendingStat(stat.id);
-      result.saved += 1;
-    } catch {
-      result.failed += 1;
-    }
-  }
-  await replayPendingSpots(result);
-  return result;
+export function isReloadSafe(): boolean {
+  return [...holders].every((holder) => holder.reloadSafe());
 }
 
-/** The replay's second half: puts each kept spot on its stat, or drops it if it's gone. */
-async function replayPendingSpots(result: ReplayResult): Promise<void> {
-  for (const { id } of listPendingSpots()) {
-    // As kept right now: it may have been saved, or moved, on the live game screen.
-    const spot = getPendingSpot(id);
-    if (!spot) continue;
-    try {
-      const saved = await setStatLocation(id, spot.location);
-      // (Moved again meanwhile: that one is the game screen's to save.)
-      if (sameSpot(getPendingSpot(id)?.location, spot.location)) removePendingSpot(id);
-      if (saved) result.saved += 1;
-      else result.dropped += 1;
-    } catch (error) {
-      // A spot its stat can never take (it isn't a shot): nothing to keep it for.
-      if (error instanceof TypeError) {
-        removePendingSpot(id);
-        result.dropped += 1;
-      } else {
-        result.failed += 1;
-      }
-    }
+/**
+ * Whether any tap (or spot) isn't saved yet: kept in a journal (by this page or an
+ * earlier one), or held in memory.
+ */
+export function hasPendingStats(): boolean {
+  return (
+    listPendingStats().length > 0 ||
+    listPendingSpots().length > 0 ||
+    [...holders].some((holder) => holder.hasUnsaved())
+  );
+}
+
+const listeners = new Set<() => void>();
+
+/** Calls `listener` whenever a tap may have become pending. Returns a function that stops it. */
+export function watchPendingStats(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Says a tap may be pending now (e.g. its save just failed), to wake the app-wide retry. */
+export function notifyPendingStats(): void {
+  for (const listener of [...listeners]) listener();
+}
+
+// ---------------------------------------------------------------------------
+// Forgetting taps whose data is deleted or replaced
+
+/**
+ * Forgets the kept taps of one game, or of every game (then every entry, even one this
+ * version can't read, so no game id or stat type is left behind), the spots kept for
+ * their stats (pendingSpots.ts) too, and has the sessions holding such taps and spots in
+ * memory forget theirs. For writes that delete or replace a game's data: no retry may
+ * save one of its taps into it afterwards, or put one of its spots on a stat, say in a
+ * game restored or made again under the same id. Call it just before that write, so a
+ * save asked for earlier lands first and goes with it. Returns a function that keeps the
+ * forgotten entries again and has the sessions hold theirs again, for when the write
+ * fails.
+ */
+export function forgetPendingStats(gameId?: string): () => void {
+  const taps = removeJournalEntries(KEY_PREFIX, gameId);
+  const spots = forgetPendingSpots(gameId);
+  const holdAgain: (() => void)[] = [];
+  for (const holder of [...holders]) {
+    if (gameId === undefined || holder.gameId === gameId) holdAgain.push(holder.forget());
   }
+  return () => {
+    if (taps.count + spots.count === 0 && holdAgain.length === 0) return;
+    taps.putBack();
+    spots.putBack();
+    // After the entries: a session's kept taps and spots are back in the journals by then.
+    for (const again of holdAgain) again();
+    // The app-wide retry wakes up for them.
+    notifyPendingStats();
+  };
+}
+
+/**
+ * Forgets one tap by its stat's id, kept or held in memory, just before that stat is
+ * deleted: no retry may save it again afterwards. Nothing needs to come back if that
+ * delete fails: the stat is saved (that's how it can be deleted), and it stays. (A spot
+ * kept for the stat is forgotten only once the delete has worked, by deleteStat: a spot
+ * never brings back its stat, so it can wait, and it's still saved if the stat stays.)
+ */
+export function forgetPendingStat(id: string): void {
+  removePendingStat(id);
+  for (const holder of [...holders]) holder.forget(id);
 }

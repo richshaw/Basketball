@@ -6,12 +6,15 @@ import {
   doubleTap,
   expectStats,
   failNextSaves,
+  failStatReads,
   keptTaps,
   lastAction,
   lineButton,
   notSaved,
+  readFailedNote,
   setShotChart,
   shotCourt,
+  showPageAgain,
   startGame,
   statGrid,
   tapStats,
@@ -300,6 +303,79 @@ test('ending the game with a stat not saved says so, and End anyway still saves 
   await page.waitForTimeout(500);
   expect(await gameEventTypes(page, gameId)).toEqual(['blk']);
   expect(await keptTaps(page)).toEqual([]);
+});
+
+test('a stat not saved when the game ended is saved later on its own, with no relaunch', async ({
+  page,
+}) => {
+  const gameId = await startGame(page);
+  await failNextSaves(page, 1000);
+  await tapStats(page, ['Block']);
+  await expect(notSaved(page)).toContainText('Block not saved');
+  await page.getByRole('button', { name: 'End game' }).tap();
+  const sheet = page.getByRole('dialog', { name: 'Final score' });
+  await sheet.getByRole('button', { name: 'End game' }).tap();
+  await sheet.getByRole('button', { name: 'End anyway' }).tap();
+  await expectRoute(page, paths.gameReport(gameId));
+  expect(await gameEventTypes(page, gameId)).toEqual([]);
+
+  // The database takes writes again, and the app comes back to the front: the stat is
+  // saved by the app-wide retry, and the report shows it. No live game screen, no reload.
+  await failNextSaves(page, 0);
+  await showPageAgain(page);
+  await expect(
+    page.getByRole('list', { name: '1st quarter plays' }).getByRole('button', { name: /Block/ }),
+  ).toBeVisible();
+  expect(await gameEventTypes(page, gameId)).toEqual(['blk']);
+  expect(await keptTaps(page)).toEqual([]);
+});
+
+test('a failed read keeps the screen up with a calm note, taps still count, and it reads again', async ({
+  page,
+}) => {
+  const gameId = await startGame(page);
+  await tapStats(page, ['Steal']);
+  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['stl']);
+
+  // Reading the stats fails from now on: the Assist is saved, but can't be read back.
+  await failStatReads(page);
+  await tapStats(page, ['Assist']);
+  await expect(readFailedNote(page)).toBeVisible();
+  await expect(page.getByText('Your taps are kept on this phone.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reload' })).toBeVisible();
+  await expect(statGrid(page)).toBeVisible();
+  await expectStats(page, 'Steals: 1', 'Assists: 1');
+  // Taps still count.
+  await tapStats(page, ['Block']);
+  await expectStats(page, 'Blocks: 1');
+  await expect(lastAction(page)).toContainText('Block · Q1');
+
+  // Reads work again, and the app comes back to the front: it reads again, no reload.
+  await failStatReads(page, false);
+  await showPageAgain(page);
+  await expect(readFailedNote(page)).toHaveCount(0);
+  await expectStats(page, 'Steals: 1', 'Assists: 1', 'Blocks: 1');
+  expect(await gameEventTypes(page, gameId)).toEqual(['stl', 'ast', 'blk']);
+});
+
+test('Reload, offered while the stats cannot be read, loses no tap', async ({ page }) => {
+  const gameId = await startGame(page);
+  await failStatReads(page);
+  await tapStats(page, ['Steal']);
+  await expect(readFailedNote(page)).toBeVisible();
+  // Saves fail now too (the connection is lost): the Block is only on the phone.
+  await failNextSaves(page, 1000);
+  await tapStats(page, ['Block']);
+  await expectStats(page, 'Steals: 1', 'Blocks: 1');
+  expect(await keptTaps(page)).toHaveLength(1);
+  await expect(readFailedNote(page)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Reload' }).tap();
+  await expect(page.getByRole('heading', { level: 1, name: 'vs Westfield' })).toBeVisible();
+  await expect(readFailedNote(page)).toHaveCount(0);
+  await expectStats(page, 'Steals: 1', 'Blocks: 1');
+  await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['stl', 'blk']);
+  await expect.poll(() => keptTaps(page)).toEqual([]);
 });
 
 test('the log deletes a stat once confirmed', async ({ page }) => {

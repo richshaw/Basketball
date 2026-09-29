@@ -144,6 +144,37 @@ export async function expectAllSaved(page: Page) {
 }
 
 /**
+ * Makes reading stats fail in IndexedDB, as when WebKit has lost its connection in the
+ * background, until it's called again with `fail` false. (Dexie reads a game's stats,
+ * and exportAll() every stat, with getAll on an events index; saving a tap doesn't use
+ * it, so saves still work.) The page's own exportAll() fails meanwhile too.
+ */
+export async function failStatReads(page: Page, fail = true) {
+  await page.evaluate((failing) => {
+    const state = window as unknown as { statReadsFail?: boolean };
+    if (state.statReadsFail === undefined) {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound by apply() below
+      const getAll = IDBIndex.prototype.getAll;
+      IDBIndex.prototype.getAll = function (this: IDBIndex, ...args) {
+        if (state.statReadsFail && this.objectStore.name === 'events') {
+          throw new DOMException('Simulated read failure', 'UnknownError');
+        }
+        return getAll.apply(this, args);
+      };
+    }
+    state.statReadsFail = failing;
+  }, fail);
+}
+
+/** The note the live game screen shows while it can't read the saved stats. */
+export const readFailedNote = (page: Page) => page.getByText("Can't read saved stats right now.");
+
+/** Tells the page it's been brought back into view, as when the app returns to the front. */
+export async function showPageAgain(page: Page) {
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+}
+
+/**
  * Makes the next `count` stat saves fail in IndexedDB, as a write can when iOS brings
  * the app back from the background. Each failed save throws inside its transaction.
  */

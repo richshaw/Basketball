@@ -5,7 +5,9 @@
  * Loading convention: `undefined` means still loading; `null` means not found.
  * Lists are never null (an empty array when there's nothing).
  */
+import { liveQuery } from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useEffect, useRef, useState } from 'react';
 import {
   getAllEvents,
   getGame,
@@ -82,4 +84,148 @@ export function useSettings(): Settings | undefined {
 /** Every event of every game (for season stats; pair with statLinesForGames). */
 export function useAllEvents(): StatEvent[] | undefined {
   return useLiveQuery(getAllEvents);
+}
+
+// ---------------------------------------------------------------------------
+// Reads that survive a failure (the live game screen)
+
+/** A read that stays on screen when reading fails (see useSteadyLiveQuery). */
+export interface SteadyRead<T> {
+  /** The latest result, or undefined while loading. After a failed read, the last good one. */
+  readonly value: T | undefined;
+  /** The latest read failed: `value` may be out of date. It's read again soon. */
+  readonly failed: boolean;
+  /** Why it failed, while it does. */
+  readonly error?: unknown;
+}
+
+/**
+ * How long a failed read waits to be tried again: longer each time in a row, then the
+ * last one from then on. The app coming back into view tries again at once.
+ */
+export const READ_RETRY_DELAYS_MS: readonly number[] = [1000, 3000, 10_000];
+
+/**
+ * How long a read may go unanswered before it's read again (twice as long each time in
+ * a row, up to READ_WATCHDOG_MAX_MS). Dexie's liveQuery drops some failures without a
+ * word (an AbortError or a DatabaseClosedError: neither a result nor an error comes
+ * back), which would otherwise leave the screen blank, or out of date, for good.
+ */
+export const READ_WATCHDOG_MS = 3000;
+const READ_WATCHDOG_MAX_MS = 30_000;
+
+interface SteadyState<K, T> {
+  key: K;
+  hasValue: boolean;
+  value?: T;
+  error?: unknown;
+  /** Reads in a row that failed. */
+  failures: number;
+}
+
+/**
+ * Like useKeyedLiveQuery, for a screen that must stay up mid-game: a failed read never
+ * throws (useLiveQuery rethrows it while rendering, so the route's error screen would
+ * replace the screen, e.g. once WebKit loses its IndexedDB connection in the
+ * background). The last good result stays, with `failed` set, and the read is tried
+ * again when the app comes back into view and on a timer (Dexie reopens a lost
+ * connection on the next query), never by reloading the page. A read that doesn't
+ * answer at all is read again too (READ_WATCHDOG_MS).
+ */
+function useSteadyLiveQuery<K, T>(key: K, query: (key: K) => Promise<T>): SteadyRead<T> {
+  // Moves on to read again after a failure, or a read that never answered (a new live
+  // query).
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<SteadyState<K, T>>(() => ({
+    key,
+    hasValue: false,
+    failures: 0,
+  }));
+  // Reads in a row that never answered: how far the watchdog has backed off.
+  const unanswered = useRef(0);
+
+  useEffect(() => {
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const answered = () => {
+      clearTimeout(watchdog);
+      watchdog = undefined;
+      unanswered.current = 0;
+    };
+    const subscription = liveQuery(() => {
+      // Each run (the first, and again whenever its data changes) must answer in time,
+      // or it's read again.
+      clearTimeout(watchdog);
+      const wait = Math.min(READ_WATCHDOG_MS * 2 ** unanswered.current, READ_WATCHDOG_MAX_MS);
+      watchdog = setTimeout(() => {
+        unanswered.current += 1;
+        setAttempt((count) => count + 1);
+      }, wait);
+      return query(key);
+    }).subscribe({
+      next: (value) => {
+        answered();
+        setState({ key, hasValue: true, value, failures: 0 });
+      },
+      error: (error: unknown) => {
+        answered();
+        setState((current) =>
+          Object.is(current.key, key)
+            ? { ...current, error, failures: current.failures + 1 }
+            : { key, hasValue: false, error, failures: 1 },
+        );
+      },
+    });
+    return () => {
+      clearTimeout(watchdog);
+      subscription.unsubscribe();
+    };
+  }, [key, query, attempt]);
+
+  const current = Object.is(state.key, key) ? state : undefined;
+  const failures = current?.failures ?? 0;
+  const error = current?.error;
+
+  useEffect(() => {
+    if (failures === 1) console.error('Reading saved data failed; trying again', error);
+  }, [failures, error]);
+
+  useEffect(() => {
+    if (failures === 0) return;
+    const readAgain = () => setAttempt((count) => count + 1);
+    const delay = READ_RETRY_DELAYS_MS[Math.min(failures, READ_RETRY_DELAYS_MS.length) - 1];
+    const timer = setTimeout(readAgain, delay);
+    const readAgainWhenShown = () => {
+      if (document.visibilityState === 'visible') readAgain();
+    };
+    document.addEventListener('visibilitychange', readAgainWhenShown);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', readAgainWhenShown);
+    };
+  }, [failures]);
+
+  return {
+    value: current?.hasValue ? current.value : undefined,
+    failed: failures > 0,
+    error,
+  };
+}
+
+/** useGame that survives a failed read (see SteadyRead), for the live game screen. */
+export function useSteadyGame(id: string | undefined): SteadyRead<Game | null> {
+  return useSteadyLiveQuery(id, gameOrNull);
+}
+
+/** useGameEvents that survives a failed read (see SteadyRead), for the live game screen. */
+export function useSteadyGameEvents(id: string | undefined): SteadyRead<StatEvent[]> {
+  return useSteadyLiveQuery(id, eventsOf);
+}
+
+function settingsOrDefaults(): Promise<Settings> {
+  return getSettings();
+}
+
+/** useSettings that survives a failed read (see SteadyRead), for the live game screen. */
+export function useSteadySettings(): SteadyRead<Settings> {
+  return useSteadyLiveQuery('settings', settingsOrDefaults);
 }
