@@ -130,18 +130,25 @@ function integrityProblems(file: ExportFile): string[] {
   return problems;
 }
 
+/** How every backup's text starts (its `app` comes first), however it ends. */
+const EXPORT_START = /^\uFEFF?\s*\{\s*"app"\s*:\s*"hoop-stats"/;
+
 /**
  * Checks that `input` is a Hoop Stats backup this version can restore, and returns
  * a clean copy. Accepts the parsed object or the JSON text. Throws ExportFileError
- * with a message for the parent ("This file isn't a Hoop Stats backup.", …).
+ * with a message for the parent ("This file isn't a Hoop Stats backup.", …). Text
+ * that can't be read at all is a damaged backup, not some other file, when it starts
+ * like one (cut off, say) or `ours` says it's one of ours (e.g. by the file's name).
  */
-export function parseExportFile(input: unknown): ExportFile {
+export function parseExportFile(input: unknown, { ours = false } = {}): ExportFile {
   let data = input;
   if (typeof data === 'string') {
+    const text = data;
     try {
-      data = JSON.parse(data) as unknown;
+      data = JSON.parse(text) as unknown;
     } catch {
-      throw new ExportFileError(NOT_A_BACKUP, ['Not JSON']);
+      const damaged = ours || EXPORT_START.test(text);
+      throw new ExportFileError(damaged ? DAMAGED : NOT_A_BACKUP, ['Not JSON']);
     }
   }
   if (!isRecord(data) || data.app !== EXPORT_APP) {

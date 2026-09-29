@@ -39,8 +39,17 @@ export function createSpreadsheetFile(csv: string, now: Date): File {
 const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 
 /**
+ * Named like a backup file this app saves (see backupFileName), also once the Files app
+ * or a download has added to the name ('hoop-stats-backup-2026-09-28 (1).json').
+ */
+export function isBackupFileName(name: string): boolean {
+  return /^hoop-stats-backup/i.test(name.trim());
+}
+
+/**
  * Reads and checks a file the parent picked. Rejects with an ExportFileError whose
- * message is written for the parent.
+ * message is written for the parent. A file named like our backups that can't be read
+ * at all (cut off, say) is a damaged backup, not some other file.
  */
 export async function readBackupFile(file: Blob): Promise<ExportFile> {
   if (file.size > MAX_BACKUP_BYTES) {
@@ -56,7 +65,7 @@ export async function readBackupFile(file: Blob): Promise<ExportFile> {
       String(error),
     ]);
   }
-  return parseExportFile(text);
+  return parseExportFile(text, { ours: file instanceof File && isBackupFileName(file.name) });
 }
 
 /** '10 games', '1 game' or 'No games'. */

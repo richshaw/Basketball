@@ -167,7 +167,7 @@ The live game screen keeps every stat tap that isn't confirmed saved in a small 
 
 - `data/transfer.ts`:
   - `exportAll()` returns an `ExportFile`: `{ app: 'hoop-stats', schemaVersion: 1, exportedAt, players, games, events, settings }`.
-  - `parseExportFile(jsonTextOrObject)` validates it strictly and throws `ExportFileError`, whose `message` is written for the parent.
+  - `parseExportFile(jsonTextOrObject, { ours? })` validates it strictly and throws `ExportFileError`, whose `message` is written for the parent. Text that isn't even JSON is "damaged", not "not a Hoop Stats backup", when it starts the way a backup does (cut off, say) or `ours` says it's one (Settings passes it for a file named like our backups, `isBackupFileName`).
   - `importAll(file, 'replace' | 'merge')` runs in one transaction: all or nothing. `replace` makes the device hold exactly the file's data.
   - `merge` treats a game and its events as one unit: whichever copy was updated most recently wins, events and all. A newer copy in the file replaces that game's events (so stats deleted or moved there come across); an older or equally old copy is skipped with its events (so stats undone on the phone stay undone). Games on only one side are kept, so **a merge brings back games that were deleted on the phone** (fine for a restore). One player is kept, and the phone keeps its own settings.
   - `meta.lastChangeAt` only moves when an import actually changed something.

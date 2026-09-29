@@ -428,9 +428,9 @@ describe('imports and lastChangeAt', () => {
 });
 
 describe('parseExportFile', () => {
-  function rejection(input: unknown): ExportFileError {
+  function rejection(input: unknown, options?: { ours?: boolean }): ExportFileError {
     try {
-      parseExportFile(input);
+      parseExportFile(input, options);
     } catch (error) {
       if (error instanceof ExportFileError) return error;
       throw error;
@@ -467,6 +467,25 @@ describe('parseExportFile', () => {
     const error = rejection(input);
     expect(error.message).toBe(NOT_A_BACKUP);
     expect(error.name).toBe('ExportFileError');
+  });
+
+  it('calls a backup that was cut off damaged, not some other file', () => {
+    const text = JSON.stringify(file({ games: [game()], events: [event()] }), null, 2);
+    for (const cut of [text.slice(0, 500), text.slice(0, 30), text.slice(0, -1)]) {
+      expect(rejection(cut).message).toBe(DAMAGED);
+    }
+    // Written without spaces, or read with a byte order mark in front.
+    expect(rejection(JSON.stringify(file()).slice(0, 100)).message).toBe(DAMAGED);
+    expect(rejection(`\uFEFF${text.slice(0, 100)}`).message).toBe(DAMAGED);
+    // Only that start counts: other text that isn't JSON is some other file.
+    expect(rejection('{"application": "hoop-stats"').message).toBe(NOT_A_BACKUP);
+  });
+
+  it('calls text it cannot read damaged when it is known to be a backup', () => {
+    expect(rejection('hello', { ours: true }).message).toBe(DAMAGED);
+    expect(rejection('', { ours: true }).message).toBe(DAMAGED);
+    // It still has to be a backup once it's read.
+    expect(rejection('{"hello":"world"}', { ours: true }).message).toBe(NOT_A_BACKUP);
   });
 
   it('asks to update the app for a file from a newer version, whatever it holds', () => {

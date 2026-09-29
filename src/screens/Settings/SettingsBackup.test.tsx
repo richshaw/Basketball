@@ -497,6 +497,17 @@ describe('Settings: restore from a backup file', () => {
     expect(sheet).not.toHaveTextContent('Choose a backup saved from Hoop Stats');
   });
 
+  it('calls a backup file that was cut off damaged, not some other file', async () => {
+    const { user } = await renderSettings();
+    const whole = JSON.stringify(JSON.parse(fixtureJson), null, 2);
+
+    await chooseBackupFile(user, pickedFile(whole.slice(0, 500)));
+
+    const sheet = await screen.findByRole('dialog', { name: "Can't restore this file" });
+    expect(sheet).toHaveAccessibleDescription("This backup is damaged, so it can't be restored.");
+    expect(sheet).not.toHaveTextContent('Choose a backup saved from Hoop Stats');
+  });
+
   it('can restore the same file twice in a row', async () => {
     const { user } = await renderSettings();
     const file = pickedFile('not json at all');
