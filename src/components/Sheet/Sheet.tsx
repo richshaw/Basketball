@@ -128,8 +128,8 @@ export function Sheet({
   const insets = useViewportInsets(phase === 'open');
   const notifyClosed = useEffectEvent(() => onClosed?.());
 
-  // (Taps are noted from the first sheet on the page, closed or not, so the one that
-  // opens it is known.)
+  // (Taps are noted from the app's start, by UiProviders, so the one that opens a
+  // screen's first sheet is known; and from here too, for a sheet shown without them.)
   useLayoutEffect(listenForTaps, []);
 
   // Open: show as a modal. The browser moves focus inside and makes the page inert.

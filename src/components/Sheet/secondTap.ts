@@ -23,8 +23,9 @@ const catchers = new Set<() => void>();
 
 /**
  * Starts noting where each tap went down and when it ended, for catchSecondTap (once
- * for the page; Sheet calls it). Noted before anything else hears of the tap, and
- * whatever the tap then does.
+ * for the page: UiProviders calls it as the app starts, so the tap that opens a screen's
+ * first sheet is noted too; Sheet also does). Noted before anything else hears of the
+ * tap, and whatever the tap then does.
  */
 export function listenForTaps(): void {
   if (listening) return;

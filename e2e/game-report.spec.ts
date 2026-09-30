@@ -6,6 +6,7 @@ import {
   expectRoute,
   IPHONE_VIEWPORT,
   screenHeading,
+  secondTapCatchers,
 } from './support/app';
 import {
   DEMO_LIVE_GAME_ID,
@@ -14,6 +15,7 @@ import {
   seedDemoData,
   type ExportedData,
 } from './support/data';
+import { doubleTapAt, middleOf } from './support/tracking';
 
 /** Fixed, so the demo game dates are known: game 10 is four days earlier, Thu, Sep 24. */
 const DEMO_TODAY = '2026-09-28';
@@ -138,6 +140,50 @@ test('a play can be deleted from the play-by-play', async ({ page }) => {
     .toBe(neighbor);
   const after = await exportAll(page);
   expect(after.events).toHaveLength(before.events.length - 1);
+});
+
+// A quick double tap on what asks first, on a page where no sheet has shown yet: its
+// second tap is caught where the first went down (src/components/Sheet/secondTap.ts, which
+// notes taps from the app's start), never landing on the confirmation's red button as it
+// slides in. Plays low on the screen, where "Delete stat" comes up, each on a fresh page.
+for (const row of [3, 4, 5]) {
+  test(`a double tap on a play of a game opened from Games only asks (play ${row + 1})`, async ({
+    page,
+  }) => {
+    const before = await exportAll(page);
+    await page.reload();
+    await page
+      .getByRole('link', { name: /^vs Eastlake/ })
+      .first()
+      .tap();
+    const quarter = page.getByRole('button', { name: /^1st quarter, / });
+    await quarter.scrollIntoViewIfNeeded();
+    await quarter.tap();
+    const play = page.getByRole('list', { name: '1st quarter plays' }).getByRole('button').nth(row);
+    await play.scrollIntoViewIfNeeded();
+
+    await doubleTapAt(page, await middleOf(play), 120);
+    const confirm = page.getByRole('alertdialog', { name: 'Delete this stat?' });
+    await expect(confirm).toBeVisible();
+    // Once nothing catches taps any more, it's still asking, and nothing was deleted.
+    await expect(secondTapCatchers(page)).toHaveCount(0);
+    await expect(confirm).toBeVisible();
+    expect((await exportAll(page)).events).toHaveLength(before.events.length);
+  });
+}
+
+test('a double tap on Delete game, on a report opened afresh, only asks', async ({ page }) => {
+  await page.goto(appUrl(paths.gameReport(demoGameId(9))));
+  await page.reload();
+  const deleteGame = page.getByRole('button', { name: 'Delete game' });
+  await deleteGame.scrollIntoViewIfNeeded();
+
+  await doubleTapAt(page, await middleOf(deleteGame), 120);
+  const confirm = page.getByRole('alertdialog', { name: 'Delete this game?' });
+  await expect(confirm).toBeVisible();
+  await expect(secondTapCatchers(page)).toHaveCount(0);
+  await expect(confirm).toBeVisible();
+  expect((await exportAll(page)).games.map((game) => game.id)).toContain(demoGameId(9));
 });
 
 test('a live game offers to resume tracking', async ({ page }) => {
