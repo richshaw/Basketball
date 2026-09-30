@@ -765,19 +765,21 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
 
   describe('before any game is finished', () => {
     it('points back to the game in progress updated most recently, like Games does', async () => {
-      // A second between the writes (only Date is faked: IndexedDB needs real timers).
-      // Written within one millisecond, both games would be updated "at once" and
-      // either could come first.
+      // Harbor's game is the older one by date and by creation, but its stat comes last,
+      // so only "updated most recently" picks it. The clock steps between the writes
+      // (only Date is faked: IndexedDB needs real timers): written within one
+      // millisecond, the games would tie and either could come first.
       const start = Date.now();
       vi.useFakeTimers({ toFake: ['Date'], now: start });
-      const today = await createGame({
-        opponent: 'Westfield',
-        date: TODAY,
-        periodFormat: 'quarters',
-      });
       const earlier = await createGame({
         opponent: 'Harbor',
         date: '2026-09-20',
+        periodFormat: 'quarters',
+      });
+      vi.setSystemTime(start + 500);
+      const today = await createGame({
+        opponent: 'Westfield',
+        date: TODAY,
         periodFormat: 'quarters',
       });
       vi.setSystemTime(start + 1_000);
