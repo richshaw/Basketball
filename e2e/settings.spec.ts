@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
-import { appUrl, IPHONE_SAFARI_UA, screenHeading, tabBar } from './support/app';
+import { appUrl, IPHONE_SAFARI_UA, screenHeading, secondTapCatchers, tabBar } from './support/app';
 import { clearAllData, exportAll, seedDemoData } from './support/data';
 import { ownGameId, seedOwnGames } from './support/ownGames';
 
@@ -73,6 +73,9 @@ test("the toast after saving a backup file never covers the erase dialog's butto
   const dialog = page.getByRole('alertdialog', { name: 'Erase all data?' });
   await expect(dialog).toBeVisible();
   await expect(notifications(page)).toBeEmpty();
+  // (Once the spot catching a double tap's second tap has gone: the tap on Erase all data
+  // opened the dialog with its own Erase all data right there.)
+  await expect(secondTapCatchers(page)).toHaveCount(0);
   for (const name of ['Erase all data', 'Cancel']) {
     const box = await dialog.getByRole('button', { name }).boundingBox();
     const hit = await page.evaluate(

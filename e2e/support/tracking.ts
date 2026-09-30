@@ -85,14 +85,6 @@ export async function middleOf(locator: Locator): Promise<{ x: number; y: number
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
-/**
- * The spots catching a double tap's second tap, where a sheet opened or closed (see
- * src/components/Sheet/secondTap.ts): wait for none before a tap meant to count there.
- */
-export function secondTapCatchers(page: Page): Locator {
-  return page.locator('[data-second-tap]');
-}
-
 /** The taps kept on the phone until they're saved (see src/data/pendingStats.ts). */
 export function keptTaps(page: Page): Promise<string[]> {
   return page.evaluate(() =>

@@ -1,6 +1,12 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
-import { appUrl, emulateIPhoneSafeArea, expectRoute, IPHONE_SAFE_BOTTOM } from './support/app';
+import {
+  appUrl,
+  emulateIPhoneSafeArea,
+  expectRoute,
+  IPHONE_SAFE_BOTTOM,
+  secondTapCatchers,
+} from './support/app';
 import { DEMO_LIVE_GAME_ID, demoGameId, exportAll, patchGames, seedDemoData } from './support/data';
 import { keptMoves, refuseToKeepMoves } from './support/periods';
 import {
@@ -23,7 +29,6 @@ import {
   middleOf,
   notSaved,
   readFailedNote,
-  secondTapCatchers,
   setShotChart,
   shotCourt,
   showPageAgain,
