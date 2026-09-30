@@ -8,6 +8,11 @@ import styles from './TopBar.module.css';
 export interface TopBarProps {
   /** The screen title, e.g. 'vs Central'. */
   title: string;
+  /**
+   * A short line under the title, e.g. 'Finished game' (this isn't a live game): in the
+   * bar, so it takes none of the room the stats and the court need.
+   */
+  note?: string;
   /** The current period, e.g. 'Q2' or 'OT'. */
   periodText: string;
   /** False at the last period a game can have. */
@@ -18,11 +23,13 @@ export interface TopBarProps {
 
 /**
  * The compact bar at the top of the live game screen: back to Games (leaving never
- * ends the game), the matchup, and the period control. Its props are all strings,
- * booleans and stable callbacks, so it doesn't re-render when a stat is recorded.
+ * ends the game), the matchup (with its note, if any), and the period control. Its
+ * props are all strings, booleans and stable callbacks, so it doesn't re-render when a
+ * stat is recorded.
  */
 export const TopBar = memo(function TopBar({
   title,
+  note,
   periodText,
   canAdvance,
   onPickPeriod,
@@ -30,11 +37,15 @@ export const TopBar = memo(function TopBar({
 }: TopBarProps) {
   return (
     <header className={styles.bar}>
-      <Link to={paths.home} className={styles.back}>
+      {/* Named "Games" even where it's only its chevron (on phones, for the title's room). */}
+      <Link to={paths.home} className={styles.back} aria-label="Games">
         <ChevronLeftIcon className={styles.backIcon} />
-        <span>Games</span>
+        <span className={styles.backLabel}>Games</span>
       </Link>
-      <h1 className={styles.title}>{title}</h1>
+      <div className={styles.heading}>
+        <h1 className={styles.title}>{title}</h1>
+        {note ? <p className={styles.note}>{note}</p> : null}
+      </div>
       <div className={styles.period}>
         <button
           type="button"

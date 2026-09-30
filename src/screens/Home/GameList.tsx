@@ -1,6 +1,7 @@
 import { Badge } from '@/components/Badge/Badge';
 import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
+import { isDemoGameId } from '@/data/demoIds';
 import type { GameStatLine, StatLine } from '@/data/stats';
 import { paths } from '@/routes';
 import { gameTitle } from '@/lib/gameTitle';
@@ -23,7 +24,16 @@ function GameRow({ game, line, today }: GameStatLine & { today: string }) {
 
   return (
     <ListRow
-      title={gameTitle(game)}
+      title={
+        isDemoGameId(game.id) ? (
+          // Never mistaken for one of her games (they count in her stats until removed).
+          <>
+            {gameTitle(game)} <Badge className={styles.sample}>Sample</Badge>
+          </>
+        ) : (
+          gameTitle(game)
+        )
+      }
       subtitle={gameDateLabel(game.date, today)}
       value={
         <>

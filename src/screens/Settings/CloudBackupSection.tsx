@@ -26,6 +26,7 @@ import {
 } from './cloudBackupText';
 import { TurnOffSheet } from './TurnOffSheet';
 import { useNow } from './useNow';
+import { useOnline } from './useOnline';
 import { useStillHere } from './useStillHere';
 import styles from './CloudBackupSection.module.css';
 
@@ -65,12 +66,14 @@ function StatusIcon({ tone }: { tone: StatusTone }) {
 
 /**
  * The status row: what cloud backup is doing, in plain words ("Backed up 2 minutes
- * ago"), and why it paused or stopped. The times stay fresh while Settings is open.
+ * ago"), and why it paused or stopped. The times stay fresh while Settings is open,
+ * and so does whether the phone has signal (or just can't reach the backup server).
  */
 function StatusRow({ status }: { status: CloudBackupStatus }) {
   const now = useNow();
+  const online = useOnline();
   // A backup that finished since the last tick is "just now", never in the future.
-  const line = describeStatus(status, Math.max(now, status.lastSuccessAt ?? 0));
+  const line = describeStatus(status, Math.max(now, status.lastSuccessAt ?? 0), { online });
   return (
     <ListRow
       className={styles.statusRow}

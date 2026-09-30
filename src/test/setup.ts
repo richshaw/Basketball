@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
+import { stopCatchingSecondTaps } from '@/components/Sheet/secondTap';
 import { stopReopeningDatabase } from '@/data/reopen';
 import { disposeTrackingSessions } from '@/screens/TrackGame/session';
 import { resetDatabase } from './db';
@@ -37,6 +38,8 @@ afterEach(() => {
   // Nor may a try to open the database again (src/data/reopen.ts), after a test that
   // closed it for good.
   stopReopeningDatabase();
+  // Nor a tap, nor the spot catching its second tap (src/components/Sheet/secondTap.ts).
+  stopCatchingSecondTaps();
   // IndexedDB runs on real timers: never let one test's fake timers stall the next reset.
   vi.useRealTimers();
 });

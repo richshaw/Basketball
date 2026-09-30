@@ -153,8 +153,16 @@ export function withoutWaits(message: string | undefined): string | undefined {
   return kept || undefined;
 }
 
-/** The status row of Settings > Cloud backup, while backup is on. */
-export function describeStatus(status: CloudBackupStatus, now: number): StatusLine {
+/**
+ * The status row of Settings > Cloud backup, while backup is on. `online`: whether the
+ * phone has a connection (`navigator.onLine`), which tells "no signal" from a backup
+ * server that can't be reached right now: both leave backup waiting to try again.
+ */
+export function describeStatus(
+  status: CloudBackupStatus,
+  now: number,
+  { online = true }: { online?: boolean } = {},
+): StatusLine {
   const last = status.lastSuccessAt;
   const lastBackedUp =
     last === undefined ? 'Not backed up yet.' : `Last backed up ${timeAgo(last, now)}.`;
@@ -166,6 +174,13 @@ export function describeStatus(status: CloudBackupStatus, now: number): StatusLi
         tone: 'busy',
       };
     case 'waiting-for-signal':
+      if (online) {
+        return {
+          title: "Can't reach the backup server right now",
+          detail: `Backup will try again. Your stats are safe on this phone. ${lastBackedUp}`,
+          tone: 'offline',
+        };
+      }
       return {
         title: 'Waiting for signal: will back up automatically',
         detail: `Your stats are safe on this phone. ${lastBackedUp}`,

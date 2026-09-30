@@ -30,13 +30,31 @@
   stroke-width: 2.5;
 }
 
-.title {
+/* The title, and the note under it when there's one: both within the bar's height. */
+.heading {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-width: 0;
+  text-align: center;
+}
+
+.title {
   overflow: hidden;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-bold);
-  text-align: center;
+  line-height: var(--line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Says this isn't a live game, without shouting over the stats. */
+.note {
+  overflow: hidden;
+  color: var(--color-accent-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -115,4 +133,41 @@
 /* Points down: this one opens a list of periods. */
 .pickIcon {
   transform: rotate(90deg);
+}
+
+/*
+ * Phones: the title gets the room for an ordinary opponent's name (16 characters on an
+ * iPhone SE, 18 at 390 points). The back link is its chevron alone (still named
+ * "Games"), with its tap target reaching into the screen's edge padding rather than
+ * into the title; the title is a size smaller, and the period pills a little tighter
+ * (every tap target stays 44 points or more).
+ */
+@media (max-width: 480px) {
+  .back {
+    margin-inline-start: calc(-1 * var(--space-2));
+    padding-inline-start: var(--space-2);
+  }
+
+  .backLabel {
+    display: none;
+  }
+
+  .title {
+    font-size: var(--font-size-bar-title);
+  }
+
+  /* The bar's gap alone keeps the period pill clear of the title. */
+  .periodButton:first-child {
+    padding-inline-start: 0;
+  }
+
+  .current,
+  .next {
+    padding-inline-start: var(--space-2);
+  }
+
+  .icon {
+    width: var(--icon-size-xs);
+    height: var(--icon-size-xs);
+  }
 }

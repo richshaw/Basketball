@@ -108,16 +108,39 @@ describe('describeStatus', () => {
       tone: 'busy',
     });
     expect(describeStatus(on({ state: 'backing-up' }), NOW).detail).toBeUndefined();
+    const offline = { online: false };
     expect(
-      describeStatus(on({ state: 'waiting-for-signal', lastSuccessAt: NOW - 3 * HOUR }), NOW),
+      describeStatus(
+        on({ state: 'waiting-for-signal', lastSuccessAt: NOW - 3 * HOUR }),
+        NOW,
+        offline,
+      ),
     ).toEqual({
       title: 'Waiting for signal: will back up automatically',
       detail: 'Your stats are safe on this phone. Last backed up 3 hours ago.',
       tone: 'offline',
     });
-    expect(describeStatus(on({ state: 'waiting-for-signal' }), NOW).detail).toBe(
+    expect(describeStatus(on({ state: 'waiting-for-signal' }), NOW, offline).detail).toBe(
       'Your stats are safe on this phone. Not backed up yet.',
     );
+  });
+
+  it("doesn't blame the signal when the phone has one and the server can't be reached", () => {
+    expect(
+      describeStatus(on({ state: 'waiting-for-signal', lastSuccessAt: NOW - 3 * HOUR }), NOW, {
+        online: true,
+      }),
+    ).toEqual({
+      title: "Can't reach the backup server right now",
+      detail:
+        'Backup will try again. Your stats are safe on this phone. Last backed up 3 hours ago.',
+      tone: 'offline',
+    });
+    // Online is what the phone says when it can't tell.
+    expect(describeStatus(on({ state: 'waiting-for-signal' }), NOW)).toMatchObject({
+      title: "Can't reach the backup server right now",
+      detail: 'Backup will try again. Your stats are safe on this phone. Not backed up yet.',
+    });
   });
 
   it("gives the engine's message and when it will try again after a failure", () => {

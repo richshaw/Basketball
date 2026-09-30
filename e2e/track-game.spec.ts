@@ -1,11 +1,19 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
-import { appUrl, emulateIPhoneSafeArea, expectRoute, IPHONE_SAFE_BOTTOM } from './support/app';
+import {
+  appUrl,
+  emulateIPhoneSafeArea,
+  expectRoute,
+  IPHONE_SAFE_BOTTOM,
+  secondTapCatchers,
+} from './support/app';
 import { DEMO_LIVE_GAME_ID, demoGameId, exportAll, patchGames, seedDemoData } from './support/data';
 import { keptMoves, refuseToKeepMoves } from './support/periods';
 import {
   canLoseDatabaseConnection,
   doubleTap,
+  doubleTapAt,
+  expectAllSaved,
   expectStats,
   failGameSaves,
   failNextSaves,
@@ -18,6 +26,7 @@ import {
   lastActionFits,
   lineButton,
   loseDatabaseConnection,
+  middleOf,
   notSaved,
   readFailedNote,
   setShotChart,
@@ -320,6 +329,35 @@ test('ending the game with a stat not saved says so, and End anyway still saves 
   expect(await keptTaps(page)).toEqual([]);
 });
 
+// A game that couldn't be ended says so in its sheet, over the line: once the sheet is
+// closed, the line still has her latest stat, with its Undo. On an SE and at 390 points,
+// with the court.
+for (const device of [
+  { name: 'an iPhone SE', viewport: { width: 375, height: 667 - 20 } },
+  { name: 'an iPhone', viewport: { width: 390, height: 844 - 47 } },
+]) {
+  test(`a game that couldn't be ended leaves her latest stat on the line, on ${device.name}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(device.viewport);
+    await startGame(page);
+    await expect(shotCourt(page)).toHaveCount(1);
+    await tapStats(page, ['Steal']);
+    await expectAllSaved(page);
+    await failGameSaves(page, true);
+    await page.getByRole('main').getByRole('button', { name: 'End game', exact: true }).tap();
+    const sheet = page.getByRole('dialog', { name: 'Final score' });
+    await sheet.getByRole('button', { name: 'End game' }).tap();
+    await expect(sheet.getByRole('alert')).toHaveText("Couldn't end the game. Try again.");
+
+    await sheet.getByRole('button', { name: 'Keep tracking' }).tap();
+    await expect(sheet).toBeHidden();
+    await expect(lastAction(page)).toHaveText('Steal · Q1');
+    await expect(lineButton(page)).toBeInViewport({ ratio: 1 });
+    await failGameSaves(page, false);
+  });
+}
+
 test('a stat not saved when the game ended is saved later on its own, with no relaunch', async ({
   page,
 }) => {
@@ -517,6 +555,50 @@ for (const [name, viewport] of [
         expect(await gameEventTypes(page, gameId)).toEqual(['deflection']);
       });
 
+      test('a delete from the log that fails says so in the log, then on the line, beside a Try again that works', async ({
+        page,
+      }) => {
+        if (!court) await setShotChart(page, false);
+        const gameId = await startGame(page);
+        // The longest stat name, under enough stats that the log scrolls to reach it.
+        await tapStats(page, ['Charge Taken']);
+        await tapStats(page, Array<string>(14).fill('Deflection'));
+        await expect.poll(async () => (await gameEventTypes(page, gameId)).length).toBe(15);
+
+        await failStatDeletes(page, true);
+        await page.getByRole('button', { name: 'Log' }).tap();
+        const log = page.getByRole('dialog', { name: 'Stat log' });
+        await log.getByRole('button', { name: /^Charge Taken/ }).tap();
+        await page
+          .getByRole('alertdialog', { name: 'Delete Charge Taken (Q1)?' })
+          .getByRole('button', { name: 'Delete' })
+          .tap();
+        // The log says so in full, in view however far it's scrolled (the line is under
+        // it), and never in a toast. The stat stays.
+        const note = log.getByRole('alert');
+        await expect(note).toHaveText("Couldn't delete Charge Taken (Q1). Try again.");
+        await expect(note).toBeInViewport({ ratio: 1 });
+        expect(await page.getByRole('status', { name: 'Notifications' }).textContent()).toBe('');
+        await expect(log.getByRole('button', { name: /^Charge Taken/ })).toBeVisible();
+
+        // Closed, the line says so in a few words, whole, beside Try again for that stat.
+        await log.getByRole('button', { name: 'Close' }).tap();
+        await expect(log).toBeHidden();
+        await expect(lastAction(page)).toHaveText("Couldn't delete");
+        await expect(lineButton(page, 'Try again')).toBeInViewport({ ratio: 1 });
+        expect(await lastActionFits(page)).toBe(true);
+        expect((await gameEventTypes(page, gameId)).filter((type) => type === 'charge')).toEqual([
+          'charge',
+        ]);
+
+        // Try again, once deleting works: that stat goes, which the line says whole.
+        await failStatDeletes(page, false);
+        await lineButton(page, 'Try again').tap();
+        await expect(lastAction(page)).toHaveText('Deleted Charge Taken (Q1)');
+        expect(await lastActionFits(page)).toBe(true);
+        expect(await gameEventTypes(page, gameId)).not.toContain('charge');
+      });
+
       test('deep in overtime, failed moves and saves, a stat gone from the log and fouled out fit the line whole', async ({
         page,
       }) => {
@@ -589,9 +671,19 @@ for (const [name, viewport] of [
         await log.getByRole('button', { name: 'Close' }).tap();
         await expect(lastAction(page)).toHaveText('Charge Taken was already deleted');
         expect(await lastActionFits(page)).toBe(true);
+        // The one from 10OT is deleted: the line says so with its period, whole.
+        await expect(log).toBeHidden();
+        await page.getByRole('button', { name: 'Log' }).tap();
+        await log.getByRole('button', { name: /^Charge Taken.*10OT/ }).tap();
+        await page
+          .getByRole('alertdialog', { name: 'Delete Charge Taken (10OT)?' })
+          .getByRole('button', { name: 'Delete' })
+          .tap();
+        await log.getByRole('button', { name: 'Close' }).tap();
+        await expect(lastAction(page)).toHaveText('Deleted Charge Taken (10OT)');
+        expect(await lastActionFits(page)).toBe(true);
 
         // A stat's longest line, this deep into overtime: fouled out, next to its Undo.
-        // (Once the log has slid away: it takes taps meanwhile.)
         await expect(log).toBeHidden();
         await tapStats(page, Array<string>(5).fill('Foul'));
         await expect(lastAction(page)).toHaveText('Foul · 10OT · fouled out');
@@ -602,7 +694,7 @@ for (const [name, viewport] of [
   }
 }
 
-test.describe('iPhone SE, with the court: an Undo that takes its time', () => {
+test.describe('iPhone SE, with the court: an Undo or a delete that takes its time', () => {
   test.use({ viewport: { width: 375, height: 667 - 20 } });
 
   test("an Undo that doesn't answer in time says so in a few words, then how it went", async ({
@@ -626,6 +718,52 @@ test.describe('iPhone SE, with the court: an Undo that takes its time', () => {
     // It lands: the line says so instead.
     await writes.release();
     await expect(lastAction(page)).toHaveText('Removed Charge Taken');
+    expect(await gameEventTypes(page, gameId)).toEqual(['deflection']);
+  });
+
+  test("a delete from the log that doesn't answer in time says so in the log and on the line, then how it went", async ({
+    page,
+  }) => {
+    const gameId = await startGame(page);
+    await expect(shotCourt(page)).toHaveCount(1);
+    await tapStats(page, ['Charge Taken', 'Deflection']);
+    await expect.poll(() => gameEventTypes(page, gameId)).toEqual(['charge', 'deflection']);
+    const charges = statGrid(page).getByRole('button', { name: 'Charge Taken', exact: true });
+
+    // Deleting it doesn't answer for a while: it stops counting at once, and the log says
+    // it isn't saved yet (nothing failed, and there's nothing to do).
+    const writes = await holdStatWrites(page);
+    await page.getByRole('button', { name: 'Log' }).tap();
+    const log = page.getByRole('dialog', { name: 'Stat log' });
+    await log.getByRole('button', { name: /^Charge Taken/ }).tap();
+    await page
+      .getByRole('alertdialog', { name: 'Delete Charge Taken (Q1)?' })
+      .getByRole('button', { name: 'Delete' })
+      .tap();
+    await expect(charges).toHaveAccessibleDescription('');
+    await expect(log.getByRole('alert')).toHaveText("Deleting Charge Taken (Q1) isn't saved yet.", {
+      timeout: 10_000,
+    });
+    expect(await page.getByRole('status', { name: 'Notifications' }).textContent()).toBe('');
+
+    // Closed, the line says so too, whole.
+    await log.getByRole('button', { name: 'Close' }).tap();
+    await expect(log).toBeHidden();
+    await expect(lastAction(page)).toHaveText('Delete not saved yet');
+    expect(await lastActionFits(page)).toBe(true);
+
+    // It fails in the end: the Charge Taken counts again, and the line says so instead,
+    // whole, beside Try again for that stat.
+    await failStatDeletes(page, true);
+    await writes.release();
+    await expect(lastAction(page)).toHaveText("Couldn't delete");
+    await expect(lineButton(page, 'Try again')).toBeInViewport({ ratio: 1 });
+    expect(await lastActionFits(page)).toBe(true);
+    await expect(charges).toHaveAccessibleDescription('1 this game');
+
+    await failStatDeletes(page, false);
+    await lineButton(page, 'Try again').tap();
+    await expect(lastAction(page)).toHaveText('Deleted Charge Taken (Q1)');
     expect(await gameEventTypes(page, gameId)).toEqual(['deflection']);
   });
 });
@@ -670,6 +808,305 @@ test('the log deletes a stat once confirmed', async ({ page }) => {
   expect(await gameEventTypes(page, gameId)).toEqual(['stl', 'blk']);
 });
 
+test('a toast the screen before left never shows on the live game screen', async ({ page }) => {
+  const notifications = page.getByRole('status', { name: 'Notifications' });
+  await page.goto('./');
+  await seedDemoData(page, { liveGame: true });
+
+  // A game deleted on its report, then Resume game on Games at once.
+  await page.goto(appUrl(paths.gameReport(demoGameId(9))));
+  await page.getByRole('button', { name: 'Delete game' }).tap();
+  await page
+    .getByRole('alertdialog', { name: 'Delete this game?' })
+    .getByRole('button', { name: 'Delete game' })
+    .tap();
+  await expect(notifications).toHaveText('Game deleted');
+  await page.getByRole('link', { name: 'Resume game' }).tap();
+  await expect(page.getByRole('heading', { level: 1, name: 'vs Westfield' })).toBeVisible();
+  // Gone as the screen opens. (Checked once, not waited for: left alone, it would go
+  // after its 4 s, having sat over Log and End game all that time.)
+  expect(await notifications.textContent()).toBe('');
+
+  // A play deleted on a report, then Add or fix stats at once.
+  await page.goto(appUrl(paths.gameReport(demoGameId(10))));
+  const firstQuarter = page.getByRole('button', { name: /^1st quarter, / });
+  await firstQuarter.scrollIntoViewIfNeeded();
+  await firstQuarter.tap();
+  await page.getByRole('list', { name: '1st quarter plays' }).getByRole('button').first().tap();
+  await page
+    .getByRole('alertdialog', { name: 'Delete this stat?' })
+    .getByRole('button', { name: 'Delete stat' })
+    .tap();
+  await expect(notifications).toContainText('Deleted');
+  await page.getByRole('link', { name: 'Add or fix stats' }).tap();
+  await expect(page.getByText('Finished game', { exact: true })).toBeVisible();
+  expect(await notifications.textContent()).toBe('');
+  // Nothing covers the controls along the bottom.
+  const log = await page.getByRole('button', { name: 'Log' }).boundingBox();
+  if (!log) throw new Error('No Log button');
+  const hit = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.textContent,
+    { x: log.x + log.width / 2, y: log.y + log.height / 2 },
+  );
+  expect(hit).toBe('Log');
+});
+
+test('a stat tapped just after a sheet closes counts: the sheet takes no taps as it slides away', async ({
+  page,
+}) => {
+  const gameId = await startGame(page);
+  const periodButton = page.getByRole('button', { name: /^Period Q\d$/ });
+  /** Each way she closes a sheet on this screen, from opening it to the tap that closes it. */
+  const ways: [string, () => Promise<void>][] = [
+    [
+      'picking a period',
+      async () => {
+        const next = (await periodButton.getAttribute('aria-label')) === 'Period Q1' ? 'Q2' : 'Q1';
+        await periodButton.tap();
+        const sheet = page.getByRole('dialog', { name: 'Period' });
+        await sheet.getByRole('button', { name: next, exact: true }).tap();
+      },
+    ],
+    [
+      "the log's X",
+      async () => {
+        await page.getByRole('button', { name: 'Log' }).tap();
+        const log = page.getByRole('dialog', { name: 'Stat log' });
+        await log.getByRole('button', { name: 'Close' }).tap();
+      },
+    ],
+    [
+      'a tap outside the log',
+      async () => {
+        await page.getByRole('button', { name: 'Log' }).tap();
+        await expect(page.getByRole('dialog', { name: 'Stat log' })).toBeVisible();
+        // The dimmed strip above the sheet.
+        await page.touchscreen.tap(195, 8);
+      },
+    ],
+    [
+      'Keep tracking, after End game',
+      async () => {
+        await page.getByRole('button', { name: 'End game' }).tap();
+        const sheet = page.getByRole('dialog', { name: 'Final score' });
+        await sheet.getByRole('button', { name: 'Keep tracking' }).tap();
+      },
+    ],
+  ];
+
+  let assists = 0;
+  for (const [way, closeSheet] of ways) {
+    for (const delayMs of [0, 50, 150]) {
+      await closeSheet();
+      // Well within the sheet's 200 ms slide-out.
+      if (delayMs > 0) await page.waitForTimeout(delayMs);
+      await tapStats(page, ['Assist']);
+      assists += 1;
+      // Counted, and nothing else: the tap that closed the sheet hit nothing under it.
+      await expect
+        .poll(() => gameEventTypes(page, gameId), {
+          message: `${way}, then Assist ${delayMs} ms later`,
+        })
+        .toEqual(Array<string>(assists).fill('ast'));
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+    }
+  }
+});
+
+// A quick double tap on what opens or closes a sheet acts once: its second tap, at the
+// spot of the first, is caught there for a moment (SECOND_TAP_MS, 350 ms: see
+// src/components/Sheet/secondTap.ts) instead of landing on what the first one opened or
+// uncovered: a stat button, the grid's Undo, the sheet's own buttons as it slides in, a
+// row of the log under a confirmation. (A tap anywhere else counts at once: the test
+// above.) On an iPhone, with its home indicator, and an SE, both with the court.
+for (const device of [
+  { name: 'an iPhone', setUp: (page: Page) => emulateIPhoneSafeArea(page) },
+  {
+    name: 'an iPhone SE',
+    setUp: (page: Page) => page.setViewportSize({ width: 375, height: 667 - 20 }),
+  },
+]) {
+  for (const gapMs of [120, 250]) {
+    test(`a double tap on a sheet acts once, ${gapMs} ms apart, on ${device.name}`, async ({
+      page,
+    }) => {
+      await device.setUp(page);
+      const gameId = await startGame(page);
+      await expect(shotCourt(page)).toHaveCount(1);
+      await tapStats(page, ['Steal', 'Assist']);
+      let stats = ['stl', 'ast'];
+      await expect.poll(() => gameEventTypes(page, gameId)).toEqual(stats);
+
+      const bar = page.getByRole('main');
+      const periodButton = page.getByRole('button', { name: /^Period Q\d$/ });
+      const periods = page.getByRole('dialog', { name: 'Period' });
+      const log = page.getByRole('dialog', { name: 'Stat log' });
+      const endGame = page.getByRole('dialog', { name: 'Final score' });
+      const confirm = page.getByRole('alertdialog');
+      const sheets = [periods, log, endGame, confirm];
+
+      /** Waits until `sheet` has slid in, and nothing is catching taps any more. */
+      const ready = async (sheet: Locator) => {
+        await expect(sheet).toBeVisible();
+        await sheet.evaluate((dialog) =>
+          Promise.all(dialog.getAnimations({ subtree: true }).map((each) => each.finished)),
+        );
+        await expect(secondTapCatchers(page)).toHaveCount(0);
+      };
+      /**
+       * After a double tap: once nothing is catching taps (so the second tap has done
+       * whatever it would), only `open` is on screen and the stats are as they should be.
+       */
+      const settle = async (what: string, open: Locator[] = []) => {
+        await expect(secondTapCatchers(page), what).toHaveCount(0);
+        for (const sheet of sheets) {
+          if (open.includes(sheet)) await expect(sheet, what).toBeVisible();
+          else await expect(sheet, what).toBeHidden();
+        }
+        expect(await gameEventTypes(page, gameId), what).toEqual(stats);
+      };
+
+      // Closing a sheet: a period (over a stat button or the grid's Undo on an SE)...
+      for (const period of ['Q3', 'Q4', 'Q1']) {
+        await periodButton.tap();
+        await ready(periods);
+        const choice = periods.getByRole('button', { name: period, exact: true });
+        await doubleTapAt(page, await middleOf(choice), gapMs);
+        await settle(`the period sheet's ${period}`);
+        await expect(periodButton).toHaveAccessibleName(`Period ${period}`);
+      }
+      // ...its X...
+      await periodButton.tap();
+      await ready(periods);
+      await doubleTapAt(
+        page,
+        await middleOf(periods.getByRole('button', { name: 'Close' })),
+        gapMs,
+      );
+      await settle("the period sheet's X");
+      // ...the dimmed page over 2PT Made...
+      const twoMade = await middleOf(
+        statGrid(page).getByRole('button', { name: '2PT Made', exact: true }),
+      );
+      await periodButton.tap();
+      await ready(periods);
+      expect(
+        await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, twoMade),
+      ).toBe('DIALOG');
+      await doubleTapAt(page, twoMade, gapMs);
+      await settle('the dimmed page over 2PT Made');
+      // ...the log's X...
+      await bar.getByRole('button', { name: 'Log', exact: true }).tap();
+      await ready(log);
+      await doubleTapAt(page, await middleOf(log.getByRole('button', { name: 'Close' })), gapMs);
+      await settle("the log's X");
+      // ...and Keep tracking, over End game.
+      await bar.getByRole('button', { name: 'End game', exact: true }).tap();
+      await ready(endGame);
+      const keepTracking = endGame.getByRole('button', { name: 'Keep tracking' });
+      await doubleTapAt(page, await middleOf(keepTracking), gapMs);
+      await settle('Keep tracking');
+
+      // A confirmation over the log: Cancel, then Delete, over the log's rows.
+      await bar.getByRole('button', { name: 'Log', exact: true }).tap();
+      await ready(log);
+      await log.getByRole('button', { name: /^Assist/ }).tap();
+      await ready(confirm);
+      await doubleTapAt(
+        page,
+        await middleOf(confirm.getByRole('button', { name: 'Cancel' })),
+        gapMs,
+      );
+      await settle("the confirmation's Cancel", [log]);
+      await log.getByRole('button', { name: /^Assist/ }).tap();
+      await ready(confirm);
+      await doubleTapAt(
+        page,
+        await middleOf(confirm.getByRole('button', { name: 'Delete' })),
+        gapMs,
+      );
+      stats = ['stl'];
+      await settle("the confirmation's Delete", [log]);
+
+      // Opening one: a row of the log (it asks first)...
+      await doubleTapAt(page, await middleOf(log.getByRole('button', { name: /^Steal/ })), gapMs);
+      await settle('a row of the log', [log, confirm]);
+      await confirm.getByRole('button', { name: 'Cancel' }).tap();
+      await expect(confirm).toBeHidden();
+      await log.getByRole('button', { name: 'Close' }).tap();
+      await expect(log).toBeHidden();
+      // ...the period button, Log and End game (the game goes on).
+      await expect(secondTapCatchers(page)).toHaveCount(0);
+      await doubleTapAt(page, await middleOf(periodButton), gapMs);
+      await settle('the period button', [periods]);
+      await periods.getByRole('button', { name: 'Close' }).tap();
+      await expect(periods).toBeHidden();
+      await expect(secondTapCatchers(page)).toHaveCount(0);
+      await doubleTapAt(
+        page,
+        await middleOf(bar.getByRole('button', { name: 'Log', exact: true })),
+        gapMs,
+      );
+      await settle('Log', [log]);
+      await log.getByRole('button', { name: 'Close' }).tap();
+      await expect(log).toBeHidden();
+      await expect(secondTapCatchers(page)).toHaveCount(0);
+      await doubleTapAt(
+        page,
+        await middleOf(bar.getByRole('button', { name: 'End game', exact: true })),
+        gapMs,
+      );
+      await settle('End game', [endGame]);
+      await keepTracking.tap();
+      await expect(endGame).toBeHidden();
+      await expect(bar.getByRole('button', { name: 'End game', exact: true })).toBeVisible();
+    });
+  }
+}
+
+// An ordinary opponent's name fits the title whole: 16 characters on an iPhone SE, 18 at
+// 390 points. The back link is then only its chevron, and every control in the bar is
+// still a full tap target.
+for (const device of [
+  { name: 'an iPhone SE', width: 375, height: 667 - 20, opponent: 'Central Catholic' },
+  { name: 'an iPhone', width: 390, height: 797, opponent: 'Lakeview Christian' },
+]) {
+  test(`the title shows an ordinary opponent's name whole on ${device.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: device.width, height: device.height });
+    await startGame(page, device.opponent);
+    const title = page.getByRole('heading', { level: 1, name: `vs ${device.opponent}` });
+    const whole = (locator: typeof title) =>
+      locator.evaluate((element) => element.scrollWidth <= element.clientWidth);
+    expect(await whole(title)).toBe(true);
+    expect(await title.evaluate((element) => getComputedStyle(element).fontSize)).toBe('16px');
+
+    const controls = [
+      page.getByRole('link', { name: 'Games' }),
+      page.getByRole('button', { name: /^Period Q\d$/ }),
+      page.getByRole('button', { name: 'Next period' }),
+    ];
+    for (const control of controls) {
+      const box = await control.boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(44);
+      expect(box?.height).toBeGreaterThanOrEqual(44);
+      await expect(control).toBeInViewport({ ratio: 1 });
+    }
+    await expect(page.getByRole('link', { name: 'Games' })).toHaveText('', { useInnerText: true });
+
+    // A finished game says so under the title, whole too.
+    await page.getByRole('button', { name: 'End game' }).tap();
+    await page
+      .getByRole('dialog', { name: 'Final score' })
+      .getByRole('button', { name: 'End game' })
+      .tap();
+    await page.getByRole('link', { name: 'Add or fix stats' }).tap();
+    const note = page.getByText('Finished game', { exact: true });
+    await expect(note).toBeVisible();
+    expect(await whole(note)).toBe(true);
+    expect(await whole(title)).toBe(true);
+  });
+}
+
 // Installed-app viewports: the screen minus the status bar (the page starts below it).
 const DEVICES = [
   { name: 'iPhone', width: 390, height: 797, safeBottom: IPHONE_SAFE_BOTTOM },
@@ -680,7 +1117,7 @@ const DEVICES = [
 // With the Shot chart setting off: no court (e2e/track-shots.spec.ts has the layout with it).
 for (const device of DEVICES) {
   for (const finished of [false, true]) {
-    const what = finished ? 'a finished game (with its banner)' : 'a live game';
+    const what = finished ? 'a finished game (with its note)' : 'a live game';
     test(`fits the ${device.name} screen for ${what}, every button big and clear`, async ({
       page,
     }) => {
@@ -694,7 +1131,7 @@ for (const device of DEVICES) {
       await setShotChart(page, false);
       await page.goto(appUrl(paths.trackGame(finished ? demoGameId(10) : DEMO_LIVE_GAME_ID)));
       await expect(page.getByRole('heading', { level: 1, name: /^(vs|@) / })).toBeVisible();
-      await expect(page.getByText('Editing a finished game')).toHaveCount(finished ? 1 : 0);
+      await expect(page.getByText('Finished game', { exact: true })).toHaveCount(finished ? 1 : 0);
       await expect(shotCourt(page)).toHaveCount(0);
 
       const main = page.getByRole('main');

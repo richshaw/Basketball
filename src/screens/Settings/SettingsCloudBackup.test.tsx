@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { restoreStubs, stubProperties } from '@/test/browser';
 import {
@@ -255,21 +255,34 @@ describe('Settings: cloud backup on', () => {
     expect(cloudList()).not.toHaveTextContent('in 5 minutes');
   });
 
-  it('waits for signal, and says the stats are safe meanwhile', async () => {
+  it("says when it can't reach the backup server, with signal, and that the stats are safe", async () => {
     await seedOwnGames();
     await turnOnCloudBackup();
+    // The phone is online, but the server doesn't answer (it's down, say).
     cloud.server.networkDown = true;
     await backUpNow();
     expect(await settledStatus()).toMatchObject({ state: 'waiting-for-signal' });
 
     await renderSettings();
 
+    expect(cloudList()).toHaveTextContent("Can't reach the backup server right now");
+    expect(cloudList()).toHaveTextContent(
+      'Backup will try again. Your stats are safe on this phone. Last backed up just now.',
+    );
+    expect(cloudList()).not.toHaveTextContent('Waiting for signal');
+    // Not something the parent has to fix: no banner.
+    expect(screen.queryByRole('complementary', { name: 'Cloud backup' })).toBeNull();
+
+    // With no signal at all, it waits for signal, and says so as soon as that's the case.
+    stubProperties(navigator, { onLine: false });
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
     expect(cloudList()).toHaveTextContent('Waiting for signal: will back up automatically');
     expect(cloudList()).toHaveTextContent(
       'Your stats are safe on this phone. Last backed up just now.',
     );
-    // Not something the parent has to fix: no banner.
-    expect(screen.queryByRole('complementary', { name: 'Cloud backup' })).toBeNull();
+    expect(cloudList()).not.toHaveTextContent("Can't reach the backup server");
   });
 
   it('turns off and keeps the online backup and the code', async () => {

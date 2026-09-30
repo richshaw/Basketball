@@ -22,7 +22,7 @@ import { paths } from '@/routes';
 import { barLayout, columnPath, niceAxis, scaleY, slotIndexAt } from './chartScale';
 import { gameTitle } from '@/lib/gameTitle';
 import { formatDateRange, formatGameCount, formatResult } from './gameLabels';
-import { readSessionValue, writeSessionValue } from './seasonFilter';
+import { fitsSegments, readSessionValue, writeSessionValue } from './seasonFilter';
 import {
   describePoint,
   describeTrend,
@@ -64,10 +64,19 @@ const PRESS_FOLLOW_UP_MS = 1000;
  */
 const DRAG_THRESHOLD = 6;
 
+/** The stats to chart, by name: 'Points', 'Rebounds', 'Assists'. */
 const METRIC_OPTIONS: SegmentedOption<TrendMetric>[] = TREND_METRICS.map((metric) => ({
   value: metric,
   label: TREND_METRIC_INFO[metric].label,
 }));
+/** The same where their names don't fit ('PTS', 'REB', 'AST'), named in full to screen readers. */
+const SHORT_METRIC_OPTIONS: SegmentedOption<TrendMetric>[] = TREND_METRICS.map((metric) => ({
+  value: metric,
+  label: TREND_METRIC_INFO[metric].short,
+  fullLabel: TREND_METRIC_INFO[metric].label,
+}));
+/** The names fit together by their length (as the season picker checks its own). */
+const METRIC_NAMES_FIT = fitsSegments(METRIC_OPTIONS.map((option) => option.label));
 
 /** Centers a 1px line on the pixel grid so it stays crisp. */
 const crisp = (value: number) => Math.round(value) + 0.5;
@@ -116,6 +125,9 @@ export interface TrendChartProps {
  */
 export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
   const [metric, setMetric] = useState<TrendMetric>(readRememberedMetric);
+  // The names turned out not to fit the control (page zoom, say): the short labels then,
+  // while the screen is open, rather than names cut short.
+  const [namesOverflowed, setNamesOverflowed] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { ref: plotRef, width } = useElementWidth<HTMLDivElement>(FALLBACK_WIDTH);
   const hitAreaRef = useRef<HTMLDivElement>(null);
@@ -292,6 +304,14 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
       point !== undefined && point.value > 0 && all.indexOf(point) === index,
   );
   const result = selected ? formatResult(selected.game) : null;
+  // The readout's last line: the game's matchup (its result follows), or the games charted.
+  let metaText = formatGameCount(0);
+  if (selected) {
+    metaText = gameTitle(selected.game);
+  } else if (first && last) {
+    const dates = formatDateRange(first.game.date, last.game.date, { withYear });
+    metaText = `${formatGameCount(points.length)} · ${dates}`;
+  }
   // The selected game's column, a band behind its bar from the top of the plot down.
   const selectedSlot = slots[selectedIndex];
   const column = selectedSlot
@@ -306,34 +326,45 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
 
   return (
     <div className={styles.chart}>
+      {/*
+        "Rebounds", bold when picked, takes the room it needs from the shorter two. If the
+        names need more room than the control has, it says so (onOverflow): then PTS,
+        REB and AST.
+      */}
       <SegmentedControl
         aria-label="Stat to chart"
-        options={METRIC_OPTIONS}
+        options={METRIC_NAMES_FIT && !namesOverflowed ? METRIC_OPTIONS : SHORT_METRIC_OPTIONS}
         value={metric}
         onChange={chooseMetric}
+        fitLabels
+        onOverflow={() => setNamesOverflowed(true)}
       />
 
+      {/*
+        The date and the number on the left, "Game report" beside them, and the game's
+        matchup and result on a line of their own, the chart's whole width: the result
+        always shows in full (a long opponent's name gives way), and the readout is as
+        tall for a game as for the average, so the chart never moves under the finger.
+      */}
       <div className={styles.readout}>
-        <div className={styles.readoutText}>
-          <p className={styles.readoutLabel}>
-            {selected ? formatGameDate(selected.game.date, { withYear }) : 'Average'}
-          </p>
-          <p className={styles.readoutFigure}>
-            <span className={cx(styles.readoutValue, 'tabular-nums')}>
-              {selected ? selected.value : formatAvg(average)}
-            </span>{' '}
-            <span className={styles.readoutUnit}>
-              {selected ? info.unit(selected.value) : `${info.label.toLowerCase()} per game`}
-            </span>
-          </p>
-          <p className={styles.readoutMeta}>
-            {selected
-              ? [gameTitle(selected.game), result].filter(Boolean).join(' · ')
-              : first && last
-                ? `${formatGameCount(points.length)} · ${formatDateRange(first.game.date, last.game.date, { withYear })}`
-                : formatGameCount(0)}
-          </p>
-        </div>
+        <p className={styles.readoutLabel}>
+          {selected ? formatGameDate(selected.game.date, { withYear }) : 'Average'}
+        </p>
+        <p className={styles.readoutFigure}>
+          <span className={cx(styles.readoutValue, 'tabular-nums')}>
+            {selected ? selected.value : formatAvg(average)}
+          </span>{' '}
+          <span className={styles.readoutUnit}>
+            {selected ? info.unit(selected.value) : `${info.label.toLowerCase()} per game`}
+          </span>
+        </p>
+        <p className={styles.readoutMeta}>
+          <span className={styles.readoutMetaText}>{metaText}</span>
+          {/* (A no-break space: a flex item drops the ordinary kind at its start.) */}
+          {selected && result ? (
+            <span className={styles.readoutResult}>{`\u00a0· ${result}`}</span>
+          ) : null}
+        </p>
         {selected ? (
           <Link
             to={paths.gameReport(selected.game.id)}

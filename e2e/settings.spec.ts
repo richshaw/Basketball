@@ -2,8 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
-import { appUrl, IPHONE_SAFARI_UA, screenHeading, tabBar } from './support/app';
-import { clearAllData, demoGameId, exportAll, seedDemoData } from './support/data';
+import { appUrl, IPHONE_SAFARI_UA, screenHeading, secondTapCatchers, tabBar } from './support/app';
+import { clearAllData, exportAll, seedDemoData } from './support/data';
+import { ownGameId, seedOwnGames } from './support/ownGames';
+import { doubleTapAt, middleOf } from './support/tracking';
 
 const BACKUP_FIXTURE = fileURLToPath(new URL('./fixtures/settings-backup.json', import.meta.url));
 
@@ -72,6 +74,9 @@ test("the toast after saving a backup file never covers the erase dialog's butto
   const dialog = page.getByRole('alertdialog', { name: 'Erase all data?' });
   await expect(dialog).toBeVisible();
   await expect(notifications(page)).toBeEmpty();
+  // (Once the spot catching a double tap's second tap has gone: the tap on Erase all data
+  // opened the dialog with its own Erase all data right there.)
+  await expect(secondTapCatchers(page)).toHaveCount(0);
   for (const name of ['Erase all data', 'Cancel']) {
     const box = await dialog.getByRole('button', { name }).boundingBox();
     const hit = await page.evaluate(
@@ -81,6 +86,43 @@ test("the toast after saving a backup file never covers the erase dialog's butto
     expect(hit).toBe(name);
   }
   await dialog.getByRole('button', { name: 'Cancel' }).tap();
+});
+
+// A quick double tap on what asks first, on a page where no sheet has shown yet: the
+// second tap is caught (src/components/Sheet/secondTap.ts), never landing on the
+// confirmation's red button as it slides in.
+test('a double tap on Erase all data, on Settings opened afresh, only asks', async ({ page }) => {
+  await page.goto('./');
+  await seedDemoData(page);
+  await openSettings(page);
+  await page.reload();
+  const erase = page.getByRole('button', { name: /^Erase all data/ });
+  await erase.scrollIntoViewIfNeeded();
+
+  await doubleTapAt(page, await middleOf(erase), 120);
+  const confirm = page.getByRole('alertdialog', { name: 'Erase all data?' });
+  await expect(confirm).toBeVisible();
+  await expect(secondTapCatchers(page)).toHaveCount(0);
+  await expect(confirm).toBeVisible();
+  expect((await exportAll(page)).games).toHaveLength(10);
+});
+
+test("a double tap on a restore's Replace everything only asks", async ({ page }) => {
+  await page.goto('./');
+  await seedOwnGames(page);
+  await openSettings(page);
+  await page.reload();
+  await restoreFrom(page, BACKUP_FIXTURE);
+  const sheet = page.getByRole('dialog', { name: 'Restore this backup?' });
+  const replace = sheet.getByRole('button', { name: /^Replace everything on this phone/ });
+  await expect(replace).toBeVisible();
+  await expect(secondTapCatchers(page)).toHaveCount(0);
+
+  await doubleTapAt(page, await middleOf(replace), 120);
+  const confirm = page.getByRole('alertdialog', { name: 'Replace everything on this phone?' });
+  await expect(confirm).toBeVisible();
+  await expect(secondTapCatchers(page)).toHaveCount(0);
+  await expect(confirm).toBeVisible();
 });
 
 test('restores games from a backup file', async ({ page }) => {
@@ -103,8 +145,7 @@ test('restores games from a backup file', async ({ page }) => {
 
 test('adds a backup to the games already on the phone', async ({ page }) => {
   await page.goto('./');
-  await seedDemoData(page);
-  await openSettings(page);
+  await seedOwnGames(page);
 
   await restoreFrom(page, BACKUP_FIXTURE);
   await page
@@ -115,7 +156,28 @@ test('adds a backup to the games already on the phone', async ({ page }) => {
   await expect(notifications(page)).toContainText('Restored 2 games');
   const merged = await exportAll(page);
   expect(merged.games).toHaveLength(12);
-  expect(merged.games.map((game) => game.id)).toContain(demoGameId(10));
+  expect(merged.games.map((game) => game.id)).toContain(ownGameId(10));
+});
+
+test('a backup of her own games takes the place of the sample games she tried', async ({
+  page,
+}) => {
+  await page.goto('./');
+  await seedDemoData(page);
+  await openSettings(page);
+
+  // It says so before anything is restored, in plain words.
+  await restoreFrom(page, BACKUP_FIXTURE);
+  const sheet = page.getByRole('dialog', { name: 'Restore this backup?' });
+  await expect(sheet).toContainText(
+    'The 10 sample games on this phone will be removed. Nothing else will be lost.',
+  );
+  await sheet.getByRole('button', { name: 'Restore backup' }).tap();
+
+  await expect(notifications(page)).toContainText('Restored 2 games · 10 sample games removed');
+  const restored = await exportAll(page);
+  expect(restored.games.map((game) => game.opponent)).toEqual(['Hillcrest', 'Brookside']);
+  expect(restored.players).toEqual([expect.objectContaining({ name: 'Maya', jerseyNumber: '7' })]);
 });
 
 test('explains a file that is not a backup', async ({ page }) => {

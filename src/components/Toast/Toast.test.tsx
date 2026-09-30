@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Button } from '@/components/Button/Button';
 import { Sheet } from '@/components/Sheet/Sheet';
-import { useToast, type ToastOptions } from './toastContext';
+import { useNoToasts, useToast, type ToastOptions } from './toastContext';
 import { TOAST_EXIT_MS, ToastProvider } from './ToastProvider';
 
 /** Buttons that show toasts, like a screen would. */
@@ -391,6 +391,61 @@ describe('ToastProvider', () => {
     );
     expect(screen.getByRole('dialog', { name: 'Turn off cloud backup?' })).toContainElement(region);
     expect(region).toHaveTextContent("Couldn't delete it. Try again.");
+  });
+
+  it('shows no toast while a screen that shows none is up: the one on screen goes as it opens', () => {
+    vi.useFakeTimers();
+    /** Like the live game screen: never a toast over its buttons. */
+    function LiveScreen() {
+      useNoToasts();
+      return <p>Live game</p>;
+    }
+    function App({ live }: { live: boolean }) {
+      const toast = useToast();
+      return (
+        <>
+          <Button
+            onClick={() =>
+              toast.show({ message: 'Game deleted', actionLabel: 'Undo', onAction: () => {} })
+            }
+          >
+            Delete
+          </Button>
+          <Button onClick={() => toast.show({ message: 'Backed up' })}>Back up</Button>
+          {live ? <LiveScreen /> : null}
+        </>
+      );
+    }
+    const { rerender } = render(
+      <ToastProvider>
+        <App live={false} />
+      </ToastProvider>,
+    );
+    const region = screen.getByRole('status', { name: 'Notifications' });
+    tap('Delete');
+    expect(region).toHaveTextContent('Game deleted');
+
+    // Straight on to the live game screen: it's gone at once, not after 4 s.
+    rerender(
+      <ToastProvider>
+        <App live />
+      </ToastProvider>,
+    );
+    expect(region).toBeEmptyDOMElement();
+    // And none shows while it's up, from anywhere, then or later.
+    tap('Back up');
+    expect(region).toBeEmptyDOMElement();
+    rerender(
+      <ToastProvider>
+        <App live={false} />
+      </ToastProvider>,
+    );
+    wait(TOAST_EXIT_MS);
+    expect(region).toBeEmptyDOMElement();
+
+    // Once it's gone, toasts show again.
+    tap('Back up');
+    expect(region).toHaveTextContent('Backed up');
   });
 
   it('explains a missing provider', () => {

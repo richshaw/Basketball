@@ -4,7 +4,7 @@ import { Sheet } from '@/components/Sheet/Sheet';
 import { TextField } from '@/components/TextField/TextField';
 import type { FinalScore } from '@/data/repo';
 import type { NotSaved } from './session';
-import { notSavedMessage, parseScore } from './tracking';
+import { END_GAME_FAILED, notSavedMessage, parseScore } from './tracking';
 import styles from './EndGameSheet.module.css';
 
 export interface EndGameSheetProps {
@@ -16,7 +16,7 @@ export interface EndGameSheetProps {
    * Ends the game with the scores that were typed (a blank one clears a saved score),
    * after saving every stat not saved yet, unless `anyway`. Resolves to the stats
    * still not saved (the game isn't ended then), or to null once it's ended. Rejects
-   * if it couldn't be ended.
+   * if it couldn't be ended: the sheet then says so (it covers the last-action line).
    */
   onEnd: (score: FinalScore, anyway: boolean) => Promise<NotSaved | null>;
   /** "Keep tracking": close without ending the game. */
@@ -46,6 +46,8 @@ export function EndGameSheet({
   const [saving, setSaving] = useState(false);
   // Stats that weren't saved when the game was about to end.
   const [notSaved, setNotSaved] = useState<NotSaved | null>(null);
+  // The last try couldn't end the game.
+  const [failed, setFailed] = useState(false);
 
   const parsedTeam = parseScore(team);
   const parsedOpponent = parseScore(opponent);
@@ -63,14 +65,21 @@ export function EndGameSheet({
     if (parsedOpponent !== undefined) score.opponentScore = parsedOpponent;
     else if (opponentScore !== undefined) score.opponentScore = null;
     setSaving(true);
+    setFailed(false);
     try {
       setNotSaved(await onEnd(score, anyway));
     } catch {
-      // The caller has said what went wrong; let them try again.
+      // Said here, where she's looking (never in a toast), and she can try again.
+      setFailed(true);
     } finally {
       setSaving(false);
     }
   };
+
+  // What went wrong with the last try, if anything.
+  let problem: string | null = null;
+  if (failed) problem = END_GAME_FAILED;
+  else if (notSaved) problem = notSavedMessage(notSaved);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -100,9 +109,9 @@ export function EndGameSheet({
         </>
       }
     >
-      {notSaved ? (
+      {problem ? (
         <p role="alert" className={styles.notSaved}>
-          {notSavedMessage(notSaved)}
+          {problem}
         </p>
       ) : null}
       <form id={formId} className={styles.form} noValidate onSubmit={submit}>

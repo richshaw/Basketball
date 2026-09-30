@@ -289,6 +289,19 @@ describe('HomeScreen', () => {
       expect(screen.getByText('Ava · #12')).toBeInTheDocument();
     });
 
+    it('marks the sample games, and only them, so none is taken for one of hers', async () => {
+      await seedDemoData({ today: '2026-09-28', keepPlayer: true });
+      await addGame({ opponent: 'Hillcrest', date: '2026-09-28', end: [40, 38] });
+      renderRoute(paths.home);
+
+      const sample = await screen.findByRole('link', { name: /^vs Eastlake Sample/ });
+      expect(within(sample).getByText('Sample')).toBeInTheDocument();
+      const rows = within(screen.getByRole('list', { name: 'Fall 2026' })).getAllByRole('link');
+      expect(rows.filter((row) => within(row).queryByText('Sample'))).toHaveLength(10);
+      const own = screen.getByRole('link', { name: /vs Hillcrest/ });
+      expect(within(own).queryByText('Sample')).not.toBeInTheDocument();
+    });
+
     it('offers no sample data once there is a game', async () => {
       await addGame({ opponent: 'Central' });
       renderRoute(paths.home);

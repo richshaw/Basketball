@@ -1,7 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { db, META_KEYS } from './db';
-import { buildDemoData, demoGameId, isDemoPlayer, removeDemoData, seedDemoData } from './demo';
+import {
+  buildDemoData,
+  DEMO_LIVE_GAME_ID,
+  DEMO_PLAYER_ID,
+  demoGameId,
+  isDemoPlayer,
+  removeDemoData,
+  seedDemoData,
+} from './demo';
 import { replayPendingStats } from './pendingSaves';
+import { addPendingSpot, listPendingSpots } from './pendingSpots';
 import { addPendingStat, listPendingStats, newPendingStat } from './pendingStats';
 import {
   createGame,
@@ -28,6 +37,7 @@ import {
   ExportFileError,
   importAll,
   parseExportFile,
+  sampleGamesToRemove,
   type ExportFile,
 } from './transfer';
 import type { Game, Player, StatEvent } from './types';
@@ -361,15 +371,16 @@ describe('importAll merge', () => {
       await importAll(file({ players: [mia], games: [miasGame], events: [] }), 'merge');
 
       const player = await getPlayer();
-      // Hers, dates and all, under the phone's player id, which the sample games have.
+      // Hers, dates and all, under the phone's player id, which the sample games had.
       expect(player).toEqual({ ...mia, id: sample?.id });
       expect(player && isDemoPlayer(player)).toBe(false);
       expect((await getGame('real-game'))?.playerId).toBe(player?.id);
-
-      // Removing the sample games then leaves her and her game as they are.
-      await removeDemoData();
-      expect(await getPlayer()).toEqual(player);
+      // Her game came in, and the sample games went.
       expect((await listGames()).map((each) => each.id)).toEqual(['real-game']);
+
+      // Removing sample games then has nothing to remove, and leaves her as she is.
+      expect(await removeDemoData()).toBe(0);
+      expect(await getPlayer()).toEqual(player);
     });
 
     it('over a player never named, either', async () => {
@@ -406,6 +417,123 @@ describe('importAll merge', () => {
       'merge',
     );
     expect(await getSettings()).toEqual({ ...fileSettings, shotChart: true });
+  });
+});
+
+describe('sampleGamesToRemove', () => {
+  const samples = [demoGameId(1), demoGameId(2), DEMO_LIVE_GAME_ID];
+
+  it("is the phone's sample games when the file has games of her own", () => {
+    expect(sampleGamesToRemove([...samples, 'own'], file())).toEqual(samples);
+  });
+
+  it('leaves the sample games the file has too: they were in her backup', () => {
+    const games = [game(), game({ id: demoGameId(2) })];
+    expect(sampleGamesToRemove(samples, file({ games }))).toEqual([
+      demoGameId(1),
+      DEMO_LIVE_GAME_ID,
+    ]);
+  });
+
+  it('is none for a file of sample games only, or of no games', () => {
+    expect(sampleGamesToRemove(samples, buildDemoData())).toEqual([]);
+    expect(sampleGamesToRemove(samples, file({ games: [] }))).toEqual([]);
+  });
+});
+
+describe('importAll merge: the sample games', () => {
+  /** Her game, as in her backup. */
+  const hers = file({
+    games: [game({ id: 'real-game' })],
+    events: [event({ gameId: 'real-game' })],
+  });
+
+  it('go when games of her own come in, stats and all, and it says how many', async () => {
+    await seedDemoData({ today: '2026-12-01' });
+    const before = await getLastChangeAt();
+
+    expect(await importAll(hers, 'merge')).toEqual({
+      games: 1,
+      events: 1,
+      sampleGamesRemoved: 10,
+    });
+
+    expect((await listGames()).map((each) => each.id)).toEqual(['real-game']);
+    expect(await db.events.toArray()).toEqual([event({ gameId: 'real-game' })]);
+    expect(await getLastChangeAt()).toBeGreaterThan(before ?? 0);
+  });
+
+  it('go even when nothing else is new, and that is a change', async () => {
+    // Her game is on the phone already, next to the sample games (added before).
+    await importAll(hers, 'replace');
+    await importAll(buildDemoData({ today: '2026-12-01' }), 'merge');
+    expect(await db.games.count()).toBe(11);
+    const before = await getLastChangeAt();
+
+    expect(await importAll(hers, 'merge')).toEqual({
+      games: 0,
+      events: 0,
+      sampleGamesRemoved: 10,
+    });
+    expect((await listGames()).map((each) => each.id)).toEqual(['real-game']);
+    expect(await getLastChangeAt()).toBeGreaterThan(before ?? 0);
+  });
+
+  it('stay when the backup holds only sample games, as before', async () => {
+    await seedDemoData({ today: '2026-12-01' });
+    await importAll(hers, 'replace');
+    const samples = buildDemoData({ today: '2026-12-01' });
+
+    expect(await importAll(samples, 'merge')).toEqual({
+      games: 10,
+      events: samples.events.length,
+    });
+    expect(await db.games.count()).toBe(11);
+  });
+
+  it('stay when her backup has them too, merged like any game', async () => {
+    await seedDemoData({ today: '2026-12-01' });
+    const samples = buildDemoData({ today: '2026-12-01' });
+    const mixed = {
+      ...samples,
+      games: [...samples.games, game({ id: 'real-game', playerId: DEMO_PLAYER_ID })],
+    };
+
+    expect(await importAll(mixed, 'merge')).toEqual({ games: 1, events: 0 });
+    expect(await db.games.count()).toBe(11);
+  });
+
+  it('forget their taps and spots not saved yet, and only theirs', async () => {
+    // (Sample games tried again later have the same ids: nothing kept may come back.)
+    await seedDemoData({ today: '2026-12-01' });
+    const own = await createGame({
+      opponent: 'Westfield',
+      date: '2026-12-01',
+      periodFormat: 'quarters',
+    });
+    addPendingStat(newPendingStat({ gameId: demoGameId(1), type: 'blk', period: 4 }));
+    addPendingStat(newPendingStat({ gameId: own.id, type: 'stl', period: 1 }));
+    const spot = { id: 'spot', gameId: demoGameId(2), location: { x: 1, y: 2 } };
+    addPendingSpot(spot);
+    addPendingSpot({ ...spot, id: 'own-spot', gameId: own.id });
+
+    await importAll(hers, 'merge');
+
+    expect(listPendingStats().map((stat) => stat.gameId)).toEqual([own.id]);
+    expect(listPendingSpots().map((kept) => kept.gameId)).toEqual([own.id]);
+  });
+
+  it('all stay, with their taps, if the merge fails', async () => {
+    await seedDemoData({ today: '2026-12-01' });
+    const tap = newPendingStat({ gameId: demoGameId(10), type: 'stl', period: 4 });
+    addPendingStat(tap);
+    vi.spyOn(db.events, 'bulkPut').mockRejectedValue(new Error('Disk full'));
+
+    await expect(importAll(hers, 'merge')).rejects.toThrow('Disk full');
+
+    expect(await db.games.count()).toBe(10);
+    expect(await getGame('real-game')).toBeUndefined();
+    expect(listPendingStats()).toEqual([tap]);
   });
 });
 

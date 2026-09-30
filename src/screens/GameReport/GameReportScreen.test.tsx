@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import type { UserEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/data/db';
+import { demoGameId } from '@/data/demoIds';
 import type * as Repo from '@/data/repo';
 import {
   deleteGame,
@@ -186,6 +187,16 @@ describe('GameReportScreen', () => {
     expect(screen.getByText('Sun, Sep 27, 2026 · Fall 2026')).toBeInTheDocument();
     expect(screen.getByText('Won').closest('p')).toHaveTextContent('Won 45–38');
     expect(screen.queryByText('In progress')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sample')).not.toBeInTheDocument();
+  });
+
+  it('says first thing that a sample game is one', async () => {
+    await seed(makeGame({ id: demoGameId(10), season: 'Fall 2026' }));
+    await renderReport(demoGameId(10));
+
+    expect(screen.getByText('Sample').closest('p')).toHaveTextContent(
+      /^Sample Sun, Sep 27, 2026 · Fall 2026$/,
+    );
   });
 
   it.each([

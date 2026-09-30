@@ -1,11 +1,14 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef, useState, type ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Button } from '@/components/Button/Button';
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { TextField } from '@/components/TextField/TextField';
+import { restoreStubs, stubProperties } from '@/test/browser';
+import { SECOND_TAP_MS } from './secondTap';
 import { Sheet, type SheetProps } from './Sheet';
+import sheetCss from './Sheet.module.css?raw';
 
 type DemoProps = Partial<Omit<SheetProps, 'open' | 'onClose'>> & {
   /** Called on every close request; the demo also closes unless `keepOpen`. */
@@ -347,3 +350,197 @@ describe('Sheet in a tall layout', () => {
     expect(screen.getByRole('button', { name: 'Done' }).parentElement).toHaveClass('footer');
   });
 });
+
+describe('Sheet sliding away', () => {
+  let removeStyles = () => {};
+
+  beforeEach(() => {
+    // Its real styles (tests stub CSS otherwise), so a tap meets what it would on a phone.
+    const style = document.createElement('style');
+    style.textContent = sheetCss;
+    document.head.append(style);
+    removeStyles = () => style.remove();
+  });
+
+  afterEach(() => {
+    removeStyles();
+    restoreStubs();
+  });
+
+  /** Keeps the exit animation running (jsdom has none) until the returned function ends it. */
+  function holdExitAnimation(): () => void {
+    let end = () => {};
+    const finished = new Promise<void>((resolve) => {
+      end = resolve;
+    });
+    const exit = { effect: { getTiming: () => ({ iterations: 1 }) }, finished };
+    stubProperties(Element.prototype, { getAnimations: () => [exit] });
+    return end;
+  }
+
+  it('takes no taps once it starts closing, so the next one reaches the page', async () => {
+    const endExit = holdExitAnimation();
+    const onAssist = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <>
+        <Button onClick={onAssist}>Assist</Button>
+        <SheetDemo footer={<Button>Save</Button>} />
+      </>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit game' });
+    expect(getComputedStyle(dialog).pointerEvents).not.toBe('none');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+
+    // Still on screen, sliding away: neither the dimmed page nor the panel takes a tap...
+    expect(dialog).toHaveAttribute('data-closing');
+    expect(getComputedStyle(dialog).pointerEvents).toBe('none');
+    await expect(user.click(dialog)).rejects.toThrow(/pointer-events: none/);
+    await expect(user.click(screen.getByText('Save', { selector: 'button' }))).rejects.toThrow(
+      /pointer-events: none/,
+    );
+    // ...so the tap goes to the page under it, which already works again.
+    await user.click(screen.getByRole('button', { name: 'Assist' }));
+    expect(onAssist).toHaveBeenCalledTimes(1);
+
+    endExit();
+    await waitForClosed();
+  });
+});
+
+describe('Sheet and a double tap', () => {
+  /** The spots catching a second tap, anywhere on the page. */
+  const catchers = () => Array.from(document.querySelectorAll<HTMLElement>('[data-second-tap]'));
+  const spotOf = (catcher: HTMLElement | undefined) => [
+    catcher?.style.getPropertyValue('--second-tap-x'),
+    catcher?.style.getPropertyValue('--second-tap-y'),
+  ];
+
+  /** A tap by finger at a point of the screen, on `target` (what's there). */
+  async function tapAt(
+    user: ReturnType<typeof userEvent.setup>,
+    target: Element,
+    clientX: number,
+    clientY: number,
+  ) {
+    await user.pointer({ keys: '[TouchA]', target, coords: { clientX, clientY } });
+  }
+
+  it('catches a second tap at the spot of the tap that closed it, for SECOND_TAP_MS', async () => {
+    const onAssist = vi.fn();
+    const heard = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <>
+        <Button onClick={onAssist}>Assist</Button>
+        <SheetDemo />
+      </>,
+    );
+    await user.keyboard('{Tab}{Tab}{Enter}');
+    const dialog = screen.getByRole('dialog', { name: 'Edit game' });
+    // Opened from the keyboard: nothing to catch.
+    expect(catchers()).toEqual([]);
+
+    await tapAt(user, within(dialog).getByRole('button', { name: 'Close' }), 340, 60);
+    // Closing: a spot on the page where the X was catches the next tap there...
+    const [catcher] = catchers();
+    expect(catcher?.parentElement).toBe(document.body);
+    expect(spotOf(catcher)).toEqual(['340px', '60px']);
+    expect(catcher).toHaveAttribute('aria-hidden', 'true');
+    // ...and nothing on the page hears of it.
+    document.addEventListener('click', heard);
+    try {
+      fireEvent.pointerDown(catcher as HTMLElement);
+      fireEvent.click(catcher as HTMLElement);
+    } finally {
+      document.removeEventListener('click', heard);
+    }
+    expect(heard).not.toHaveBeenCalled();
+    // A tap anywhere else counts at once.
+    await user.click(screen.getByRole('button', { name: 'Assist' }));
+    expect(onAssist).toHaveBeenCalledTimes(1);
+
+    // Gone a moment later, the one it caught counted from.
+    await waitFor(() => expect(catchers()).toEqual([]), { timeout: SECOND_TAP_MS * 3 });
+    await waitForClosed();
+  });
+
+  it('catches every tap at the spot while they come quickly, then goes', async () => {
+    const { user, dialog } = await openDemo();
+    await waitFor(() => expect(catchers()).toEqual([]), { timeout: SECOND_TAP_MS * 3 });
+    await tapAt(user, within(dialog).getByRole('button', { name: 'Close' }), 340, 60);
+    const [catcher] = catchers();
+    const started = performance.now();
+
+    // Taps at the spot, a little under SECOND_TAP_MS apart: each is caught, and keeps it.
+    for (let tap = 0; tap < 2; tap += 1) {
+      await new Promise((resolve) => setTimeout(resolve, SECOND_TAP_MS * 0.7));
+      fireEvent.pointerDown(catcher as HTMLElement);
+      fireEvent.pointerUp(catcher as HTMLElement);
+    }
+    expect(performance.now() - started).toBeGreaterThan(SECOND_TAP_MS);
+    expect(catcher?.isConnected).toBe(true);
+    await waitFor(() => expect(catchers()).toEqual([]), { timeout: SECOND_TAP_MS * 3 });
+  });
+
+  it('catches the second tap on what opened it, in the sheet as it slides in', async () => {
+    const user = userEvent.setup();
+    render(<SheetDemo footer={<Button>Save</Button>} />);
+    await tapAt(user, screen.getByRole('button', { name: 'Edit' }), 60, 700);
+    const dialog = screen.getByRole('dialog', { name: 'Edit game' });
+    const [catcher] = catchers();
+    // In the sheet (the page under it is inert), where the tap that opened it went down.
+    expect(catcher?.parentElement).toBe(dialog);
+    expect(spotOf(catcher)).toEqual(['60px', '700px']);
+  });
+
+  it('catches it in the sheet left on top when a confirmation over it closes', async () => {
+    const user = userEvent.setup();
+    render(
+      <Sheet open onClose={() => {}} title="Stat log">
+        <ConfirmHost />
+      </Sheet>,
+    );
+    const log = screen.getByRole('dialog', { name: 'Stat log' });
+    await tapAt(user, within(log).getByRole('button', { name: 'Steal' }), 190, 300);
+    const confirm = screen.getByRole('alertdialog', { name: 'Delete Steal?' });
+    await waitFor(() => expect(catchers()).toEqual([]), { timeout: SECOND_TAP_MS * 3 });
+
+    await tapAt(user, within(confirm).getByRole('button', { name: 'Cancel' }), 190, 610);
+    // Cancel's spot, over a row of the log: caught in the log, the modal sheet now.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    const [catcher] = catchers();
+    expect(catcher?.parentElement).toBe(log);
+    expect(spotOf(catcher)).toEqual(['190px', '610px']);
+  });
+
+  it('catches nothing when a sheet closes from the keyboard', async () => {
+    const user = userEvent.setup();
+    render(<SheetDemo />);
+    await user.keyboard('{Tab}{Enter}');
+    expect(screen.getByRole('dialog', { name: 'Edit game' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitForClosed();
+    expect(catchers()).toEqual([]);
+  });
+});
+
+/** A row that asks before deleting, like the stat log's. */
+function ConfirmHost() {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <>
+      <Button onClick={() => setConfirming(true)}>Steal</Button>
+      <ConfirmDialog
+        open={confirming}
+        title="Delete Steal?"
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => setConfirming(false)}
+        onCancel={() => setConfirming(false)}
+      />
+    </>
+  );
+}

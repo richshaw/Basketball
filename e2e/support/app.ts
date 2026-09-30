@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 /** Safari on an iPhone: the only browser that gets the "Add to Home Screen" banner. */
 export const IPHONE_SAFARI_UA =
@@ -15,6 +15,15 @@ export function screenHeading(page: Page, name: string) {
 
 export function tabBar(page: Page) {
   return page.getByRole('navigation', { name: 'Main' });
+}
+
+/**
+ * The spots catching a double tap's second tap, where a sheet opened or closed (see
+ * src/components/Sheet/secondTap.ts): wait for none before a tap, or a look at what's
+ * on top, meant for that spot.
+ */
+export function secondTapCatchers(page: Page): Locator {
+  return page.locator('[data-second-tap]');
 }
 
 /** Waits until the app's route (the part after `#`) is `path`. */

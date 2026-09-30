@@ -1,6 +1,7 @@
 import { Badge } from '@/components/Badge/Badge';
 import { Button } from '@/components/Button/Button';
 import { ButtonLink } from '@/components/Button/ButtonLink';
+import { isDemoGameId } from '@/data/demoIds';
 import type { Game } from '@/data/types';
 import { cx } from '@/lib/cx';
 import { formatGameDate } from '@/lib/format';
@@ -30,8 +31,9 @@ function missingScore(game: Game): { text: string; field: ScoreField } {
 }
 
 /**
- * The lines under the screen title: date, season and venue, then how the game went:
- * the result, a missing score, or (live) "In progress" with a way back in.
+ * The lines under the screen title: date, season and venue (after "Sample" for a sample
+ * game), then how the game went: the result, a missing score, or (live) "In progress"
+ * with a way back in.
  */
 export function GameSummary({ game, onAddScore }: GameSummaryProps) {
   const details = [
@@ -77,7 +79,14 @@ export function GameSummary({ game, onAddScore }: GameSummaryProps) {
 
   return (
     <div className={styles.summary}>
-      <p className={styles.details}>{details}</p>
+      <p className={styles.details}>
+        {isDemoGameId(game.id) ? (
+          <>
+            <Badge className={styles.sample}>Sample</Badge>{' '}
+          </>
+        ) : null}
+        {details}
+      </p>
       {status}
     </div>
   );

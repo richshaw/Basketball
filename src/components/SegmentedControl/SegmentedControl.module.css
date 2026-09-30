@@ -105,6 +105,17 @@
   outline-offset: calc(-1 * var(--space-1));
 }
 
+/*
+ * The narrowest phones (320 points wide: an SE with Display Zoom, say): tighter
+ * segments, so more labels fit whole, "Points, Rebounds, Assists" on the Stats chart
+ * among them.
+ */
+@media (max-width: 359px) {
+  .segment {
+    padding-inline: var(--space-2);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sliding {
     transition: none;

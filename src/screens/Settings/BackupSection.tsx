@@ -127,7 +127,7 @@ export function BackupSection({
     if (!file) return;
     try {
       const backup = await readBackupFile(file);
-      showRestore({ kind: 'preview', backup, phoneGameCount: games.length });
+      showRestore({ kind: 'preview', backup, phoneGameIds: games.map((game) => game.id) });
     } catch (error) {
       if (!(error instanceof ExportFileError)) console.error('Reading a backup file failed', error);
       const message = error instanceof ExportFileError ? error.message : UNREADABLE;

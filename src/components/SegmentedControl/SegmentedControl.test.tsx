@@ -118,6 +118,23 @@ describe('SegmentedControl', () => {
     expect(segment('Home')).toHaveFocus();
   });
 
+  it('names a short label in full for screen readers', () => {
+    render(
+      <SegmentedControl
+        aria-label="Stat to chart"
+        options={[
+          { value: 'pts', label: 'PTS', fullLabel: 'Points' },
+          { value: 'reb', label: 'REB', fullLabel: 'Rebounds' },
+        ]}
+        value="reb"
+        onChange={() => {}}
+      />,
+    );
+    expect(segment('Rebounds')).toHaveTextContent('REB');
+    expect(segment('Rebounds')).toBeChecked();
+    expect(segment('Points')).toHaveTextContent('PTS');
+  });
+
   it('supports the large size and a visible label', () => {
     render(
       <>

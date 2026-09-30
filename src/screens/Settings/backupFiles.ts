@@ -108,16 +108,39 @@ export function describeBackup(file: ExportFile): string {
 }
 
 /**
+ * What the restore sheet says, before she picks, about the sample games that adding a
+ * backup of her own games removes (see sampleGamesToRemove), of the `onPhone` sample
+ * games there: 'The 10 sample games on this phone will be removed.', or when the backup
+ * has the others, '1 of the 10 sample games on this phone will be removed.'
+ */
+export function sampleGamesRemovedNote(count: number, onPhone = count): string {
+  if (count < onPhone)
+    return `${count} of the ${onPhone} sample games on this phone will be removed.`;
+  return count === 1
+    ? 'The sample game on this phone will be removed.'
+    : `The ${count} sample games on this phone will be removed.`;
+}
+
+/**
  * What the toast says after a restore, from what importAll actually took (not what
  * the file holds): 'Restored 10 games', 'Restored 2 games · 8 already up to date' (the
  * phone had those, the same or newer), or 'Backup restored' for a backup with no games.
+ * Sample games it removed are added: 'Restored 6 games · 10 sample games removed'.
  */
 export function restoredMessage(taken: ImportSummary, backupGameCount: number): string {
-  if (backupGameCount === 0) return 'Backup restored';
-  if (taken.games === 0) return 'Nothing new in this backup';
-  const restored = `Restored ${countGames(taken.games)}`;
-  const upToDate = backupGameCount - taken.games;
-  return upToDate > 0 ? `${restored} · ${upToDate} already up to date` : restored;
+  let message: string;
+  if (backupGameCount === 0) {
+    message = 'Backup restored';
+  } else if (taken.games === 0) {
+    message = 'Nothing new in this backup';
+  } else {
+    const upToDate = backupGameCount - taken.games;
+    message = `Restored ${countGames(taken.games)}`;
+    if (upToDate > 0) message += ` · ${upToDate} already up to date`;
+  }
+  const samples = taken.sampleGamesRemoved ?? 0;
+  if (samples === 0) return message;
+  return `${message} · ${samples === 1 ? '1 sample game' : `${samples} sample games`} removed`;
 }
 
 /**

@@ -51,6 +51,15 @@ const backedUp: Setup = async (page, server) => {
   await waitForState(page, 'idle');
 };
 
+/** Backed up, then the server stops answering (the phone has signal): it waits to try again. */
+const serverUnreachable: Setup = async (page, server) => {
+  await backedUp(page, server);
+  // No answer from the server (routes added later win).
+  await page.route(`${E2E_BACKUP_API_URL}/**`, (route) => route.abort('internetdisconnected'));
+  await backUpNow(page);
+  await waitForState(page, 'waiting-for-signal');
+};
+
 /** Backed up, then paused: another phone backed up with the same code since. */
 const pausedForAnotherPhone: Setup = async (page, server) => {
   await backedUp(page, server);
@@ -108,15 +117,15 @@ const shots: Shot[] = [
     setup: backedUp,
     interact: openDialog('Turn off', 'dialog', 'Turn off cloud backup?'),
   },
+  { name: 'backup-server-unreachable', path: CLOUD_BACKUP, setup: serverUnreachable },
   {
     name: 'backup-waiting-for-signal',
     path: CLOUD_BACKUP,
-    setup: async (page, server) => {
-      await backedUp(page, server);
-      // No answer from the server, like a gym without signal (routes added later win).
-      await page.route(`${E2E_BACKUP_API_URL}/**`, (route) => route.abort('internetdisconnected'));
-      await backUpNow(page);
-      await waitForState(page, 'waiting-for-signal');
+    setup: serverUnreachable,
+    // Then no signal at all, like a gym in a basement. (Only now: the page must load.)
+    interact: async (page) => {
+      await page.context().setOffline(true);
+      await expect(page.getByText('Waiting for signal: will back up automatically')).toBeVisible();
     },
   },
   {

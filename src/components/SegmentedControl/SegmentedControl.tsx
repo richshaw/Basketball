@@ -12,6 +12,8 @@ import styles from './SegmentedControl.module.css';
 export interface SegmentedOption<T extends string> {
   value: T;
   label: string;
+  /** Its name in full, for screen readers, when `label` is short: 'Rebounds' for 'REB'. */
+  fullLabel?: string;
 }
 
 /** Name the group for screen readers with `aria-label` or `aria-labelledby` (one is required). */
@@ -158,6 +160,7 @@ export function SegmentedControl<T extends string>({
             type="button"
             role="radio"
             aria-checked={selected}
+            aria-label={option.fullLabel}
             tabIndex={tabbable ? 0 : -1}
             className={cx(styles.segment, selected && styles.selected)}
             // With fitLabels: its own column, and its label kept for the width it takes in bold.

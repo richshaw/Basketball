@@ -110,6 +110,32 @@ test.describe('marking spots', () => {
     await expect(lastAction(page)).toContainText('Spot marked');
   });
 
+  for (const size of [
+    { name: 'an iPhone SE', width: 375, height: 667 - 20, safeBottom: 0 },
+    { name: 'an iPhone', width: 390, height: 797, safeBottom: IPHONE_SAFE_BOTTOM },
+  ]) {
+    test(`a deep three from the top of the key is marked on the court on ${size.name}, not taken for another shot`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: size.width, height: size.height });
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setSafeAreaInsetsOverride', {
+        insets: { top: 0, bottom: size.safeBottom, left: 0, right: 0 },
+      });
+      const gameId = await startGame(page);
+      await tapStats(page, ['3PT Made']);
+
+      // Straight out from the basket, 6 ft behind the arc (19.75 ft): still on the court.
+      const deep: CourtSpot = { x: 0, y: 25.75 };
+      await tapCourt(page, deep);
+      await expect(lastAction(page)).toContainText('Spot marked');
+      await expect.poll(async () => (await gameEvents(page, gameId))[0]?.location).toBeTruthy();
+      const events = await gameEvents(page, gameId);
+      expect(events.map((event) => event.type)).toEqual(['fg3_made']);
+      expectNear(events[0]?.location, deep);
+    });
+  }
+
   test('the court takes every touch as a tap (touch-action: none), and a tap with no shot to mark says so', async ({
     page,
   }) => {
@@ -239,7 +265,7 @@ function statButtonType(page: Page) {
 
 for (const device of DEVICES) {
   for (const finished of [false, true]) {
-    const what = finished ? 'a finished game (with its banner)' : 'a live game';
+    const what = finished ? 'a finished game (with its note)' : 'a live game';
     test(`with the court, fits the ${device.name} screen for ${what}, buttons still big`, async ({
       page,
     }) => {
@@ -294,10 +320,11 @@ for (const device of DEVICES) {
       ).toBeGreaterThanOrEqual(32);
 
       // The court: all on screen, between the stat strip and the buttons (clear of both,
-      // its outline included), and deep enough to put a three at the top of the key.
+      // its outline included), and deep enough for a deep three at the top of the key:
+      // 32 ft from the baseline, 7 ft past the arc.
       const court = shotCourt(page);
       await expect(court).toBeInViewport({ ratio: 1 });
-      await expect(court).toHaveAttribute('viewBox', '-10 -10 520 290');
+      await expect(court).toHaveAttribute('viewBox', '-10 -10 520 330');
       const courtBox = await court.boundingBox();
       const strip = await stats(page).boundingBox();
       const firstButton = await buttons[0]?.boundingBox();
@@ -306,7 +333,7 @@ for (const device of DEVICES) {
       expect(courtBox.y + courtBox.height + 4).toBeLessThanOrEqual(firstButton.y);
       expect(courtBox.width).toBeCloseTo(device.width - 16, 0);
       // The drawing fits its box (shorter boxes draw it narrower), never too small to tap.
-      const drawn = Math.min(courtBox.width, (courtBox.height * 520) / 290);
+      const drawn = Math.min(courtBox.width, (courtBox.height * 520) / 330);
       expect(drawn).toBeGreaterThanOrEqual(200);
 
       // The last-action line and the bottom bar stay below the buttons, clear of the

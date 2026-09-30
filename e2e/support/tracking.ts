@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { paths } from '../../src/routes';
 import { appUrl } from './app';
 
@@ -66,6 +66,23 @@ export async function doubleTap(page: Page, name: string, gapMs = 120) {
   await page.touchscreen.tap(x, y);
   await page.waitForTimeout(gapMs);
   await page.touchscreen.tap(x, y);
+}
+
+/**
+ * Taps twice at a point by touch, `gapMs` apart (a quick double tap), whatever is there
+ * by the second tap: e.g. the middle of a sheet's button, which the first tap closes.
+ */
+export async function doubleTapAt(page: Page, point: { x: number; y: number }, gapMs = 120) {
+  await page.touchscreen.tap(point.x, point.y);
+  await page.waitForTimeout(gapMs);
+  await page.touchscreen.tap(point.x, point.y);
+}
+
+/** The middle of what `locator` finds, on the screen. */
+export async function middleOf(locator: Locator): Promise<{ x: number; y: number }> {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error('Not on screen');
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
 /** The taps kept on the phone until they're saved (see src/data/pendingStats.ts). */

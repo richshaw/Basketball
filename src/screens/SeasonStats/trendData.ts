@@ -16,14 +16,20 @@ export type TrendMetric = (typeof TREND_METRICS)[number];
 export interface TrendMetricInfo {
   /** Segment label and chart name, e.g. 'Points'. */
   label: string;
+  /** Its segment label where the names don't fit, e.g. 'PTS'. */
+  short: string;
   /** Unit after a number: '18 points', '1 point'. */
   unit: (value: number) => string;
 }
 
 export const TREND_METRIC_INFO: Record<TrendMetric, TrendMetricInfo> = {
-  pts: { label: 'Points', unit: (value) => (value === 1 ? 'point' : 'points') },
-  reb: { label: 'Rebounds', unit: (value) => (value === 1 ? 'rebound' : 'rebounds') },
-  ast: { label: 'Assists', unit: (value) => (value === 1 ? 'assist' : 'assists') },
+  pts: { label: 'Points', short: 'PTS', unit: (value) => (value === 1 ? 'point' : 'points') },
+  reb: {
+    label: 'Rebounds',
+    short: 'REB',
+    unit: (value) => (value === 1 ? 'rebound' : 'rebounds'),
+  },
+  ast: { label: 'Assists', short: 'AST', unit: (value) => (value === 1 ? 'assist' : 'assists') },
 };
 
 export function isTrendMetric(value: string | undefined): value is TrendMetric {

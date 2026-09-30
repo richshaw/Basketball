@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { restoreStubs } from '@/test/browser';
-import { seedDemoData } from '@/data/demo';
+import { buildDemoData, demoGameId, seedDemoData } from '@/data/demo';
 import { EXPORT_SAVE_WAIT_MS } from '@/data/pendingSaves';
 import { addPendingStat, listPendingStats, newPendingStat } from '@/data/pendingStats';
 import * as repo from '@/data/repo';
@@ -58,7 +58,7 @@ async function holdExports() {
 const notifications = () => screen.getByRole('status', { name: 'Notifications' });
 
 /** Waits for a toast. (Re-queried: the toast area moves into a sheet while one is open.) */
-async function expectToast(message: string) {
+async function expectToast(message: string | RegExp) {
   await waitFor(() => {
     expect(notifications()).toHaveTextContent(message);
   });
@@ -399,21 +399,108 @@ describe('Settings: restore from a backup file', () => {
     expect(games.find((game) => game.id === phoneGame.id)).toBeDefined();
   });
 
-  it('keeps her own player when the sample games were tried first', async () => {
+  it('keeps her own player, and none of the sample games, when those were tried first', async () => {
     // A new phone: she tries the sample games first. Their player's date (Sep 27) is
     // after she set up Maya (Sep 1)...
     await seedDemoData({ today: '2026-12-01' });
     const { user } = await renderSettings();
 
-    // ...then adds her backup to what's on the phone.
+    // ...then restores her backup. Nothing of hers is on the phone: it says what goes.
     await chooseBackupFile(user, pickedFile(fixtureJson));
     const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
-    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+    expect(sheet).toHaveTextContent(
+      'The 10 sample games on this phone will be removed. Nothing else will be lost.',
+    );
+    expect(
+      within(sheet).queryByRole('button', { name: /Add to what's on this phone/ }),
+    ).not.toBeInTheDocument();
+    await user.click(within(sheet).getByRole('button', { name: 'Restore backup' }));
 
-    await expectToast('Restored 2 games');
+    await expectToast('Restored 2 games · 10 sample games removed');
     const player = await getPlayer();
     expect(player).toMatchObject({ name: 'Maya', jerseyNumber: '7' });
-    expect((await listGames()).every((game) => game.playerId === player?.id)).toBe(true);
+    const games = await listGames();
+    expect(games.map((game) => game.opponent).sort()).toEqual(['Brookside', 'Hillcrest']);
+    expect(games.every((game) => game.playerId === player?.id)).toBe(true);
+  });
+
+  it('says first that adding her backup removes the sample games next to her own', async () => {
+    // Sample games she tried, and a game of her own tracked since.
+    await seedDemoData({ today: '2026-12-01' });
+    const phoneGame = await seedPhoneGame();
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(fixtureJson));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).toHaveTextContent('The 10 sample games on this phone will be removed.');
+    const add = within(sheet).getByRole('button', { name: /Add to what's on this phone/ });
+    expect(add).toHaveTextContent(/Keeps your games here and adds what's missing/);
+    // Replacing erases them too, with everything else (all 11 games).
+    expect(
+      within(sheet).getByRole('button', { name: /Replace everything on this phone/ }),
+    ).toHaveTextContent('all 11 games');
+    await user.click(add);
+
+    await expectToast('Restored 2 games · 10 sample games removed');
+    const games = await listGames();
+    expect(games.map((game) => game.opponent).sort()).toEqual([
+      'Brookside',
+      'Hillcrest',
+      'Lincoln',
+    ]);
+    expect(games.some((game) => game.id === phoneGame.id)).toBe(true);
+  });
+
+  it('says how many of the sample games go when her backup has the others', async () => {
+    // She tried the sample games, deleted one, and backed up (with her own games); on
+    // this phone she tries them again, all ten, then restores that backup.
+    const fixture = parseExportFile(fixtureJson);
+    const player = fixture.players[0];
+    const samples = buildDemoData({ today: '2026-12-01' });
+    const kept = samples.games
+      .filter((game) => game.id !== demoGameId(10))
+      .map((game) => ({ ...game, playerId: player?.id ?? game.playerId }));
+    const backup: ExportFile = {
+      ...fixture,
+      games: [...fixture.games, ...kept],
+      events: [
+        ...fixture.events,
+        ...samples.events.filter((event) => kept.some((game) => game.id === event.gameId)),
+      ],
+    };
+    await seedDemoData({ today: '2026-12-01' });
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(user, pickedFile(JSON.stringify(backup)));
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    // Only the one the backup doesn't have goes; none of the phone's games are hers.
+    expect(sheet).toHaveTextContent('1 of the 10 sample games on this phone will be removed.');
+    const add = within(sheet).getByRole('button', { name: /Add to what's on this phone/ });
+    expect(add).toHaveTextContent(/Keeps the other sample games here and adds what's missing/);
+    expect(add).not.toHaveTextContent(/your games/);
+    await user.click(add);
+
+    await expectToast(/1 sample game removed$/);
+    const games = await listGames();
+    expect(games).toHaveLength(11);
+    expect(games.some((game) => game.id === demoGameId(10))).toBe(false);
+  });
+
+  it('adds a backup of sample games alone as ever, keeping the sample games', async () => {
+    // (A week newer than the phone's: the same games, from a backup made later.)
+    await seedDemoData({ today: '2026-12-01' });
+    const { user } = await renderSettings();
+
+    await chooseBackupFile(
+      user,
+      pickedFile(JSON.stringify(buildDemoData({ today: '2026-12-08' }))),
+    );
+    const sheet = await screen.findByRole('dialog', { name: 'Restore this backup?' });
+    expect(sheet).not.toHaveTextContent(/sample games? on this phone will be removed/);
+    await user.click(within(sheet).getByRole('button', { name: /Add to what's on this phone/ }));
+
+    await expectToast('Restored 10 games');
+    expect(await listGames()).toHaveLength(10);
   });
 
   it('says how many games were restored and how many the phone already had', async () => {

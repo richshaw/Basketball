@@ -1,6 +1,9 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { courtToSvg, courtViewBox } from '@/components/Court/courtGeometry';
+import { courtBox, mockScreenBox, svgToClient } from '@/components/Court/courtTestUtils';
 import type { Shot } from '@/data/shots';
+import { BASKET_FROM_BASELINE, THREE_POINT_RADIUS } from '@/lib/court';
 import type { SpotShot } from './session';
 import { COURT_DEPTH, COURT_HINT_MS, ShotCourt, type ShotCourtProps } from './ShotCourt';
 
@@ -20,11 +23,12 @@ function renderCourt(props: Partial<ShotCourtProps> = {}) {
 }
 
 describe('ShotCourt', () => {
-  it('shows the court to just past the top of the arc, outlined while a shot takes its spot', () => {
+  it('shows the court to 7 ft past the top of the arc, outlined while a shot takes its spot', () => {
     const { court, update } = renderCourt();
-    // 28 ft from the baseline (plus a foot of floor behind it), sideline to sideline.
-    expect(COURT_DEPTH).toBe(28);
-    expect(court()).toHaveAttribute('viewBox', '-10 -10 520 290');
+    // 32 ft from the baseline (plus a foot of floor behind it), sideline to sideline.
+    expect(COURT_DEPTH).toBe(32);
+    expect(COURT_DEPTH - BASKET_FROM_BASELINE - THREE_POINT_RADIUS).toBe(7);
+    expect(court()).toHaveAttribute('viewBox', '-10 -10 520 330');
     expect(court().parentElement).not.toHaveClass('open');
 
     update({ spotShot: shot });
@@ -36,6 +40,24 @@ describe('ShotCourt', () => {
     expect(court()).toHaveAccessibleName(
       'Shot spot of the 3PT Miss (optional). Picked: 3-pointer, 22 feet from the basket.',
     );
+  });
+
+  it('marks a deep three from the top of the key, 6 ft behind the arc, on the court', () => {
+    const onPick = vi.fn();
+    const { court } = renderCourt({ spotShot: shot, onPick });
+    // jsdom does no layout: the court drawn 0.5px per unit (5px per foot), from (8, 120).
+    const placement = { scale: 0.5, left: 8, top: 120, viewBox: courtViewBox(COURT_DEPTH) };
+    mockScreenBox(court(), courtBox(placement));
+    const deep = { x: 0, y: THREE_POINT_RADIUS + 6 };
+    const pointer = { pointerId: 3, isPrimary: true, button: 0 };
+    const at = svgToClient(courtToSvg(deep), placement);
+
+    fireEvent.pointerDown(court(), { ...pointer, ...at });
+    fireEvent.pointerUp(court(), { ...pointer, ...at });
+
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(deep);
+    // With room below it on the court: a foot (5px here) before the court's edge.
+    expect(courtBox(placement).top + courtBox(placement).height - at.clientY).toBe(5);
   });
 
   it("labels the spot with the shot's value as tapped, wherever it is", () => {

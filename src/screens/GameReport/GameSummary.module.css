@@ -20,6 +20,11 @@
   line-height: var(--line-height-tight);
 }
 
+/* A sample game says so first, so it's never taken for one of her games. */
+.sample {
+  vertical-align: text-bottom;
+}
+
 .result {
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-heavy);
