@@ -35,7 +35,6 @@ import { TopBar } from './TopBar';
 import {
   countByType,
   createTapGuard,
-  END_GAME_FAILED,
   FOUL_TROUBLE_AT,
   FOULED_OUT_AT,
   logNoteText,
@@ -394,18 +393,14 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
         if (sheetTurn.current !== turn) return null;
         if (left.count > 0) return left;
       }
-      try {
-        await endGame(gameId, score);
-      } catch (error) {
-        // (The end-game sheet, over the line, says so too.)
-        show({ message: END_GAME_FAILED, tone: 'error' });
-        throw error;
-      }
+      // If it can't be ended, the end-game sheet says so (it rejects): the line keeps her
+      // latest stat, and its Undo.
+      await endGame(gameId, score);
       // Ended, but "Keep tracking" was tapped meanwhile: stay, on the finished game.
       if (sheetTurn.current === turn) await navigate(paths.gameReport(gameId), { replace: true });
       return null;
     },
-    [gameId, navigate, session, show],
+    [gameId, navigate, session],
   );
 
   // Done, on a finished game: the same, with its own "not saved yet" sheet.

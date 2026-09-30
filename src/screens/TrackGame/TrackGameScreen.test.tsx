@@ -824,25 +824,29 @@ describe('TrackGameScreen', () => {
     await expectStrip('Steals: 1', 'Blocks: 0');
   }, 20_000);
 
-  it("says in the sheet and on the line, never in a toast, when the game couldn't be ended", async () => {
+  it("says in its sheet, never in a toast, when the game couldn't be ended, and leaves the line to her latest stat", async () => {
     const game = await newGame();
-    const { user } = await renderTracking(game);
+    await renderTracking(game);
+    fireEvent.click(statButton('Steal'));
+    expect(lastAction()).toHaveTextContent('Steal · Q1');
     vi.spyOn(repo, 'endGame').mockRejectedValueOnce(new Error('Connection lost'));
 
-    await user.click(screen.getByRole('button', { name: 'End game' }));
+    fireEvent.click(screen.getByRole('button', { name: 'End game' }));
     const sheet = screen.getByRole('dialog', { name: 'Final score' });
-    await user.click(within(sheet).getByRole('button', { name: 'End game' }));
+    fireEvent.click(within(sheet).getByRole('button', { name: 'End game' }));
 
-    // The sheet covers the line, so it says so itself...
+    // The sheet, over the line, says so...
     await waitFor(() =>
       expect(within(sheet).getByRole('alert')).toHaveTextContent(
         "Couldn't end the game. Try again.",
       ),
     );
     expect(notifications()).toBeEmptyDOMElement();
-    // ...and the line still does once the sheet is closed.
-    await user.click(within(sheet).getByRole('button', { name: 'Keep tracking' }));
-    expect(lastAction()).toHaveTextContent("Couldn't end the game. Try again.");
+    // ...and once it's closed, the line still has her latest stat, with its Undo.
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Keep tracking' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(lastAction()).toHaveTextContent(/^Steal · Q1$/);
+    expect(lineButton()).toBeInTheDocument();
     expect((await getGame(game.id))?.status).toBe('live');
   });
 

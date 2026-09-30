@@ -109,7 +109,7 @@ export function notSavedMessage(notSaved: NotSaved): string {
   return `${notSavedTitle(notSaved)}. ${unsavedNote(notSaved.count, notSaved.kept)}`;
 }
 
-/** What the end-game sheet, and the line under it, say when the game couldn't be ended. */
+/** What the end-game sheet says when the game couldn't be ended. */
 export const END_GAME_FAILED = "Couldn't end the game. Try again.";
 
 /** A delete from the log that isn't done yet, or that failed. */

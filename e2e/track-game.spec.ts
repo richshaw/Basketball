@@ -6,6 +6,7 @@ import {
   canLoseDatabaseConnection,
   doubleTap,
   doubleTapAt,
+  expectAllSaved,
   expectStats,
   failGameSaves,
   failNextSaves,
@@ -321,6 +322,35 @@ test('ending the game with a stat not saved says so, and End anyway still saves 
   expect(await gameEventTypes(page, gameId)).toEqual(['blk']);
   expect(await keptTaps(page)).toEqual([]);
 });
+
+// A game that couldn't be ended says so in its sheet, over the line: once the sheet is
+// closed, the line still has her latest stat, with its Undo. On an SE and at 390 points,
+// with the court.
+for (const device of [
+  { name: 'an iPhone SE', viewport: { width: 375, height: 667 - 20 } },
+  { name: 'an iPhone', viewport: { width: 390, height: 844 - 47 } },
+]) {
+  test(`a game that couldn't be ended leaves her latest stat on the line, on ${device.name}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(device.viewport);
+    await startGame(page);
+    await expect(shotCourt(page)).toHaveCount(1);
+    await tapStats(page, ['Steal']);
+    await expectAllSaved(page);
+    await failGameSaves(page, true);
+    await page.getByRole('main').getByRole('button', { name: 'End game', exact: true }).tap();
+    const sheet = page.getByRole('dialog', { name: 'Final score' });
+    await sheet.getByRole('button', { name: 'End game' }).tap();
+    await expect(sheet.getByRole('alert')).toHaveText("Couldn't end the game. Try again.");
+
+    await sheet.getByRole('button', { name: 'Keep tracking' }).tap();
+    await expect(sheet).toBeHidden();
+    await expect(lastAction(page)).toHaveText('Steal · Q1');
+    await expect(lineButton(page)).toBeInViewport({ ratio: 1 });
+    await failGameSaves(page, false);
+  });
+}
 
 test('a stat not saved when the game ended is saved later on its own, with no relaunch', async ({
   page,
