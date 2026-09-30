@@ -17,8 +17,9 @@ export interface LogSheetProps {
   events: readonly StatEvent[];
   periodFormat: PeriodFormat;
   /**
-   * A delete from the log that isn't done or failed, said in full, e.g. "Couldn't delete
-   * Steal (Q2). Try again.": the last-action line, which says it too, is under the log.
+   * The deletes from the log that aren't done or failed, each named in full, e.g.
+   * "Couldn't delete Steal (Q2). Try again." (logNoteText): the last-action line, which
+   * says them too, is under the log.
    */
   note?: string;
   /** A row was tapped: offer to delete that stat. */
@@ -72,7 +73,7 @@ function LogList({
  * Every stat recorded in this game, newest first, with its period and time (and a pin
  * on shots whose spot was marked). Tapping one offers to delete it (for mistakes found
  * later; Undo covers the last one). Its note, pinned under the list so it's in view
- * however far the list is scrolled, says when a delete isn't done or failed.
+ * however far the list is scrolled, says which deletes aren't done or failed.
  */
 export const LogSheet = memo(function LogSheet({
   open,

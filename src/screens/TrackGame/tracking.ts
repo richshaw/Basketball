@@ -112,6 +112,36 @@ export function notSavedMessage(notSaved: NotSaved): string {
 /** What the end-game sheet, and the line under it, say when the game couldn't be ended. */
 export const END_GAME_FAILED = "Couldn't end the game. Try again.";
 
+/** A delete from the log that isn't done yet, or that failed. */
+export interface LogDelete {
+  /** The stat being deleted. */
+  id: string;
+  /** The stat, as the log's confirmation named it: 'Steal (Q2)'. */
+  what: string;
+  /** It failed (the stat counts again), rather than not being done yet. */
+  failed: boolean;
+}
+
+/** 'Steal (Q2)', 'Steal (Q2) and Block (Q3)', 'Steal (Q2), Block (Q3) and Foul (Q4)'. */
+function namesText(names: readonly string[]): string {
+  const last = names.at(-1) ?? '';
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${last}` : last;
+}
+
+/**
+ * What the log's note says of its deletes that aren't done or failed, each named:
+ * "Couldn't delete Steal (Q2). Try again." and "Deleting Block (Q3) isn't saved yet.",
+ * or nothing.
+ */
+export function logNoteText(deletes: readonly LogDelete[]): string | undefined {
+  const failed = deletes.filter((each) => each.failed).map((each) => each.what);
+  const waiting = deletes.filter((each) => !each.failed).map((each) => each.what);
+  const parts: string[] = [];
+  if (failed.length > 0) parts.push(`Couldn't delete ${namesText(failed)}. Try again.`);
+  if (waiting.length > 0) parts.push(`Deleting ${namesText(waiting)} isn't saved yet.`);
+  return parts.length > 0 ? parts.join(' ') : undefined;
+}
+
 /** Overtimes the period picker always offers after regulation. */
 const OVERTIMES_OFFERED = 4;
 

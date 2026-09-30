@@ -714,6 +714,116 @@ describe('TrackGameScreen', () => {
     expect(notifications()).toBeEmptyDOMElement();
   }, 15_000);
 
+  it('says a delete from the log that fails late, once the log is closed and the line has moved on: on the line, and in the log', async () => {
+    const game = await newGame();
+    await recordStat(game.id, 'stl');
+    const { user } = await renderTracking(game);
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    const sheet = screen.getByRole('dialog', { name: 'Stat log' });
+    let fail: (error: Error) => void = () => {};
+    const deletes = vi.spyOn(repo, 'deleteStat').mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    await user.click(within(sheet).getByRole('button', { name: /^Steal/ }));
+    const confirm = screen.getByRole('alertdialog', { name: 'Delete Steal (Q1)?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
+    expect(
+      await within(sheet).findByRole('alert', undefined, { timeout: REMOVE_WAIT_MS + 2000 }),
+    ).toHaveTextContent("Deleting Steal (Q1) isn't saved yet.");
+
+    // She closes the log, and the game goes on: an Assist.
+    await user.click(within(sheet).getByRole('button', { name: 'Close' }));
+    expect(lastAction()).toHaveTextContent(/^Delete not saved yet$/);
+    fireEvent.click(statButton('Assist'));
+    expect(lastAction()).toHaveTextContent('Assist · Q1');
+
+    // It fails in the end: the Steal counts again, and the line says so all the same,
+    // with Try again (the Assist keeps the grid's Undo). Never in a toast.
+    act(() => fail(new Error('Disk error')));
+    await expectStrip('Steals: 1', 'Assists: 1');
+    await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't delete$/));
+    expect(lineButton('Try again')).toBeInTheDocument();
+    expect(notifications()).toBeEmptyDOMElement();
+
+    // The log says it too, by name, until it has been open with it.
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    const shown = await screen.findByRole('dialog', { name: 'Stat log' });
+    expect(within(shown).getByRole('alert')).toHaveTextContent(
+      /^Couldn't delete Steal \(Q1\)\. Try again\.$/,
+    );
+    await user.click(within(shown).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stat log' })).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    const seen = await screen.findByRole('dialog', { name: 'Stat log' });
+    expect(within(seen).queryByRole('alert')).toBeNull();
+    await user.click(within(seen).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stat log' })).toBeNull());
+
+    // Try again, tapped twice quickly: the Steal goes, deleted once more.
+    const tryAgain = lineButton('Try again');
+    await waitFor(() => expect(tryAgain).toBeEnabled());
+    fireEvent.click(tryAgain);
+    fireEvent.click(tryAgain);
+    await waitFor(() => expect(lastAction()).toHaveTextContent(/^Deleted Steal \(Q1\)$/));
+    expect(deletes).toHaveBeenCalledTimes(2);
+    expect(await eventTypes(game.id)).toEqual(['ast']);
+  }, 20_000);
+
+  it('names each delete from the log that is still under way whenever the log opens, until it is done', async () => {
+    const game = await newGame();
+    await recordStat(game.id, 'stl');
+    await recordStat(game.id, 'blk');
+    const { user } = await renderTracking(game);
+    // Deletes don't answer until the test fails them, or lets them land.
+    const realDelete = repo.deleteStat;
+    const held: { fail: () => void; land: () => void }[] = [];
+    vi.spyOn(repo, 'deleteStat').mockImplementation(
+      (id) =>
+        new Promise((resolve, reject) => {
+          held.push({
+            fail: () => reject(new Error('Disk error')),
+            land: () => void realDelete(id).then(resolve, reject),
+          });
+        }),
+    );
+    const openLog = async () => {
+      await user.click(screen.getByRole('button', { name: 'Log' }));
+      return screen.findByRole('dialog', { name: 'Stat log' });
+    };
+    const deleteFrom = async (log: HTMLElement, stat: string) => {
+      await user.click(within(log).getByRole('button', { name: new RegExp(`^${stat}`) }));
+      const confirm = screen.getByRole('alertdialog', { name: `Delete ${stat} (Q1)?` });
+      await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
+    };
+    const both = /^Deleting Steal \(Q1\) and Block \(Q1\) isn't saved yet\.$/;
+
+    const log = await openLog();
+    await deleteFrom(log, 'Steal');
+    await deleteFrom(log, 'Block');
+    // Neither answers in time: the note names both, not just the latest.
+    await waitFor(() => expect(within(log).getByRole('alert')).toHaveTextContent(both), {
+      timeout: REMOVE_WAIT_MS + 2000,
+    });
+    // Closed, and opened again while they're still under way: it still says so.
+    await user.click(within(log).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stat log' })).toBeNull());
+    const again = await openLog();
+    expect(within(again).getByRole('alert')).toHaveTextContent(both);
+
+    // The Steal's fails, and the Block's lands: the note says the one that failed.
+    act(() => held[0]?.fail());
+    act(() => held[1]?.land());
+    await waitFor(() =>
+      expect(within(again).getByRole('alert')).toHaveTextContent(
+        /^Couldn't delete Steal \(Q1\)\. Try again\.$/,
+      ),
+    );
+    await expectStrip('Steals: 1', 'Blocks: 0');
+  }, 20_000);
+
   it("says in the sheet and on the line, never in a toast, when the game couldn't be ended", async () => {
     const game = await newGame();
     const { user } = await renderTracking(game);
@@ -1591,43 +1701,59 @@ describe('TrackGameScreen', () => {
         expect(await db.events.count()).toBe(0);
       }, 15_000);
 
-      it('leaves the line alone once it has moved on when a removal that took its time lands, and says if it failed', async () => {
+      it('always says an Undo that took its time failed, but leaves the line alone once it has moved on when one lands', async () => {
         const game = await newGame();
         await recordStat(game.id, 'blk');
         await recordStat(game.id, 'stl');
         await renderTracking(game);
         await expectStrip('Steals: 1', 'Blocks: 1');
-        // Deletes don't answer until the test fails them.
-        const failures: ((error: Error) => void)[] = [];
+        // Deletes don't answer until the test fails them, or lets them land.
+        const realDelete = repo.deleteStat;
+        const held: { fail: () => void; land: () => void }[] = [];
         vi.spyOn(repo, 'deleteStat').mockImplementation(
-          () =>
-            new Promise((_resolve, reject) => {
-              failures.push(reject);
+          (id) =>
+            new Promise((resolve, reject) => {
+              held.push({
+                fail: () => reject(new Error('Disk error')),
+                land: () => void realDelete(id).then(resolve, reject),
+              });
             }),
         );
+        const notSavedYet = () =>
+          waitFor(() => expect(lastAction()).toHaveTextContent(/^Undo not saved yet$/), {
+            timeout: REMOVE_WAIT_MS + 2000,
+          });
         fireEvent.click(statButton('Undo last stat'));
-        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Undo not saved yet$/), {
-          timeout: REMOVE_WAIT_MS + 2000,
-        });
+        await notSavedYet();
 
         // It fails in the end: the Steal counts again, and the line says so, with Try again.
-        act(() => failures[0]?.(new Error('Disk error')));
+        act(() => held[0]?.fail());
         await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't undo$/));
         expect(lineButton('Try again')).toBeInTheDocument();
         await expectStrip('Steals: 1');
 
         // Try again doesn't answer either, and the line moves on (a Deflection) before it
-        // lands: the Deflection's line stays.
+        // fails too: the line says so all the same, with Try again (the Deflection keeps
+        // the grid's Undo), so the Steal never counts again unsaid.
         await tapLineButton('Try again');
-        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Undo not saved yet$/), {
-          timeout: REMOVE_WAIT_MS + 2000,
-        });
+        await notSavedYet();
         fireEvent.click(statButton('Deflection'));
         expect(lastAction()).toHaveTextContent('Deflection · Q1');
-        act(() => failures[1]?.(new Error('Disk error')));
+        act(() => held[1]?.fail());
+        await waitFor(() => expect(lastAction()).toHaveTextContent(/^Couldn't undo$/));
         await expectStrip('Steals: 1');
-        expect(lastAction()).toHaveTextContent('Deflection · Q1');
-      }, 20_000);
+        expect(statButton('Deflection')).toHaveAccessibleDescription('1 this game');
+
+        // Once more, and the line moves on (an Assist) before it lands: the Assist's line
+        // stays, and the Steal is gone.
+        await tapLineButton('Try again');
+        await notSavedYet();
+        fireEvent.click(statButton('Assist'));
+        expect(lastAction()).toHaveTextContent('Assist · Q1');
+        act(() => held[2]?.land());
+        await expectStrip('Steals: 0', 'Assists: 1');
+        expect(lastAction()).toHaveTextContent('Assist · Q1');
+      }, 30_000);
 
       it('keeps a period move that answers late on screen, and gives Reload back meanwhile', async () => {
         const game = await newGame();

@@ -4,6 +4,7 @@ import {
   countByType,
   createTapGuard,
   foulStatus,
+  logNoteText,
   notSavedMessage,
   notSavedTitle,
   parseScore,
@@ -93,6 +94,45 @@ describe('not saved yet', () => {
     expect(notSavedMessage({ count: 1, spots: 1, kept: false })).toBe(
       "1 shot's spot isn't saved yet. It's not kept on this phone. Keep the app open until it's saved.",
     );
+  });
+});
+
+describe('logNoteText', () => {
+  const steal = { id: 's', what: 'Steal (Q2)' };
+  const block = { id: 'b', what: 'Block (Q3)' };
+  const foul = { id: 'f', what: 'Foul (Q4)' };
+
+  it('names each delete from the log that failed, or that is not saved yet', () => {
+    expect(logNoteText([])).toBeUndefined();
+    expect(logNoteText([{ ...steal, failed: true }])).toBe(
+      "Couldn't delete Steal (Q2). Try again.",
+    );
+    expect(logNoteText([{ ...steal, failed: false }])).toBe("Deleting Steal (Q2) isn't saved yet.");
+  });
+
+  it('never lets two deletes share one name: each is said, failures first', () => {
+    expect(
+      logNoteText([
+        { ...steal, failed: false },
+        { ...block, failed: false },
+      ]),
+    ).toBe("Deleting Steal (Q2) and Block (Q3) isn't saved yet.");
+    expect(
+      logNoteText([
+        { ...steal, failed: false },
+        { ...block, failed: true },
+        { ...foul, failed: true },
+      ]),
+    ).toBe(
+      "Couldn't delete Block (Q3) and Foul (Q4). Try again. Deleting Steal (Q2) isn't saved yet.",
+    );
+    expect(
+      logNoteText([
+        { ...steal, failed: true },
+        { ...block, failed: true },
+        { ...foul, failed: true },
+      ]),
+    ).toBe("Couldn't delete Steal (Q2), Block (Q3) and Foul (Q4). Try again.");
   });
 });
 

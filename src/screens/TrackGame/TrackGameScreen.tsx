@@ -38,10 +38,12 @@ import {
   END_GAME_FAILED,
   FOUL_TROUBLE_AT,
   FOULED_OUT_AT,
+  logNoteText,
   spotNote,
   statKind,
   statLabel,
   withTaps,
+  type LogDelete,
 } from './tracking';
 import { UnsavedStats } from './UnsavedStats';
 import { useTrackingSession } from './useTrackingSession';
@@ -52,13 +54,6 @@ import styles from './TrackGameScreen.module.css';
 type ShowAction = (action: Omit<LastAction, 'key'>) => void;
 
 type OpenSheet = 'period' | 'log' | 'end' | 'notSaved' | null;
-
-/** The log's note on a delete from it that isn't done, or failed. */
-interface LogNote {
-  /** The stat being deleted. */
-  id: string;
-  message: string;
-}
 
 /**
  * ' · 4 fouls' once she's in foul trouble and ' · fouled out' from the fifth, so the
@@ -108,8 +103,9 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
   // Bumped each time the end-game sheet opens, so its form starts fresh.
   const [endSheetKey, setEndSheetKey] = useState(0);
   const [lastAction, setLastAction] = useState<LastAction | null>(null);
-  // What the log says, while it's open, of a delete from it that isn't done or failed.
-  const [logNote, setLogNote] = useState<LogNote | null>(null);
+  // The deletes from the log that aren't done yet, and those that failed until the log
+  // has been open with them: its note names each (the line says them too).
+  const [logDeletes, setLogDeletes] = useState<readonly LogDelete[]>([]);
   // Bumped by the grid's Undo: the line's own Undo, just below it, then ignores taps
   // for a moment.
   const [lineHold, setLineHold] = useState(0);
@@ -143,16 +139,45 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
     [withCourt, counted, markingId],
   );
 
+  // The log's note: its deletes not done yet, and those that failed while their stat is
+  // still there (it counts again).
+  const logNote = useMemo(
+    () =>
+      logNoteText(
+        logDeletes.filter((each) => !each.failed || events.some((event) => event.id === each.id)),
+      ),
+    [logDeletes, events],
+  );
+
   const show = useCallback<ShowAction>((action) => {
     setLastAction((previous) => ({ ...action, key: (previous?.key ?? 0) + 1 }));
   }, []);
 
   /**
+   * How a removal that hadn't answered in time went, once it has (`late`): a failure
+   * always shows, whatever the line says by then (the stat counts again, and Try again
+   * is for it; her latest stat keeps the grid's Undo); anything else only in place of
+   * the line's "not saved yet" for it, if the line still says that.
+   */
+  const sayLate = useCallback(
+    (id: string, late: Removal, action: Omit<LastAction, 'key'>) => {
+      if (late === 'failed') {
+        show(action);
+        return;
+      }
+      setLastAction((previous) =>
+        previous?.removalId === id ? { ...action, key: previous.key + 1 } : previous,
+      );
+    },
+    [show],
+  );
+
+  /**
    * Says a stat is gone: at once for a tap not saved yet (it no longer counts), else
    * once its removal is done. Speaks up if it couldn't be removed (it counts again), with
    * Try again for exactly that stat, and if it hasn't been in time (it's still being
-   * removed, and doesn't count): then the line says how it went once it's done, unless
-   * it has moved on. Short enough to fit the line on the smallest iPhone.
+   * removed, and doesn't count): then the line says how it went once it's done (sayLate).
+   * Short enough to fit the line on the smallest iPhone.
    */
   const takeBack = useMemo(() => {
     const follow = ({ id, type, immediate, removal, outcome }: TakingBack): void => {
@@ -180,16 +205,12 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
         show({ message: 'Undo not saved yet', tone: 'muted', removalId: id });
         void outcome.then((late) => {
           const action = said(late);
-          if (!action) return;
-          // In place of 'Undo not saved yet', if the line still says it.
-          setLastAction((previous) =>
-            previous?.removalId === id ? { ...action, key: previous.key + 1 } : previous,
-          );
+          if (action) sayLate(id, late, action);
         });
       });
     };
     return follow;
-  }, [session, show]);
+  }, [session, show, sayLate]);
 
   /** The line for one stat, e.g. '3PT Made · Q2', with an Undo for exactly that stat. */
   const statAction = useCallback(
@@ -282,21 +303,23 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
     [moveTo, setOpenSheet],
   );
   const openPeriods = useCallback(() => setOpenSheet('period'), [setOpenSheet]);
-  // Without a note from before: the line has said how that went.
-  const openLog = useCallback(() => {
-    setLogNote(null);
-    setOpenSheet('log');
-  }, [setOpenSheet]);
+  const openLog = useCallback(() => setOpenSheet('log'), [setOpenSheet]);
   const closeSheet = useCallback(() => setOpenSheet(null), [setOpenSheet]);
+  // Its note has shown the deletes that failed: they go from it (the line said them too).
+  const closeLog = useCallback(() => {
+    setLogDeletes((deletes) => deletes.filter((each) => !each.failed));
+    setOpenSheet(null);
+  }, [setOpenSheet]);
   const retry = useCallback(() => session.retry(), [session]);
 
   /**
    * Says how a delete from the log goes, like an Undo's: on the line (under the log, so
    * it's seen once the log is closed), with Try again for exactly that stat if it failed
    * (it counts again), and "not saved yet" if it hasn't answered in time (it doesn't
-   * count, and still happens): then the line says how it went once it's done, unless it
-   * has moved on. Short enough to fit the line on the smallest iPhone. While the log is
-   * open, it says in full what isn't done or failed there too (its note).
+   * count, and still happens): then the line says how it went once it's done (sayLate).
+   * Short enough to fit the line on the smallest iPhone. The log's note says it in full,
+   * each delete by name: while it isn't done, and once it has failed, until the log has
+   * been open with it (so one that fails while the log is closed still shows there).
    */
   const followDelete = useMemo(() => {
     const follow = ({ id, type, immediate, removal, outcome }: TakingBack, period: number) => {
@@ -316,34 +339,33 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
         const message = result === 'removed' ? `Deleted ${what}` : `${label} was already deleted`;
         return { message, tone: 'muted' };
       };
-      // The log's note: a failure, or nothing once this delete is done.
-      const note = (result: Removal) => {
-        if (result === 'failed') setLogNote({ id, message: `Couldn't delete ${what}. Try again.` });
-        else setLogNote((previous) => (previous?.id === id ? null : previous));
-      };
+      // In the log's note: this delete while it isn't done, and once it has failed.
+      const note = (result: Removal) =>
+        setLogDeletes((deletes) => {
+          const others = deletes.filter((each) => each.id !== id);
+          if (result === 'removed' || result === 'gone') return others;
+          return [...others, { id, what, failed: result === 'failed' }];
+        });
+      // (Tried again: its failure, said before, is no more.)
+      setLogDeletes((deletes) => deletes.filter((each) => each.id !== id || !each.failed));
       if (immediate) show({ message: `Deleted ${what}`, tone: 'muted' });
       void removal.then((result) => {
+        note(result);
         if (result !== 'unanswered') {
-          note(result);
           const action = said(result);
           if (action) show(action);
           return;
         }
-        setLogNote({ id, message: `Deleting ${what} isn't saved yet.` });
         show({ message: 'Delete not saved yet', tone: 'muted', removalId: id });
         void outcome.then((late) => {
           note(late);
           const action = said(late);
-          if (!action) return;
-          // In place of 'Delete not saved yet', if the line still says it.
-          setLastAction((previous) =>
-            previous?.removalId === id ? { ...action, key: previous.key + 1 } : previous,
-          );
+          if (action) sayLate(id, late, action);
         });
       });
     };
     return follow;
-  }, [session, show, periodFormat]);
+  }, [session, show, sayLate, periodFormat]);
 
   const deleteFromLog = useCallback(
     async (event: StatEvent) => {
@@ -509,9 +531,9 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
         open={openSheet === 'log'}
         events={events}
         periodFormat={periodFormat}
-        note={logNote?.message}
+        note={logNote}
         onSelect={deleteFromLog}
-        onClose={closeSheet}
+        onClose={closeLog}
       />
       <EndGameSheet
         key={endSheetKey}
