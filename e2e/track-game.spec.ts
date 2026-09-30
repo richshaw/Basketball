@@ -1064,6 +1064,34 @@ for (const device of [
   }
 }
 
+// However quickly taps come at that spot, one there counts before long: it catches taps
+// for at most CATCH_AT_MOST_MS (500 ms) after the first it caught (secondTap.ts).
+test('taps one after another where a sheet closed count before long', async ({ page }) => {
+  const gameId = await startGame(page);
+  const periods = page.getByRole('dialog', { name: 'Period' });
+  const twoMade = await middleOf(
+    statGrid(page).getByRole('button', { name: '2PT Made', exact: true }),
+  );
+  await page.getByRole('button', { name: /^Period Q\d$/ }).tap();
+  await expect(periods).toBeVisible();
+  await expect(secondTapCatchers(page)).toHaveCount(0);
+  expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, twoMade)).toBe(
+    'DIALOG',
+  );
+
+  // The dimmed page over 2PT Made closes the sheet, then a tap there every 200 ms.
+  for (let tap = 0; tap < 8; tap += 1) {
+    if (tap > 0) await page.waitForTimeout(200);
+    await page.touchscreen.tap(twoMade.x, twoMade.y);
+  }
+  await expect(periods).toBeHidden();
+  await expect(secondTapCatchers(page)).toHaveCount(0);
+  // The first few were caught; the later ones counted.
+  await expect
+    .poll(async () => (await gameEventTypes(page, gameId)).filter((type) => type === 'fg2_made'))
+    .not.toEqual([]);
+});
+
 // An ordinary opponent's name fits the title whole: 16 characters on an iPhone SE, 18 at
 // 390 points. The back link is then only its chevron, and every control in the bar is
 // still a full tap target.

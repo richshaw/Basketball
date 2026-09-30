@@ -1,11 +1,17 @@
 /**
  * How long the second tap of a quick double tap is caught at the spot of the first,
  * when the first opened or closed a sheet: from the end of the first tap (and from each
- * one caught since, so a triple tap acts once too). About the longest gap of a double
- * tap: a tap there once she has seen what's under it counts, and a tap anywhere else
- * counts at once.
+ * one caught since, so a triple tap acts once too, up to CATCH_AT_MOST_MS). About the
+ * longest gap of a double tap: a tap there once she has seen what's under it counts, and
+ * a tap anywhere else counts at once.
  */
 export const SECOND_TAP_MS = 350;
+
+/**
+ * The longest a spot goes on catching taps after the first one it caught, however quickly
+ * they come: long enough for a fast triple tap, never long enough to lose a deliberate tap.
+ */
+export const CATCH_AT_MOST_MS = 500;
 
 /** A tap: where it went down, and when it ended (performance.now()). */
 interface Tap {
@@ -70,13 +76,14 @@ const CAUGHT_EVENTS = [
 
 /**
  * Called as a sheet opens or closes: if a tap has just ended (the one that opened or
- * closed it), a second tap at its spot is caught until SECOND_TAP_MS after it. A small
- * transparent square there, in `container` (the sheet now on top, or the page), takes
- * it, so it can't act on what the first tap opened or uncovered: a stat button on the
- * live game screen, the sheet's own buttons as it slides in, a row of the log under a
- * confirmation's Cancel. Taps anywhere else go through at once, and a sheet opened or
- * closed from the keyboard gets no catcher. `className` places and sizes it (Sheet's
- * .secondTap); it's marked `data-second-tap`.
+ * closed it), a second tap at its spot is caught until SECOND_TAP_MS after it (and each
+ * later one until SECOND_TAP_MS after the one before, up to CATCH_AT_MOST_MS after the
+ * second). A small transparent square there, in `container` (the sheet now on top, or
+ * the page), takes it, so it can't act on what the first tap opened or uncovered: a stat
+ * button on the live game screen, the sheet's own buttons as it slides in, a row of the
+ * log under a confirmation's Cancel. Taps anywhere else go through at once, and a sheet
+ * opened or closed from the keyboard gets no catcher. `className` places and sizes it
+ * (Sheet's .secondTap); it's marked `data-second-tap`.
  */
 export function catchSecondTap(container: Element, className: string): void {
   const tap = lastTap;
@@ -92,6 +99,8 @@ export function catchSecondTap(container: Element, className: string): void {
   catcher.style.setProperty('--second-tap-y', `${tap.y}px`);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** When it caught its first tap, once it has. */
+  let firstCaught: number | undefined;
   const remove = () => {
     clearTimeout(timer);
     catcher.remove();
@@ -105,8 +114,11 @@ export function catchSecondTap(container: Element, className: string): void {
     event.preventDefault();
     event.stopPropagation();
     if (event.type === 'pointerdown') {
-      // Caught: the tap after it is caught for as long again.
-      until = performance.now() + SECOND_TAP_MS;
+      // Caught: the tap after it is caught for as long again, up to CATCH_AT_MOST_MS
+      // after the first one caught.
+      const now = performance.now();
+      firstCaught ??= now;
+      until = Math.min(now + SECOND_TAP_MS, firstCaught + CATCH_AT_MOST_MS);
       removeLater();
     }
   };

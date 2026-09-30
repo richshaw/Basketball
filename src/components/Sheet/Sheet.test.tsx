@@ -6,7 +6,7 @@ import { Button } from '@/components/Button/Button';
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { TextField } from '@/components/TextField/TextField';
 import { restoreStubs, stubProperties } from '@/test/browser';
-import { SECOND_TAP_MS } from './secondTap';
+import { CATCH_AT_MOST_MS, SECOND_TAP_MS } from './secondTap';
 import { Sheet, type SheetProps } from './Sheet';
 import sheetCss from './Sheet.module.css?raw';
 
@@ -483,6 +483,26 @@ describe('Sheet and a double tap', () => {
     expect(performance.now() - started).toBeGreaterThan(SECOND_TAP_MS);
     expect(catcher?.isConnected).toBe(true);
     await waitFor(() => expect(catchers()).toEqual([]), { timeout: SECOND_TAP_MS * 3 });
+  });
+
+  it('stops catching CATCH_AT_MOST_MS after the first tap it caught, however quickly they come', async () => {
+    const { user, dialog } = await openDemo();
+    await waitFor(() => expect(catchers()).toEqual([]), { timeout: SECOND_TAP_MS * 3 });
+    await tapAt(user, within(dialog).getByRole('button', { name: 'Close' }), 340, 60);
+    const [catcher] = catchers();
+    fireEvent.pointerDown(catcher as HTMLElement);
+    const first = performance.now();
+
+    // Taps at the spot, far under SECOND_TAP_MS apart: caught, but not for long.
+    while (catcher?.isConnected && performance.now() - first < CATCH_AT_MOST_MS * 3) {
+      fireEvent.pointerUp(catcher);
+      await new Promise((resolve) => setTimeout(resolve, SECOND_TAP_MS / 7));
+      if (catcher.isConnected) fireEvent.pointerDown(catcher);
+    }
+    expect(catcher?.isConnected).toBe(false);
+    // Not before then, so a fast triple tap is caught whole.
+    expect(performance.now() - first).toBeGreaterThan(CATCH_AT_MOST_MS - 10);
+    await waitForClosed();
   });
 
   it('catches the second tap on what opened it, in the sheet as it slides in', async () => {
