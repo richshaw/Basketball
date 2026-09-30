@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, emulateIPhoneSafeArea, expectRoute, IPHONE_SAFE_BOTTOM } from './support/app';
 import { DEMO_LIVE_GAME_ID, demoGameId, exportAll, patchGames, seedDemoData } from './support/data';
+import { keptMoves, refuseToKeepMoves } from './support/periods';
 import {
   canLoseDatabaseConnection,
   doubleTap,
@@ -425,6 +426,36 @@ test('Reload, offered while the stats cannot be read, loses no tap', async ({ pa
   await expect.poll(() => keptTaps(page)).toEqual([]);
 });
 
+test('a period change that could not be saved stays, kept on the phone, and Reload resumes it', async ({
+  page,
+}) => {
+  const gameId = await startGame(page);
+  await failStatReads(page);
+  await tapStats(page, ['Steal']);
+  await expect(readFailedNote(page)).toBeVisible();
+  // Saving the game fails now too: the move to Q2 can't be saved, but it's kept on the
+  // phone, and she's in Q2, with nothing to say.
+  await failGameSaves(page, true);
+  await page.getByRole('button', { name: 'Next period' }).tap();
+  await expect(page.getByRole('button', { name: 'Period Q2' })).toBeVisible();
+  await expect.poll(() => keptMoves(page)).toEqual([2]);
+  await expect(lastAction(page)).toHaveText('Now in Q2');
+
+  // Reload: the next page resumes Q2, saves it, and taps go there.
+  await page.getByRole('button', { name: 'Reload' }).tap();
+  await expect(page.getByRole('heading', { level: 1, name: 'vs Westfield' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Period Q2' })).toBeVisible();
+  await expect.poll(() => savedPeriod(page, gameId)).toBe(2);
+  await expect.poll(() => keptMoves(page)).toEqual([]);
+  await tapStats(page, ['Block']);
+  await expect
+    .poll(async () => (await gameEvents(page, gameId)).map((event) => [event.type, event.period]))
+    .toEqual([
+      ['stl', 1],
+      ['blk', 2],
+    ]);
+});
+
 test('a lost database connection: a calm note with Reload, then it carries on by itself, no reload', async ({
   page,
 }) => {
@@ -576,7 +607,9 @@ for (const [name, viewport] of [
         await page.goto(appUrl(paths.trackGame(gameId)));
         await expect(page.getByRole('button', { name: 'Period 9OT' })).toBeVisible();
 
-        // A period change that can't be saved: the saved period stays, with Try again.
+        // A period change that can't be saved, nor kept on the phone (its storage is full):
+        // the saved period stays, with Try again.
+        await refuseToKeepMoves(page, true);
         await failGameSaves(page, true);
         await page.getByRole('button', { name: 'Next period' }).tap();
         await expect(lastAction(page)).toHaveText("Couldn't go to 10OT");
@@ -598,6 +631,7 @@ for (const [name, viewport] of [
         await expect(lineButton(page, 'Try again')).toBeInViewport({ ratio: 1 });
         expect(await lastActionFits(page)).toBe(true);
         await failGameSaves(page, false);
+        await refuseToKeepMoves(page, false);
 
         // Saves that fail: the longest stat name, and a shot with its spot marked.
         await failNextSaves(page, 1000);

@@ -791,6 +791,11 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
 
   describe('before any game is finished', () => {
     it('points back to the game in progress updated most recently, like Games does', async () => {
+      // A second between the writes (only Date is faked: IndexedDB needs real timers).
+      // Written within one millisecond, both games would be updated "at once" and
+      // either could come first.
+      const start = Date.now();
+      vi.useFakeTimers({ toFake: ['Date'], now: start });
       const today = await createGame({
         opponent: 'Westfield',
         date: TODAY,
@@ -801,8 +806,11 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
         date: '2026-09-20',
         periodFormat: 'quarters',
       });
+      vi.setSystemTime(start + 1_000);
       await recordStat(today.id, 'fg2_made');
+      vi.setSystemTime(start + 2_000);
       await recordStat(earlier.id, 'ast');
+      vi.useRealTimers();
       renderRoute(paths.stats);
 
       expect(await screen.findByRole('link', { name: 'Back to the game' })).toHaveAttribute(

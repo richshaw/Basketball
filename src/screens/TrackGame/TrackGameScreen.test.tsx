@@ -5,6 +5,7 @@ import { courtBox, mockScreenBox, svgToClient } from '@/components/Court/courtTe
 import { db } from '@/data/db';
 import { demoGameId, seedDemoData } from '@/data/demo';
 import { READ_CLOSED_WAIT_MS, READ_RETRY_DELAYS_MS, READ_WATCHDOG_MS } from '@/data/hooks';
+import { listPendingPeriods } from '@/data/pendingPeriods';
 import { listPendingRemovals } from '@/data/pendingRemovals';
 import { replayPendingStats, retryPendingStats, startPendingStatsRetry } from '@/data/pendingSaves';
 import { listPendingSpots } from '@/data/pendingSpots';
@@ -463,9 +464,32 @@ describe('TrackGameScreen', () => {
     await waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(2));
   });
 
-  it("says a period change that couldn't be saved in a few words, with Try again for that move", async () => {
+  it('keeps a period change it could not save on screen and on the phone, and saves it on the next try', async () => {
     const game = await newGame();
     await renderTracking(game);
+    const moves = vi.spyOn(repo, 'setCurrentPeriod').mockRejectedValueOnce(new Error('Disk error'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
+    // Kept like a tap: she's in Q2, and there's nothing to say or do.
+    await waitFor(() => expect(moves).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
+    expect(lastAction()).toHaveTextContent(/^Now in Q2/);
+    expect(listPendingPeriods().map((move) => move.period)).toEqual([2]);
+    // Tried again a moment later, and saved: forgotten.
+    await waitFor(async () => expect((await getGame(game.id))?.currentPeriod).toBe(2), {
+      timeout: AUTO_RETRY_MS + 1000,
+    });
+    await waitFor(() => expect(listPendingPeriods()).toEqual([]));
+    expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't go to/)).toBeNull();
+  });
+
+  it('says a period change it could neither save nor keep in a few words, with Try again for that move', async () => {
+    const game = await newGame();
+    await renderTracking(game);
+    // localStorage is full: the move lives only in memory.
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
     vi.spyOn(repo, 'setCurrentPeriod').mockRejectedValueOnce(new Error('Disk error'));
     fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
     // The saved period is back on screen, and the line says so, short enough to fit
@@ -1759,48 +1783,65 @@ describe('TrackGameScreen', () => {
         expect(lastAction()).toHaveTextContent('Assist · Q1');
       }, 30_000);
 
-      it('keeps a period move that answers late on screen, and gives Reload back meanwhile', async () => {
+      it('keeps a period move that takes its time on the phone, so a reload resumes it and taps go there', async () => {
         const game = await newGame();
-        await renderTracking(game);
+        const { unmount } = await renderTracking(game);
         // A slow write: it answers only when the test says, well after the move's wait.
         const realMove = repo.setCurrentPeriod;
         let land = () => {};
-        vi.spyOn(repo, 'setCurrentPeriod').mockImplementation(
-          (gameId, period) =>
+        const moves = vi.spyOn(repo, 'setCurrentPeriod').mockImplementation(
+          (gameId, period, options) =>
             new Promise((resolve, reject) => {
-              land = () => void realMove(gameId, period).then(resolve, reject);
+              land = () => void realMove(gameId, period, options).then(resolve, reject);
             }),
         );
-        // Reads fail too (the note shows, with Reload once a reload would lose nothing).
-        vi.spyOn(repo, 'getGame').mockRejectedValue(lost());
+        // Reads fail too (the note shows, with Reload while a reload would lose nothing).
+        const reads = vi.spyOn(repo, 'getGame').mockRejectedValue(lost());
         act(() => {
           document.dispatchEvent(new Event('visibilitychange'));
         });
         expect(await screen.findByText(CANT_READ)).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
-        // While the move is on its way, a reload would lose it: no Reload.
-        expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
-        expect(
-          screen.getByText('Keep the app open until your taps are saved.'),
-        ).toBeInTheDocument();
-
-        // It doesn't answer for a while: it stops holding Reload back (it may never
-        // answer, and a reload would only show the saved Q1), but she's still in Q2.
+        expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
+        // Kept on the phone: a reload would resume it, so Reload is offered (at once).
         await screen.findByRole('button', { name: 'Reload' }, { timeout: MOVE_WAIT_MS + 2000 });
         expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
-        expect(lastAction()).toHaveTextContent(/^Now in Q2/);
         // A Steal tapped now goes into Q2.
         fireEvent.click(statButton('Steal'));
         expect(lastAction()).toHaveTextContent('Steal · Q2');
         await waitFor(async () => expect(await eventPeriods(game.id)).toEqual([['stl', 2]]));
+        expect((await db.games.get(game.id))?.currentPeriod).toBe(1);
 
-        // It lands at last: there's nothing to say, and she's still in Q2.
-        act(() => land());
-        await waitFor(async () => expect((await db.games.get(game.id))?.currentPeriod).toBe(2));
+        // Reload, before the move lands: the page, and all it held, is gone. The next one
+        // opens the game (still in Q1 as saved) in Q2, and saves the move.
+        unmount();
+        disposeTrackingSessions();
+        moves.mockRestore();
+        reads.mockRestore();
+        await renderTracking(game);
         expect(screen.getByRole('button', { name: 'Period Q2' })).toBeInTheDocument();
-        expect(lastAction()).toHaveTextContent('Steal · Q2');
+        await waitFor(async () => expect((await db.games.get(game.id))?.currentPeriod).toBe(2));
+        expect(listPendingPeriods()).toEqual([]);
+        // Its taps go there too.
+        fireEvent.click(statButton('Block'));
+        expect(lastAction()).toHaveTextContent('Block · Q2');
+        await waitFor(async () =>
+          expect(await eventPeriods(game.id)).toEqual([
+            ['stl', 2],
+            ['blk', 2],
+          ]),
+        );
+
+        // She moves on to Q3; then the first page's write runs at last (it can't, after a
+        // reload, but another tab's could): it's not the kept move, so it writes nothing.
+        await afterDoubleTapWindow();
+        fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
+        await waitFor(async () => expect((await db.games.get(game.id))?.currentPeriod).toBe(3));
+        act(() => land());
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect((await db.games.get(game.id))?.currentPeriod).toBe(3);
+        expect(screen.getByRole('button', { name: 'Period Q3' })).toBeInTheDocument();
       }, 15_000);
     });
 
