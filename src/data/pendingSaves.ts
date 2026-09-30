@@ -1,12 +1,14 @@
 /**
- * Saving the taps (and shot spots, and removals of taps taken back) that aren't saved yet
- * into the database: one kept tap (savePendingStat), everything kept in the journals
- * (replayPendingStats), and the app-wide retry (startPendingStatsRetry), which keeps
- * trying while anything isn't saved, whether or not the live game screen is open. Saving
- * is idempotent (recordStat with the tap's id, setStatLocation for a spot, deleteStat for
- * a removal), so a tap saved twice is still one stat.
+ * Saving the taps (and shot spots, removals of taps taken back, and moves to another
+ * period) that aren't saved yet into the database: one kept tap (savePendingStat),
+ * everything kept in the journals (replayPendingStats), and the app-wide retry
+ * (startPendingStatsRetry), which keeps trying while anything isn't saved, whether or not
+ * the live game screen is open. Saving is idempotent (recordStat with the tap's id,
+ * setStatLocation for a spot, deleteStat for a removal, setCurrentPeriod for a move), so
+ * a tap saved twice is still one stat.
  */
 import { waitAtMost } from '@/lib/wait';
+import { forgetPendingPeriod, isPendingPeriod, listPendingPeriods } from './pendingPeriods';
 import { listPendingRemovals } from './pendingRemovals';
 import { getPendingSpot, listPendingSpots, removePendingSpot } from './pendingSpots';
 import {
@@ -20,7 +22,7 @@ import {
   type PendingStat,
 } from './pendingStats';
 import { watchDatabase } from './reopen';
-import { deleteStat, getGame, recordStat, setStatLocation } from './repo';
+import { deleteStat, getGame, recordStat, setCurrentPeriod, setStatLocation } from './repo';
 import { sameSpot } from './shots';
 import type { StatEvent } from './types';
 
@@ -41,8 +43,8 @@ export async function savePendingStat(stat: PendingStat): Promise<StatEvent> {
 
 export interface ReplayResult {
   /**
-   * Saved (or found saved already) and forgotten: taps, spots put on their stats, and
-   * stats of taps taken back, removed.
+   * Saved (or found saved already) and forgotten: taps, spots put on their stats, stats
+   * of taps taken back, removed, and moves to another period.
    */
   saved: number;
   /**
@@ -58,9 +60,10 @@ export interface ReplayResult {
  * Saves the kept taps: those of a page that closed (or couldn't reach the database)
  * before they were saved, and those this page couldn't save yet; then removes the stats
  * of the taps taken back whose removal was kept (pendingRemovals.ts); then puts the
- * spots kept for saved stats (pendingSpots.ts) on them. The app-wide retry calls it, at
- * app start and again while anything isn't saved, in the background. Each is saved at
- * most once and then forgotten; one that can't be saved stays kept for next time. A tap
+ * spots kept for saved stats (pendingSpots.ts) on them; then saves each game's kept move
+ * to another period (pendingPeriods.ts). The app-wide retry calls it, at app start and
+ * again while anything isn't saved, in the background. Each is saved at most once and
+ * then forgotten; one that can't be saved stays kept for next time. A tap (or move)
  * whose game no longer exists is dropped, and so is a spot or a removal whose stat
  * doesn't (a spot never brings back a deleted stat). Stats can be added to finished
  * games, so their taps are saved too. Never rejects.
@@ -94,6 +97,7 @@ export async function replayPendingStats(): Promise<ReplayResult> {
   }
   await replayPendingRemovals(result);
   await replayPendingSpots(result);
+  await replayPendingPeriods(result);
   return result;
 }
 
@@ -134,6 +138,37 @@ async function replayPendingSpots(result: ReplayResult): Promise<void> {
       } else {
         result.failed += 1;
       }
+    }
+  }
+}
+
+/**
+ * The replay's last part: moves each game with a kept move to its period, unless a move
+ * made since has taken its place by the time the write runs, and forgets it once the
+ * game shows its period (one it shows already needs no write).
+ */
+async function replayPendingPeriods(result: ReplayResult): Promise<void> {
+  for (const move of listPendingPeriods()) {
+    try {
+      const game = await getGame(move.gameId);
+      if (!game) {
+        forgetPendingPeriod(move);
+        result.dropped += 1;
+        continue;
+      }
+      const saved =
+        game.currentPeriod === move.period
+          ? game
+          : await setCurrentPeriod(move.gameId, move.period, {
+              onlyIf: () => isPendingPeriod(move),
+            });
+      // (Not when a move made since took its place: that one is saved next.)
+      if (saved.currentPeriod === move.period) {
+        forgetPendingPeriod(move);
+        result.saved += 1;
+      }
+    } catch {
+      result.failed += 1;
     }
   }
 }

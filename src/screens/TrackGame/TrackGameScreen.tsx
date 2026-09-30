@@ -229,10 +229,11 @@ function Tracker({ game, events, readFailed, shotChart }: TrackerProps) {
 
   /**
    * Moves to another period at once (stats tapped next land there), with an Undo. The
-   * period she chose stays on screen until it's saved, however long that takes; a move
-   * (or its Undo) that couldn't be saved puts the saved period back, and the line says
-   * so with Try again for that move: short enough to fit beside its button on the
-   * smallest iPhone, even for a double-digit overtime.
+   * period she chose is kept on the phone and stays on screen until it's saved, however
+   * long that takes (see movePeriod); only a move (or its Undo) that couldn't be saved
+   * nor kept puts the saved period back, and the line says so with Try again for that
+   * move: short enough to fit beside its button on the smallest iPhone, even for a
+   * double-digit overtime.
    */
   const moveTo = useMemo(() => {
     const move = (to: number): void => {
