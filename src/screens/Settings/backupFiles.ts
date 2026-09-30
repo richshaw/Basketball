@@ -109,10 +109,13 @@ export function describeBackup(file: ExportFile): string {
 
 /**
  * What the restore sheet says, before she picks, about the sample games that adding a
- * backup of her own games removes (see sampleGamesToRemove): 'The 10 sample games on
- * this phone will be removed.'
+ * backup of her own games removes (see sampleGamesToRemove), of the `onPhone` sample
+ * games there: 'The 10 sample games on this phone will be removed.', or when the backup
+ * has the others, '1 of the 10 sample games on this phone will be removed.'
  */
-export function sampleGamesRemovedNote(count: number): string {
+export function sampleGamesRemovedNote(count: number, onPhone = count): string {
+  if (count < onPhone)
+    return `${count} of the ${onPhone} sample games on this phone will be removed.`;
   return count === 1
     ? 'The sample game on this phone will be removed.'
     : `The ${count} sample games on this phone will be removed.`;

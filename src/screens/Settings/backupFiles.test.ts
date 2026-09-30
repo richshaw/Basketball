@@ -184,6 +184,16 @@ describe('describing a backup', () => {
   it('says before the restore which sample games it removes', () => {
     expect(sampleGamesRemovedNote(10)).toBe('The 10 sample games on this phone will be removed.');
     expect(sampleGamesRemovedNote(1)).toBe('The sample game on this phone will be removed.');
+    expect(sampleGamesRemovedNote(10, 10)).toBe(
+      'The 10 sample games on this phone will be removed.',
+    );
+    // The backup has the others: they stay.
+    expect(sampleGamesRemovedNote(1, 10)).toBe(
+      '1 of the 10 sample games on this phone will be removed.',
+    );
+    expect(sampleGamesRemovedNote(3, 10)).toBe(
+      '3 of the 10 sample games on this phone will be removed.',
+    );
   });
 
   it('explains a backup with nothing new, and points to Replace', () => {

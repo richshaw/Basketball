@@ -5,6 +5,7 @@ import { GroupedList } from '@/components/GroupedList/GroupedList';
 import { ListRow } from '@/components/GroupedList/ListRow';
 import { Sheet } from '@/components/Sheet/Sheet';
 import { useToast } from '@/components/Toast/toastContext';
+import { isDemoGameId } from '@/data/demoIds';
 import {
   importAll,
   sampleGamesToRemove,
@@ -154,10 +155,22 @@ export function RestoreSheet({
 
   const { backup, phoneGameIds } = request;
   const phoneGameCount = phoneGameIds.length;
-  // The sample games adding this backup removes: the backup has games of her own.
+  const samplesOnPhone = phoneGameIds.filter(isDemoGameId).length;
+  // The sample games adding this backup removes: the backup has games of her own (and
+  // maybe some of the sample games, which stay).
   const samplesRemoved = sampleGamesToRemove(phoneGameIds, backup).length;
+  const samplesNote = sampleGamesRemovedNote(samplesRemoved, samplesOnPhone);
   // Nothing on the phone would be left to lose (sample games aside): just add it.
   const phoneIsEmpty = phoneGameCount === samplesRemoved;
+  // What adding keeps on the phone: her games, if it has any; else what's left of the
+  // sample games (the backup has them too); else everything.
+  let adding = 'Keeps everything here';
+  if (samplesRemoved > 0) {
+    adding =
+      phoneGameCount > samplesOnPhone
+        ? 'Keeps your games here'
+        : 'Keeps the other sample games here';
+  }
 
   const restore = async (mode: ImportMode) => {
     if (restoring) return;
@@ -234,23 +247,20 @@ export function RestoreSheet({
       {phoneIsEmpty ? (
         <p className={styles.note}>
           {samplesRemoved > 0
-            ? `${sampleGamesRemovedNote(samplesRemoved)} Nothing else will be lost.`
+            ? `${samplesNote} Nothing else will be lost.`
             : 'There are no games on this phone yet, so nothing will be lost.'}
         </p>
       ) : (
         <>
           {samplesRemoved > 0 ? (
-            <p className={cx(styles.note, styles.before)}>
-              {sampleGamesRemovedNote(samplesRemoved)}
-            </p>
+            <p className={cx(styles.note, styles.before)}>{samplesNote}</p>
           ) : null}
           <GroupedList aria-label="How to restore">
             <ActionRow
               title="Add to what's on this phone"
               subtitle={
                 <>
-                  <strong className={styles.recommended}>Recommended.</strong>{' '}
-                  {samplesRemoved > 0 ? 'Keeps your games here' : 'Keeps everything here'} and adds
+                  <strong className={styles.recommended}>Recommended.</strong> {adding} and adds
                   what&apos;s missing, even games deleted here. For a game on both, the newer
                   version wins, stats and all.
                 </>
