@@ -1,12 +1,13 @@
 /**
- * What the three localStorage journals of the live game screen share: the pending-stats
+ * What the four localStorage journals of the live game screen share: the pending-stats
  * journal (pendingStats.ts, taps not saved yet), the pending-spots journal
- * (pendingSpots.ts, spots not on their saved stats yet) and the pending-removals journal
- * (pendingRemovals.ts, taps taken back whose stat may still have to be removed). Each
- * keeps one entry per stat, under its own key prefix and the stat's id, so keeping or
- * forgetting one never rewrites another; each entry holds its game's id. Nothing here
- * throws: without localStorage (full, blocked), nothing is kept, and nothing is lost but
- * what a reload would forget.
+ * (pendingSpots.ts, spots not on their saved stats yet), the pending-removals journal
+ * (pendingRemovals.ts, taps taken back whose stat may still have to be removed) and the
+ * pending-periods journal (pendingPeriods.ts, moves to another period not saved yet).
+ * Each keeps one entry per stat (per game, for the periods), under its own key prefix and
+ * the stat's (or game's) id, so keeping or forgetting one never rewrites another; each
+ * entry holds its game's id. Nothing here throws: without localStorage (full, blocked),
+ * nothing is kept, and nothing is lost but what a reload would forget.
  */
 
 /** How many entries have been kept or forgotten through this module, on this page. */
