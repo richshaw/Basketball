@@ -22,7 +22,7 @@ import { paths } from '@/routes';
 import { barLayout, columnPath, niceAxis, scaleY, slotIndexAt } from './chartScale';
 import { gameTitle } from '@/lib/gameTitle';
 import { formatDateRange, formatGameCount, formatResult } from './gameLabels';
-import { readSessionValue, writeSessionValue } from './seasonFilter';
+import { fitsSegments, readSessionValue, writeSessionValue } from './seasonFilter';
 import {
   describePoint,
   describeTrend,
@@ -64,10 +64,19 @@ const PRESS_FOLLOW_UP_MS = 1000;
  */
 const DRAG_THRESHOLD = 6;
 
+/** The stats to chart, by name: 'Points', 'Rebounds', 'Assists'. */
 const METRIC_OPTIONS: SegmentedOption<TrendMetric>[] = TREND_METRICS.map((metric) => ({
   value: metric,
   label: TREND_METRIC_INFO[metric].label,
 }));
+/** The same where their names don't fit ('PTS', 'REB', 'AST'), named in full to screen readers. */
+const SHORT_METRIC_OPTIONS: SegmentedOption<TrendMetric>[] = TREND_METRICS.map((metric) => ({
+  value: metric,
+  label: TREND_METRIC_INFO[metric].short,
+  fullLabel: TREND_METRIC_INFO[metric].label,
+}));
+/** The names fit together by their length (as the season picker checks its own). */
+const METRIC_NAMES_FIT = fitsSegments(METRIC_OPTIONS.map((option) => option.label));
 
 /** Centers a 1px line on the pixel grid so it stays crisp. */
 const crisp = (value: number) => Math.round(value) + 0.5;
@@ -116,6 +125,9 @@ export interface TrendChartProps {
  */
 export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
   const [metric, setMetric] = useState<TrendMetric>(readRememberedMetric);
+  // The names turned out not to fit the control (page zoom, say): the short labels then,
+  // while the screen is open, rather than names cut short.
+  const [namesOverflowed, setNamesOverflowed] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { ref: plotRef, width } = useElementWidth<HTMLDivElement>(FALLBACK_WIDTH);
   const hitAreaRef = useRef<HTMLDivElement>(null);
@@ -314,13 +326,18 @@ export function TrendChart({ entries, averages, withYear }: TrendChartProps) {
 
   return (
     <div className={styles.chart}>
-      {/* "Rebounds", bold when picked, takes the room it needs from the shorter two. */}
+      {/*
+        "Rebounds", bold when picked, takes the room it needs from the shorter two. If the
+        names need more room than the control has, it says so (onOverflow): then PTS,
+        REB and AST.
+      */}
       <SegmentedControl
         aria-label="Stat to chart"
-        options={METRIC_OPTIONS}
+        options={METRIC_NAMES_FIT && !namesOverflowed ? METRIC_OPTIONS : SHORT_METRIC_OPTIONS}
         value={metric}
         onChange={chooseMetric}
         fitLabels
+        onOverflow={() => setNamesOverflowed(true)}
       />
 
       {/*

@@ -109,6 +109,25 @@ for (const width of [375, 320]) {
   });
 }
 
+// Page zoom (Safari's 150% on an iPhone SE leaves 250 points): the stats' names no longer
+// fit, so the chart offers them by their short labels, whole, rather than cut short.
+test('with page zoom, the stats to chart are offered by their short labels, whole', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 250, height: 700 });
+  await seedDemoData(page);
+  await page.goto(appUrl(paths.stats));
+  const radios = page.getByRole('radiogroup', { name: 'Stat to chart' }).getByRole('radio');
+  await expect(radios).toHaveText(['PTS', 'REB', 'AST']);
+  expect(
+    await radios.evaluateAll((all) => all.filter((radio) => radio.scrollWidth > radio.clientWidth)),
+  ).toEqual([]);
+  // Named in full to screen readers.
+  await page.getByRole('radio', { name: 'Rebounds' }).tap();
+  await expect(page.getByRole('group', { name: 'Rebounds by game' })).toBeVisible();
+  await expect(radios).toHaveText(['PTS', 'REB', 'AST']);
+});
+
 /** Moves all ten demo games into `season`, then opens the Stats screen afresh. */
 async function showSeason(page: Page, season: string) {
   await patchGames(

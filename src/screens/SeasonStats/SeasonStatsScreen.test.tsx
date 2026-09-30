@@ -627,6 +627,29 @@ describe('SeasonStatsScreen', { timeout: 15_000 }, () => {
       expect(screen.getByRole('button', { name: /^Season/ })).toHaveTextContent('Summer 2027');
     });
 
+    it("charts a stat by its short label when the stats' names turn out not to fit (page zoom)", async () => {
+      await addFinalGame(
+        { opponent: 'Harbor', date: '2026-06-10', season: 'Summer 2026' },
+        ['fg2_made', 'dreb'],
+        [30, 20],
+      );
+      // jsdom does no layout: say the segments need 361 points and have 320.
+      vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(361);
+      vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(320);
+      const { user } = renderRoute(paths.stats);
+      await waitForStats();
+
+      const stats = screen.getByRole('radiogroup', { name: 'Stat to chart' });
+      // Short labels, never names cut short; named in full to screen readers.
+      expect(
+        within(stats)
+          .getAllByRole('radio')
+          .map((radio) => radio.textContent),
+      ).toEqual(['PTS', 'REB', 'AST']);
+      await user.click(within(stats).getByRole('radio', { name: 'Rebounds' }));
+      expect(screen.getByRole('group', { name: 'Rebounds by game' })).toBeInTheDocument();
+    });
+
     it('uses the sheet for season names too long for a segment', async () => {
       await addFinalGame(
         { opponent: 'Harbor', date: '2026-06-10', season: 'Varsity Summer League' },
