@@ -146,7 +146,8 @@
  * taps meanwhile, the panel and the dimmed page alike: a tap right after closing (a
  * stat on the live game screen) goes to what's underneath, instead of being lost on a
  * sheet that's leaving. The tap that closed it has ended by then: its click, which
- * closes it, is the last event a tap sends.
+ * closes it, is the last event a tap sends. Only the second tap of a double tap, at the
+ * spot of the first, is caught (.secondTap).
  */
 .dialog[data-closing] {
   z-index: var(--z-sheet-exit);
@@ -157,6 +158,22 @@
 
 .dialog[data-closing] .panel {
   animation: slideOut var(--duration-normal) var(--ease-in) forwards;
+}
+
+/*
+ * Where the tap that opened or closed a sheet went down: it catches a second tap there
+ * for a moment (secondTap.ts), so a double tap acts once. Transparent, and placed in
+ * the sheet on top (or the page), above everything else in it.
+ */
+.secondTap {
+  position: fixed;
+  top: calc(var(--second-tap-y) - var(--second-tap-size) / 2);
+  left: calc(var(--second-tap-x) - var(--second-tap-size) / 2);
+  z-index: var(--z-second-tap);
+  width: var(--second-tap-size);
+  height: var(--second-tap-size);
+  /* A double tap on it can't zoom the page either. */
+  touch-action: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

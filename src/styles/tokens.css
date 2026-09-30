@@ -81,6 +81,8 @@
   --tab-bar-height: 50px;
   --update-banner-height: 64px; /* the app-update banner above the tab bar */
   --content-max-width: 640px;
+  /* The spot that catches a double tap's second tap where a sheet opened or closed */
+  --second-tap-size: 64px;
 
   /* Safe areas: the home indicator (bottom) and, in landscape, the sensor housing (sides). */
   --safe-top: env(safe-area-inset-top, 0px);
@@ -103,6 +105,7 @@
   --z-banner: 30;
   --z-sheet-exit: 35; /* a sheet animating away after it has closed */
   --z-toast: 40;
+  --z-second-tap: 50; /* catches a double tap's second tap (Sheet's secondTap.ts) */
 
   /* Motion */
   --duration-fast: 120ms;

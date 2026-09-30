@@ -14,7 +14,8 @@ import {
 } from 'react';
 import { CloseIcon } from '@/components/Icons/Icons';
 import { cx } from '@/lib/cx';
-import { registerOpenSheet } from './sheetStack';
+import { catchSecondTap, listenForTaps } from './secondTap';
+import { registerOpenSheet, topOpenSheet } from './sheetStack';
 import { useViewportInsets } from './useViewportInsets';
 import styles from './Sheet.module.css';
 
@@ -64,9 +65,13 @@ export interface SheetProps {
 /**
  * `closing`: the dialog has already closed (focus is back and the page works again)
  * but stays on screen while its exit animation plays, taking no taps: they reach the
- * page under it (see Sheet.module.css).
+ * page under it (see Sheet.module.css), except a double tap's second tap at the spot of
+ * the one that closed it (secondTap.ts).
  */
 type Phase = 'closed' | 'open' | 'closing';
+
+/** Places and sizes the spot that catches a double tap's second tap (secondTap.ts). */
+const secondTapClass = styles.secondTap ?? '';
 
 /** Finishes closing even if an exit animation never reports that it ended. */
 const EXIT_TIMEOUT_MS = 600;
@@ -85,7 +90,8 @@ function runningAnimations(...elements: Array<Element | null>): Animation[] {
  * inside and makes the page behind inert. It slides up from the bottom (a fade
  * with reduced motion), pads the home-indicator area, rides above the on-screen
  * keyboard, and locks page scrolling while open. Closing returns focus to whatever
- * opened it.
+ * opened it. A double tap acts once: the second tap, at the spot of the one that
+ * opened or closed it, is caught (secondTap.ts).
  */
 export function Sheet({
   open,
@@ -122,6 +128,10 @@ export function Sheet({
   const insets = useViewportInsets(phase === 'open');
   const notifyClosed = useEffectEvent(() => onClosed?.());
 
+  // (Taps are noted from the first sheet on the page, closed or not, so the one that
+  // opens it is known.)
+  useLayoutEffect(listenForTaps, []);
+
   // Open: show as a modal. The browser moves focus inside and makes the page inert.
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
@@ -142,6 +152,8 @@ export function Sheet({
     if (title) title.tabIndex = -1;
     const start = requested ?? title;
     if (start && document.activeElement !== start) start.focus();
+    // A double tap on what opened it: the second tap mustn't land on it as it slides in.
+    catchSecondTap(dialog, secondTapClass);
   }, [phase, reopenRequests, initialFocusRef, showCloseButton]);
 
   // While open: lock page scrolling and let toasts show inside the sheet.
@@ -158,6 +170,9 @@ export function Sheet({
     if (phase !== 'closing' || !dialog) return;
 
     if (dialog.open) dialog.close();
+    // A double tap on what closed it: the second tap mustn't reach what was under it, in
+    // the sheet now on top (under a confirmation, say) or on the page.
+    catchSecondTap(topOpenSheet() ?? document.body, secondTapClass);
     const returnFocusTo = returnFocusRef.current;
     returnFocusRef.current = null;
     const focused = document.activeElement;

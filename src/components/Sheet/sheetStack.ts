@@ -36,6 +36,11 @@ export function registerOpenSheet(toastOutlet: HTMLElement): () => void {
   };
 }
 
+/** The <dialog> of the sheet on top, if one is open. */
+export function topOpenSheet(): HTMLDialogElement | null {
+  return outlets.at(-1)?.closest('dialog') ?? null;
+}
+
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => {

@@ -1,10 +1,11 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { paths } from '../src/routes';
 import { appUrl, emulateIPhoneSafeArea, expectRoute, IPHONE_SAFE_BOTTOM } from './support/app';
 import { DEMO_LIVE_GAME_ID, demoGameId, exportAll, patchGames, seedDemoData } from './support/data';
 import {
   canLoseDatabaseConnection,
   doubleTap,
+  doubleTapAt,
   expectStats,
   failGameSaves,
   failNextSaves,
@@ -17,8 +18,10 @@ import {
   lastActionFits,
   lineButton,
   loseDatabaseConnection,
+  middleOf,
   notSaved,
   readFailedNote,
+  secondTapCatchers,
   setShotChart,
   shotCourt,
   showPageAgain,
@@ -840,6 +843,157 @@ test('a stat tapped just after a sheet closes counts: the sheet takes no taps as
     }
   }
 });
+
+// A quick double tap on what opens or closes a sheet acts once: its second tap, at the
+// spot of the first, is caught there for a moment (SECOND_TAP_MS, 350 ms: see
+// src/components/Sheet/secondTap.ts) instead of landing on what the first one opened or
+// uncovered: a stat button, the grid's Undo, the sheet's own buttons as it slides in, a
+// row of the log under a confirmation. (A tap anywhere else counts at once: the test
+// above.) On an iPhone, with its home indicator, and an SE, both with the court.
+for (const device of [
+  { name: 'an iPhone', setUp: (page: Page) => emulateIPhoneSafeArea(page) },
+  {
+    name: 'an iPhone SE',
+    setUp: (page: Page) => page.setViewportSize({ width: 375, height: 667 - 20 }),
+  },
+]) {
+  for (const gapMs of [120, 250]) {
+    test(`a double tap on a sheet acts once, ${gapMs} ms apart, on ${device.name}`, async ({
+      page,
+    }) => {
+      await device.setUp(page);
+      const gameId = await startGame(page);
+      await expect(shotCourt(page)).toHaveCount(1);
+      await tapStats(page, ['Steal', 'Assist']);
+      let stats = ['stl', 'ast'];
+      await expect.poll(() => gameEventTypes(page, gameId)).toEqual(stats);
+
+      const bar = page.getByRole('main');
+      const periodButton = page.getByRole('button', { name: /^Period Q\d$/ });
+      const periods = page.getByRole('dialog', { name: 'Period' });
+      const log = page.getByRole('dialog', { name: 'Stat log' });
+      const endGame = page.getByRole('dialog', { name: 'Final score' });
+      const confirm = page.getByRole('alertdialog');
+      const sheets = [periods, log, endGame, confirm];
+
+      /** Waits until `sheet` has slid in, and nothing is catching taps any more. */
+      const ready = async (sheet: Locator) => {
+        await expect(sheet).toBeVisible();
+        await sheet.evaluate((dialog) =>
+          Promise.all(dialog.getAnimations({ subtree: true }).map((each) => each.finished)),
+        );
+        await expect(secondTapCatchers(page)).toHaveCount(0);
+      };
+      /**
+       * After a double tap: once nothing is catching taps (so the second tap has done
+       * whatever it would), only `open` is on screen and the stats are as they should be.
+       */
+      const settle = async (what: string, open: Locator[] = []) => {
+        await expect(secondTapCatchers(page), what).toHaveCount(0);
+        for (const sheet of sheets) {
+          if (open.includes(sheet)) await expect(sheet, what).toBeVisible();
+          else await expect(sheet, what).toBeHidden();
+        }
+        expect(await gameEventTypes(page, gameId), what).toEqual(stats);
+      };
+
+      // Closing a sheet: a period (over a stat button or the grid's Undo on an SE)...
+      for (const period of ['Q3', 'Q4', 'Q1']) {
+        await periodButton.tap();
+        await ready(periods);
+        const choice = periods.getByRole('button', { name: period, exact: true });
+        await doubleTapAt(page, await middleOf(choice), gapMs);
+        await settle(`the period sheet's ${period}`);
+        await expect(periodButton).toHaveAccessibleName(`Period ${period}`);
+      }
+      // ...its X...
+      await periodButton.tap();
+      await ready(periods);
+      await doubleTapAt(
+        page,
+        await middleOf(periods.getByRole('button', { name: 'Close' })),
+        gapMs,
+      );
+      await settle("the period sheet's X");
+      // ...the dimmed page over 2PT Made...
+      const twoMade = await middleOf(
+        statGrid(page).getByRole('button', { name: '2PT Made', exact: true }),
+      );
+      await periodButton.tap();
+      await ready(periods);
+      expect(
+        await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, twoMade),
+      ).toBe('DIALOG');
+      await doubleTapAt(page, twoMade, gapMs);
+      await settle('the dimmed page over 2PT Made');
+      // ...the log's X...
+      await bar.getByRole('button', { name: 'Log', exact: true }).tap();
+      await ready(log);
+      await doubleTapAt(page, await middleOf(log.getByRole('button', { name: 'Close' })), gapMs);
+      await settle("the log's X");
+      // ...and Keep tracking, over End game.
+      await bar.getByRole('button', { name: 'End game', exact: true }).tap();
+      await ready(endGame);
+      const keepTracking = endGame.getByRole('button', { name: 'Keep tracking' });
+      await doubleTapAt(page, await middleOf(keepTracking), gapMs);
+      await settle('Keep tracking');
+
+      // A confirmation over the log: Cancel, then Delete, over the log's rows.
+      await bar.getByRole('button', { name: 'Log', exact: true }).tap();
+      await ready(log);
+      await log.getByRole('button', { name: /^Assist/ }).tap();
+      await ready(confirm);
+      await doubleTapAt(
+        page,
+        await middleOf(confirm.getByRole('button', { name: 'Cancel' })),
+        gapMs,
+      );
+      await settle("the confirmation's Cancel", [log]);
+      await log.getByRole('button', { name: /^Assist/ }).tap();
+      await ready(confirm);
+      await doubleTapAt(
+        page,
+        await middleOf(confirm.getByRole('button', { name: 'Delete' })),
+        gapMs,
+      );
+      stats = ['stl'];
+      await settle("the confirmation's Delete", [log]);
+
+      // Opening one: a row of the log (it asks first)...
+      await doubleTapAt(page, await middleOf(log.getByRole('button', { name: /^Steal/ })), gapMs);
+      await settle('a row of the log', [log, confirm]);
+      await confirm.getByRole('button', { name: 'Cancel' }).tap();
+      await expect(confirm).toBeHidden();
+      await log.getByRole('button', { name: 'Close' }).tap();
+      await expect(log).toBeHidden();
+      // ...the period button, Log and End game (the game goes on).
+      await expect(secondTapCatchers(page)).toHaveCount(0);
+      await doubleTapAt(page, await middleOf(periodButton), gapMs);
+      await settle('the period button', [periods]);
+      await periods.getByRole('button', { name: 'Close' }).tap();
+      await expect(periods).toBeHidden();
+      await expect(secondTapCatchers(page)).toHaveCount(0);
+      await doubleTapAt(
+        page,
+        await middleOf(bar.getByRole('button', { name: 'Log', exact: true })),
+        gapMs,
+      );
+      await settle('Log', [log]);
+      await log.getByRole('button', { name: 'Close' }).tap();
+      await expect(log).toBeHidden();
+      await expect(secondTapCatchers(page)).toHaveCount(0);
+      await doubleTapAt(
+        page,
+        await middleOf(bar.getByRole('button', { name: 'End game', exact: true })),
+        gapMs,
+      );
+      await settle('End game', [endGame]);
+      await keepTracking.tap();
+      await expect(endGame).toBeHidden();
+      await expect(bar.getByRole('button', { name: 'End game', exact: true })).toBeVisible();
+    });
+  }
+}
 
 // An ordinary opponent's name fits the title whole: 16 characters on an iPhone SE, 18 at
 // 390 points. The back link is then only its chevron, and every control in the bar is
